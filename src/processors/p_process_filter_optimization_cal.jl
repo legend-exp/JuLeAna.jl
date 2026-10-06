@@ -110,7 +110,7 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
             @info "Only first period in partition $part for $period in $det ($ch)"
             for filter_type in e_filter
                 log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
-                                   process_skipped, filter_type, fill("-", 10)..., "Only first periods --> skipped."))
+                                   process_skipped, filter_type, fill("-", 9)..., "Only first periods --> skipped."))
                 # add results to dict
                 log_info_dict[filter_type] = log_info
                 processed_dict[filter_type] = false
@@ -121,7 +121,9 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
         if !reprocess && !redo_detector(det) && haskey(pars_db_det, det)
             @debug "Detector $(det) already processed, check missing filters"
             for filter_type in e_filter
-                if haskey(pars_db_det[det], filter_type)
+                if haskey(pars_db_det[det], filter_type) && !(all(k -> haskey(pars_db_det[det][filter_type], k), (:objective, :w90, :legacy, :converged)) && haskey(pars_db_det[det][filter_type].legacy, :rt) && haskey(pars_db_det[det][filter_type].legacy, :ft))
+                    @info "Detector $det, filter $filter_type: pars from the previous method, re-optimizing"
+                elseif haskey(pars_db_det[det], filter_type)
                     @debug "Filter $filter_type already processed, skip"
                     pars_flt = pars_db_det[det][filter_type]
                     log_info_dict[filter_type] = log_nt((det, detector_status(chinfo_det.usability),
