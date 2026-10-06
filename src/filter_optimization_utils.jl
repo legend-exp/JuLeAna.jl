@@ -281,6 +281,29 @@ end
 
 
 """
+    snap_seed(rt0, ft0, rt_bounds, ft_bounds, lattice, feasible, flt)
+
+Move the seed `(rt0, ft0)` of `optimize_rtft` onto the lattice `k * lattice`, inside the bounds
+(which are snapped inward to lattice points) and into the region where `feasible(rt, ft)` holds,
+by lowering `ft` in lattice steps. Returns the lattice-point seed `(rt, ft)`. Throws an
+`ErrorException` naming the filter `flt` if no admissible seed exists.
+"""
+function snap_seed(rt0, ft0, rt_bounds, ft_bounds, lattice, feasible, flt)
+    to_lattice(t) = uconvert(NoUnits, t / lattice)
+    rt_range = ceil(Int, to_lattice(first(rt_bounds)) - 1e-6):floor(Int, to_lattice(last(rt_bounds)) + 1e-6)
+    ft_range = ceil(Int, to_lattice(first(ft_bounds)) - 1e-6):floor(Int, to_lattice(last(ft_bounds)) + 1e-6)
+    (isempty(rt_range) || isempty(ft_range)) && throw(ErrorException("Filter $flt: no lattice point inside the bounds $rt_bounds, $ft_bounds"))
+    i = clamp(round(Int, to_lattice(rt0)), first(rt_range), last(rt_range))
+    j = clamp(round(Int, to_lattice(ft0)), first(ft_range), last(ft_range))
+    while j in ft_range && !feasible(i * lattice, j * lattice)
+        j -= 1
+    end
+    j in ft_range || throw(ErrorException("Filter $flt: no feasible seed for (rt, ft) = ($rt0, $ft0) inside the bounds $rt_bounds, $ft_bounds"))
+    return i * lattice, j * lattice
+end
+
+
+"""
     optimize_channel_filter(sets::NamedTuple, pulse::NamedTuple, flt::Symbol, dsp_config::DSPConfig,
                             opt_config::PropDict, τ::Unitful.Time, sg_wl::Unitful.Time, sg_wl_source::AbstractString;
                             f_title::Function, f_save::Function, f_tablepath::Function)
@@ -307,36 +330,6 @@ function optimize_channel_filter(sets::NamedTuple, pulse::NamedTuple, flt::Symbo
     window = (opt_config.left_window_size, opt_config.right_window_size)
     prep = sets.fep.prep
 
-    # noise scan
-    enc_grid = getfield(LegendDSP, Symbol("dsp_$(flt)_rt_optimization"))(sets.fep.wvfs_pre, dsp_config, τ; ft = flt_config.ft_fixed)
-    result_rt, report_rt = fit_enc_sigmas(enc_grid, e_grid_rt, flt_config.min_enc, flt_config.max_enc,
-        flt_config.nbins_enc_sigmas, flt_config.rel_cut_fit_enc_sigmas)
-    rt_enc = mvalue(result_rt.rt)
-    @debug "Filter $flt: ENC rise time $rt_enc"
-    f_save(LegendMakie.lplot(report_rt, title = f_title("Noise Sweep", flt)), Symbol("noise_sweep_$(flt)"))
-
-    # flat-top scan at the ENC rise time
-    # One dsp_energy_rtft call allocates about five (CUSP, ZAC) or two (trap) times the prepared
-    # waveform set transiently, so the number of simultaneous calls is bounded per detector. The
-    # ft grid below is computed serially; the bound matters for the threaded optimize_rtft batches.
-    sem = Base.Semaphore(opt_config.max_concurrent_evals)
-    f_energy = function (rt, ft)
-        Base.acquire(sem)
-        try
-            dsp_energy_rtft(prep, dsp_config, rt, ft, flt)
-        finally
-            Base.release(sem)
-        end
-    end
-    e_grid = permutedims(reduce(hcat, [f_energy(rt_enc, ft) for ft in e_grid_ft]))
-    result_ft, report_ft = fit_fwhm_ft(e_grid, e_grid_ft, sets.fep.qdrift, rt_enc, flt_config.min_e_fep, flt_config.max_e_fep,
-        flt_config.rel_cut_fit_e_fep, opt_config.apply_ctc; n_bins = flt_config.nbins_e_fep, peak = opt_config.peak, window,
-        objective, containment = opt_config.containment, rel_tol = opt_config.rel_tol, ft_fwhm_tol = opt_config.ft_fwhm_tol)
-    e_grid = nothing
-    ft0, legacy_ft = mvalue(result_ft.ft), mvalue(result_ft.legacy_ft)
-    @debug "Filter $flt: seed flat-top time $ft0, legacy flat-top time $legacy_ft"
-    f_save(LegendMakie.lplot(report_ft, title = f_title("FEP FT Scan", flt), figsize = (600, 900)), Symbol("ft_scan_$(flt)"))
-
     # Every candidate must be readable in every FEP waveform: trap output exists from
     # t_first + 2rt + ft on and is read at t50 + rt + ft/2; CUSP and ZAC are read at
     # t50 + flt_length/2 and hold the flat top inside flt_length. Events without a finite t50
@@ -353,8 +346,40 @@ function optimize_channel_filter(sets::NamedTuple, pulse::NamedTuple, flt::Symbo
         (rt, ft) -> ft < flt_length
     end
 
-    # joint lattice search from (rt_enc, ft0)
-    result_rtft, report_rtft = optimize_rtft(f_energy, sets.fep.qdrift, rt_enc, ft0;
+    # noise scan
+    enc_grid = getfield(LegendDSP, Symbol("dsp_$(flt)_rt_optimization"))(sets.fep.wvfs_pre, dsp_config, τ; ft = flt_config.ft_fixed)
+    result_rt, report_rt = fit_enc_sigmas(enc_grid, e_grid_rt, flt_config.min_enc, flt_config.max_enc,
+        flt_config.nbins_enc_sigmas, flt_config.rel_cut_fit_enc_sigmas)
+    rt_enc = mvalue(result_rt.rt)
+    @debug "Filter $flt: ENC rise time $rt_enc"
+    f_save(LegendMakie.lplot(report_rt, title = f_title("Noise Sweep", flt)), Symbol("noise_sweep_$(flt)"))
+
+    # One dsp_energy_rtft call allocates about five (CUSP, ZAC) or two (trap) times the prepared
+    # waveform set transiently, so the number of simultaneous calls is bounded per detector. The
+    # ft grid below is computed serially; the bound matters for the threaded optimize_rtft batches.
+    sem = Base.Semaphore(opt_config.max_concurrent_evals)
+    f_energy = function (rt, ft)
+        Base.acquire(sem)
+        try
+            dsp_energy_rtft(prep, dsp_config, rt, ft, flt)
+        finally
+            Base.release(sem)
+        end
+    end
+    # flat-top scan at the ENC rise time
+    e_grid = permutedims(reduce(hcat, [f_energy(rt_enc, ft) for ft in e_grid_ft]))
+    result_ft, report_ft = fit_fwhm_ft(e_grid, e_grid_ft, sets.fep.qdrift, rt_enc, flt_config.min_e_fep, flt_config.max_e_fep,
+        flt_config.rel_cut_fit_e_fep, opt_config.apply_ctc; n_bins = flt_config.nbins_e_fep, peak = opt_config.peak, window,
+        objective, containment = opt_config.containment, rel_tol = opt_config.rel_tol, ft_fwhm_tol = opt_config.ft_fwhm_tol)
+    e_grid = nothing
+    enc_grid = nothing
+    ft0, legacy_ft = mvalue(result_ft.ft), mvalue(result_ft.legacy_ft)
+    @debug "Filter $flt: seed flat-top time $ft0, legacy flat-top time $legacy_ft"
+    f_save(LegendMakie.lplot(report_ft, title = f_title("FEP FT Scan", flt), figsize = (600, 900)), Symbol("ft_scan_$(flt)"))
+
+    # joint lattice search from the seed (rt_enc, ft0) moved onto the lattice, inside the bounds and into the feasible region
+    rt_seed, ft_seed = snap_seed(rt_enc, ft0, extrema(e_grid_rt), extrema(e_grid_ft), prep.sampling_period, feasible, flt)
+    result_rtft, report_rtft = optimize_rtft(f_energy, sets.fep.qdrift, rt_seed, ft_seed;
         rt_bounds = extrema(e_grid_rt), ft_bounds = extrema(e_grid_ft), feasible,
         step0 = (step(e_grid_rt), step(e_grid_ft)), lattice = prep.sampling_period,
         objective, rel_tol = opt_config.rel_tol, max_evals = opt_config.max_evals,
@@ -480,6 +505,7 @@ function run_filter_optimization_channel(f_load::Function, filter_types::Abstrac
         set = try
             prepare_peak_set(f_load(peaknames[key]), dsp_config, τ, f_evaluate_qc, opt_config.qc)
         catch e
+            e isa InterruptException && rethrow()
             throw(ErrorException("$(peaknames[key]): $(truncate_error(e))"))
         end
         # the raw presummed waveforms serve only the FEP noise scan
@@ -493,6 +519,7 @@ function run_filter_optimization_channel(f_load::Function, filter_types::Abstrac
         results[flt] = try
             optimize_channel_filter(sets, pulse, flt, dsp_config, opt_config, τ, sg_wl, sg_wl_source; f_title, f_save, f_tablepath)
         catch e
+            e isa InterruptException && rethrow()
             @error "Filter $flt: $(truncate_error(e))"
             e
         end
