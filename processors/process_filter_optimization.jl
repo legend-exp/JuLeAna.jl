@@ -14,7 +14,8 @@ function process_filter_optimization(processing_config::PropDict, l200::LegendDa
     pars_tau = get_values(l200.par.rpars.pz[period, run])
     @debug "Loaded decay times"
 
-    pars_aoeopt = get_values(PropDict(l200.par.rpars.aoeopt[period, run]))
+    aoeopt_filename = joinpath(data_path(l200.par.rpars.aoeopt), string(period), "$run.yaml")
+    pars_aoeopt = isfile(aoeopt_filename) ? get_values(PropDict(l200.par.rpars.aoeopt[period, run])) : PropDict()
     @debug "Loaded A/E filter optimization pars of $(length(keys(pars_aoeopt))) detectors"
 
     optimization_config = dataprod_config(l200).dsp(filekey).flt_optimization
@@ -30,7 +31,8 @@ function process_filter_optimization(processing_config::PropDict, l200::LegendDa
     f_evaluate_qc = load_qc_evaluator(l200, filekey)
 
     # create log line Tuple
-    log_nt = NamedTuple{(:Detector, :Channel, :Status, Symbol("Filter Type"), :Objective, Symbol("Rise Time"), Symbol("Flat-Top Time"), :FWHM, :W90, Symbol("Legacy RT"), Symbol("Legacy FT"), :Converged, Symbol("Crosscheck Warning"), :Error)}
+    log_cols = (:Detector, :Channel, :Status, Symbol("Filter Type"), :Objective, Symbol("Rise Time"), Symbol("Flat-Top Time"), :FWHM, :W90, Symbol("Legacy RT"), Symbol("Legacy FT"), :Converged, Symbol("Crosscheck Warning"), :Error)
+    log_nt = NamedTuple{log_cols}
 
     # get worker pool
     wpool = get_workerPool(processing_config, nameof(var"#self#"))
@@ -58,7 +60,9 @@ function process_filter_optimization(processing_config::PropDict, l200::LegendDa
         if !reprocess && haskey(pars_db, det)
             @debug "Detector $(det) already processed, check missing filters"
             for filter_type in e_filter
-                if haskey(pars_db[det], filter_type)
+                if haskey(pars_db[det], filter_type) && !(all(k -> haskey(pars_db[det][filter_type], k), (:objective, :w90, :legacy, :converged)) && haskey(pars_db[det][filter_type].legacy, :rt) && haskey(pars_db[det][filter_type].legacy, :ft))
+                    @info "Detector $det, filter $filter_type: pars from the previous method, re-optimizing"
+                elseif haskey(pars_db[det], filter_type)
                     @debug "Filter $filter_type already processed, skip"
                     pars_flt = pars_db[det][filter_type]
                     log_info_dict[filter_type] = log_nt((det, ch, ProcessStatus(1), filter_type, pars_flt.objective, pars_flt.rt, pars_flt.ft, pars_flt.fwhm, pars_flt.w90, pars_flt.legacy.rt, pars_flt.legacy.ft, pars_flt.converged, "-", "Already processed --> skipped."))
@@ -99,7 +103,7 @@ function process_filter_optimization(processing_config::PropDict, l200::LegendDa
 
         for (filter_type, res) in results
             if res isa Exception
-                log_info_dict[filter_type] = log_nt((det, ch, ProcessStatus(0), filter_type, fill("-", 9)..., truncate_error(res)))
+                log_info_dict[filter_type] = log_nt((det, ch, ProcessStatus(0), filter_type, fill("-", length(log_cols) - 5)..., truncate_error(res)))
                 processed_dict[filter_type] = false
             else
                 log_info_dict[filter_type] = log_nt((det, ch, ProcessStatus(1), filter_type, res.log.objective, res.pars.rt, res.pars.ft, res.pars.fwhm, res.pars.w90, res.log.legacy_rt, res.log.legacy_ft, res.pars.converged, res.log.crosscheck_warning, "-"))

@@ -16,7 +16,8 @@ function p_process_filter_optimization(processing_config::PropDict, l200::Legend
     if reprocess @info "Reprocess all detectors" else @info "Only process detectors not in pars_db" end
 
     # create log line Tuple
-    log_nt = NamedTuple{(:Detector, :Channel, :Partition, :Status, Symbol("Filter Type"), :Objective, Symbol("Rise Time"), Symbol("Flat-Top Time"), :FWHM, :W90, Symbol("Legacy RT"), Symbol("Legacy FT"), :Converged, Symbol("Crosscheck Warning"), :Error)}
+    log_cols = (:Detector, :Channel, :Partition, :Status, Symbol("Filter Type"), :Objective, Symbol("Rise Time"), Symbol("Flat-Top Time"), :FWHM, :W90, Symbol("Legacy RT"), Symbol("Legacy FT"), :Converged, Symbol("Crosscheck Warning"), :Error)
+    log_nt = NamedTuple{log_cols}
     
     # get worker pool
     wpool = get_workerPool(processing_config, nameof(var"#self#"))
@@ -79,7 +80,7 @@ function p_process_filter_optimization(processing_config::PropDict, l200::Legend
         if (only_first_period && period != first(partinfo_det.period))
             @info "Only first period in partition $part for $period in $det ($ch)"
             for filter_type in e_filter
-                log_info = log_nt((det, ch, part, ProcessStatus(1), filter_type, fill("-", 9)..., "Only first periods --> skipped."))
+                log_info = log_nt((det, ch, part, ProcessStatus(1), filter_type, fill("-", length(log_cols) - 6)..., "Only first periods --> skipped."))
                 # add results to dict
                 log_info_dict[filter_type] = log_info
                 processed_dict[filter_type] = false
@@ -90,7 +91,9 @@ function p_process_filter_optimization(processing_config::PropDict, l200::Legend
         if !reprocess && haskey(pars_db_det, det)
             @debug "Detector $(det) already processed, check missing filters"
             for filter_type in e_filter
-                if haskey(pars_db_det[det], filter_type)
+                if haskey(pars_db_det[det], filter_type) && !(all(k -> haskey(pars_db_det[det][filter_type], k), (:objective, :w90, :legacy, :converged)) && haskey(pars_db_det[det][filter_type].legacy, :rt) && haskey(pars_db_det[det][filter_type].legacy, :ft))
+                    @info "Detector $det, filter $filter_type: pars from the previous method, re-optimizing"
+                elseif haskey(pars_db_det[det], filter_type)
                     @debug "Filter $filter_type already processed, skip"
                     pars_flt = pars_db_det[det][filter_type]
                     log_info_dict[filter_type] = log_nt((det, ch, part, ProcessStatus(1), filter_type, pars_flt.objective, pars_flt.rt, pars_flt.ft, pars_flt.fwhm, pars_flt.w90, pars_flt.legacy.rt, pars_flt.legacy.ft, pars_flt.converged, "-", "Already processed --> skipped."))
@@ -130,7 +133,7 @@ function p_process_filter_optimization(processing_config::PropDict, l200::Legend
 
         for (filter_type, res) in results
             if res isa Exception
-                log_info_dict[filter_type] = log_nt((det, ch, part, ProcessStatus(0), filter_type, fill("-", 9)..., truncate_error(res)))
+                log_info_dict[filter_type] = log_nt((det, ch, part, ProcessStatus(0), filter_type, fill("-", length(log_cols) - 6)..., truncate_error(res)))
                 processed_dict[filter_type] = false
             else
                 log_info_dict[filter_type] = log_nt((det, ch, part, ProcessStatus(1), filter_type, res.log.objective, res.pars.rt, res.pars.ft, res.pars.fwhm, res.pars.w90, res.log.legacy_rt, res.log.legacy_ft, res.pars.converged, res.log.crosscheck_warning, "-"))
