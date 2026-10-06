@@ -482,7 +482,7 @@ end
 
 
 """
-    run_filter_optimization_channel(f_load::Function, filter_types::AbstractVector{Symbol}, dsp_config::DSPConfig,
+    run_filter_optimization_channel(f_load::Function, filter_types::AbstractVector, dsp_config::DSPConfig,
                                     opt_config::PropDict, τ::Unitful.Time, f_evaluate_qc, sg_wl::Unitful.Time,
                                     sg_wl_source::AbstractString; f_title::Function, f_save::Function, f_tablepath::Function)
 
@@ -490,12 +490,13 @@ Filter optimization of one detector. Loads the FEP waveforms and, if enabled in
 `opt_config.crosscheck`, the DEP and SEP waveforms with `f_load(peakname)` (as returned by
 `load_peak_waveforms`), applies the QC, computes qdrift and prepares every set once
 (`prepare_peak_set`), computes the FEP pulse shapes with the SG window length `sg_wl`, and runs
-`optimize_channel_filter` for every filter in `filter_types`.
+`optimize_channel_filter` for every filter in `filter_types`, a vector of filter `Symbol`s
+(the keys of a `PropDict`, whose eltype is wider than `Symbol`).
 
 Returns a `Dict` from filter to its `(pars, log)`, or to the exception that stopped that
 filter. Errors while loading or preparing a peak set propagate.
 """
-function run_filter_optimization_channel(f_load::Function, filter_types::AbstractVector{Symbol}, dsp_config::DSPConfig,
+function run_filter_optimization_channel(f_load::Function, filter_types::AbstractVector, dsp_config::DSPConfig,
         opt_config::PropDict, τ::Unitful.Time, f_evaluate_qc, sg_wl::Unitful.Time, sg_wl_source::AbstractString;
         f_title::Function, f_save::Function, f_tablepath::Function)
     peaknames = (fep = Symbol(opt_config.peakname),)
