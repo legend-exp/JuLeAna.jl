@@ -108,6 +108,24 @@ include(joinpath(@__DIR__, "..", "src", "filter_optimization_utils.jl"))
         @test_throws ArgumentError fit_crosscheck_peak(e_cal[begin:begin+49], line, DEP_WINDOW; containment = 0.9)
     end
 
+    @testset "snap_seed" begin
+        lattice = 0.3u"µs"
+        rtb, ftb = (0.5u"µs", 3.0u"µs"), (0.5u"µs", 3.0u"µs")
+        always(rt, ft) = true
+        # the lattice does not divide the grid ends: bounds snap inward to 0.6 and 3.0 µs
+        rt, ft = snap_seed(0.5u"µs", 3.0u"µs", rtb, ftb, lattice, always, :trap)
+        @test rt ≈ 0.6u"µs" && ft ≈ 3.0u"µs"
+        rt, ft = snap_seed(0.1u"µs", 9.0u"µs", rtb, ftb, lattice, always, :trap)
+        @test rt ≈ 0.6u"µs" && ft ≈ 3.0u"µs"
+        rt, ft = snap_seed(1.04u"µs", 1.4u"µs", rtb, ftb, lattice, always, :trap)
+        @test rt ≈ 0.9u"µs" && ft ≈ 1.5u"µs"
+        # infeasible seed: ft is lowered by lattice steps until rt + ft/2 <= 1.5 µs
+        rt, ft = snap_seed(0.9u"µs", 3.0u"µs", rtb, ftb, lattice, (rt, ft) -> rt + ft / 2 <= 1.5u"µs", :trap)
+        @test rt ≈ 0.9u"µs" && ft ≈ 1.2u"µs"
+        @test_throws "Filter trap: no feasible seed" snap_seed(0.9u"µs", 3.0u"µs", rtb, ftb, lattice, (rt, ft) -> false, :trap)
+        @test_throws "no lattice point inside the bounds" snap_seed(0.9u"µs", 1.0u"µs", rtb, (0.4u"µs", 0.5u"µs"), lattice, always, :trap)
+    end
+
     @testset "driver entry points" begin
         @test hasmethod(optimize_channel_filter, Tuple{NamedTuple, NamedTuple, Symbol, DSPConfig, PropDict, typeof(1.0u"µs"), typeof(1.0u"ns"), String}, (:f_title, :f_save, :f_tablepath))
         @test hasmethod(run_filter_optimization_channel, Tuple{Function, Vector{Symbol}, DSPConfig, PropDict, typeof(1.0u"µs"), Function, typeof(1.0u"ns"), String}, (:f_title, :f_save, :f_tablepath))
