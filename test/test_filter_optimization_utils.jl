@@ -107,4 +107,9 @@ include(joinpath(@__DIR__, "..", "src", "filter_optimization_utils.jl"))
         @test fit.f_fit(ustrip(u"keV", line)) > 0
         @test_throws ArgumentError fit_crosscheck_peak(e_cal[begin:begin+49], line, DEP_WINDOW; containment = 0.9)
     end
+
+    @testset "driver entry points" begin
+        @test hasmethod(optimize_channel_filter, Tuple{NamedTuple, NamedTuple, Symbol, DSPConfig, PropDict, typeof(1.0u"µs"), typeof(1.0u"ns"), String}, (:f_title, :f_save, :f_tablepath))
+        @test hasmethod(run_filter_optimization_channel, Tuple{Function, Vector{Symbol}, DSPConfig, PropDict, typeof(1.0u"µs"), Function, typeof(1.0u"ns"), String}, (:f_title, :f_save, :f_tablepath))
+    end
 end
