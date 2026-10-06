@@ -41,6 +41,9 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
     pars_tau = get_values(l200.par.rpars.pz[period, run])
     @debug "Loaded decay times"
 
+    pars_aoeopt = get_values(PropDict(l200.par.rpars.aoeopt[period, run]))
+    @debug "Loaded A/E filter optimization pars of $(length(keys(pars_aoeopt))) detectors"
+
     optimization_config = dataprod_config(l200).dsp(filekey).flt_optimization
     @debug "Loaded optimization config: $(lstring(optimization_config))"
 
@@ -58,9 +61,9 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
     f_evaluate_qc = load_qc_evaluator(l200, filekey)
 
     # create log line Tuple
-    log_nt = NamedTuple{(:Detector, :usability, :psd_usability, :Status, Symbol("Filter Type"), Symbol("Rise Time"),
-                         Symbol("Flat-Top Time"),
-                         Symbol("Min. FWHM"), :Error)}
+    log_nt = NamedTuple{(:Detector, :usability, :psd_usability, :Status, Symbol("Filter Type"), :Objective, Symbol("Rise Time"),
+                         Symbol("Flat-Top Time"), :FWHM, :W90, Symbol("Legacy RT"), Symbol("Legacy FT"), :Converged,
+                         Symbol("Crosscheck Warning"), :Error)}
 
     # get worker pool
 
@@ -77,8 +80,6 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
         @debug "Loaded DSP config: $(lstring(dsp_config_det))"
 
         optimization_config_det = merge(optimization_config.default, get(optimization_config, det, PropDict()))
-        qc_string = optimization_config_det.qc
-        peakname = Symbol(optimization_config_det.peakname)
         e_filter = collect(keys(optimization_config_det.e_filter))
 
         result_rt_ft_dict = Dict{Symbol,NamedTuple}()
@@ -90,12 +91,12 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
             for filter_type in e_filter
                 if haskey(pars_db[det], filter_type)
                     @debug "Filter $filter_type already processed, skip"
-                    log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability),
-                                       ProcessStatus(1), filter_type,
-                                       pars_db[det][filter_type].rt, pars_db[det][filter_type].ft, pars_db[det][filter_type].min_fwhm,
-                                       "Already processed --> skipped."))
-                    # add results to dict
-                    log_info_dict[filter_type] = log_info
+                    pars_flt = pars_db[det][filter_type]
+                    log_info_dict[filter_type] = log_nt((det, detector_status(chinfo_det.usability),
+                                                         detector_status(chinfo_det.psd_usability), ProcessStatus(1), filter_type,
+                                                         pars_flt.objective, pars_flt.rt, pars_flt.ft, pars_flt.fwhm, pars_flt.w90,
+                                                         pars_flt.legacy.rt, pars_flt.legacy.ft, pars_flt.converged, "-",
+                                                         "Already processed --> skipped."))
                     processed_dict[filter_type] = false
                 end
             end
@@ -114,127 +115,42 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
         end
         yield()
 
-        max_wvfs = optimization_config_det.max_wvfs
-
-        # load data
-        wvfs_det_pre, wvfs_det_wdw, presum_rate = @process_step "$peakname data loading" begin
-            @debug "Loading Tl208 FEP data from $(filename)"
-            peak_data = read_ldata(peakname, l200, DataTier(:jlpks), filekey, det)
-            wvfs_det_pre = peak_data.waveform_presummed
-            wvfs_det_wdw = peak_data.waveform_windowed
-            presum_rate = peak_data.presum_rate
-            if length(wvfs_det_pre) > max_wvfs
-                @warn "$peakname events exceed $max_wvfs, keep only $max_wvfs events"
-                sel = sample(eachindex(wvfs_det_pre), max_wvfs; replace = false, ordered = true)
-                wvfs_det_pre = wvfs_det_pre[sel]
-                wvfs_det_wdw = wvfs_det_wdw[sel]
-                presum_rate = presum_rate[sel]
-            end
-            wvfs_det_pre, wvfs_det_wdw, presum_rate
+        # SG window length of the A/E crosscheck: aoeopt pars of this run, else the DSP config default
+        sg_wl, sg_wl_source = if haskey(pars_aoeopt, det)
+            pars_aoeopt[det].sg.wl, "aoeopt pars"
+        else
+            dsp_config_det.default_flt_param.sg, "DSP config default"
         end
-        yield()
+        @info "Detector $det: SG window length $sg_wl from $sg_wl_source"
 
-        # get QC cuts
-        wvfs_det_pre, wvfs_det_wdw, blmean_wdw = @process_step "QC cuts" begin
-            @debug "Get QC cuts"
-            dsp_qc = dsp_qc_flt_optimization_compressed(wvfs_det_pre, dsp_config_det, pars_tau[det].τ, f_evaluate_qc)
-            qc = ljl_propfunc(qc_string).(dsp_qc)
-            blmean_wdw = dsp_qc.blmean ./ presum_rate
-            wvfs_det_pre = wvfs_det_pre[findall(qc)]
-            wvfs_det_wdw = wvfs_det_wdw[findall(qc)]
-            blmean_wdw = blmean_wdw[findall(qc)]
-            @debug "Survival Fraction: $(round(count(qc) / length(qc) * 100, digits=2))%"
-            wvfs_det_pre, wvfs_det_wdw, blmean_wdw
-        end
+        results = run_filter_optimization_channel(peakname -> load_peak_waveforms(l200, filekey, det, peakname,
+                                                                                  optimization_config_det.max_wvfs),
+                                                  filter(!in(keys(processed_dict)), e_filter), dsp_config_det, optimization_config_det,
+                                                  pars_tau[det].τ, f_evaluate_qc, sg_wl, sg_wl_source;
+                                                  f_title = (label, flt) -> get_plottitle(filekey, det, label;
+                                                                                          additional_type = string(flt)),
+                                                  f_save = (fig, name) -> @debug_plot(save_plot(fig, l200, filekey, det, name)),
+                                                  f_tablepath = flt -> replace(get_pltfilename(l200, filekey, det,
+                                                                                               Symbol("fltopt_tables_$(flt)")),
+                                                                               r"\.png$" => ".lh5"))
 
-        # get qdrift
-        qdrift = @process_step "QDrift" begin
-            @debug "Get QDrift"
-            dsp_qdrift_flt_optimization(wvfs_det_wdw, blmean_wdw, dsp_config_det, pars_tau[det].τ)
-        end
-
-        @debug_progress "Computing $det ..." for filter_type in e_filter
-            if haskey(processed_dict, filter_type)
-                continue
-            end
-
-            try
-                @debug "Optimize $filter_type filter"
-
-                optimization_config_flt = optimization_config_det.e_filter[filter_type]
-                # unpack config
-                e_grid_rt = getproperty(dsp_config_det, Symbol("e_grid_rt_$(filter_type)"))
-                e_grid_ft = getproperty(dsp_config_det, Symbol("e_grid_ft_$(filter_type)"))
-
-                # optimize RT
-                enc_grid = @process_step "$filter_type RT DSP for FEP" begin
-                    @debug "Generate $filter_type ENC filter grid"
-                    legend_dsp_function("dsp_$(filter_type)_rt_optimization", "dsp.flt_optimization.e_filter.$filter_type")(wvfs_det_pre,
-                                                                                                                            dsp_config_det,
-                                                                                                                            pars_tau[det].τ;
-                                                                                                                            ft = optimization_config_flt.ft_fixed)
-                end
-                yield()
-                result_rt, report_rt = @process_step "$filter_type rise time extraction" begin
-                    fit_enc_sigmas(enc_grid, e_grid_rt, optimization_config_flt.min_enc, optimization_config_flt.max_enc,
-                                   optimization_config_flt.nbins_enc_sigmas, optimization_config_flt.rel_cut_fit_enc_sigmas)
-                end
-                @debug format("Found optimal $filter_type RT at $(result_rt.rt) with ENC {:.2f} ADC", result_rt.min_enc)
-                yield()
-
-                @debug_plot begin
-                    p = LegendMakie.lplot(report_rt,
-                                          title = get_plottitle(filekey, det, "Noise Sweep"; additional_type = string(filter_type)))
-                    save_plot(p, l200, filekey, det, Symbol("noise_sweep_$(filter_type)"))
-                end
-
-                # optimize FT
-                yield()
-                e_grid = @process_step "$filter_type FT DSP for FEP" begin
-                    @debug "Generate $filter_type FT energy grid"
-                    legend_dsp_function("dsp_$(filter_type)_ft_optimization", "dsp.flt_optimization.e_filter.$filter_type")(wvfs_det_pre,
-                                                                                                                            dsp_config_det,
-                                                                                                                            pars_tau[det].τ,
-                                                                                                                            mvalue(result_rt.rt))
-                end
-                yield()
-                result_ft, report_ft = @process_step "$filter_type flat-top time extraction" begin
-                    fit_fwhm_ft(e_grid, e_grid_ft, qdrift, result_rt.rt, optimization_config_flt.min_e_fep,
-                                optimization_config_flt.max_e_fep, optimization_config_flt.rel_cut_fit_e_fep,
-                                optimization_config_det.apply_ctc; n_bins = optimization_config_flt.nbins_e_fep,
-                                peak = optimization_config_det.peak,
-                                window = (optimization_config_det.left_window_size, optimization_config_det.right_window_size),
-                                ft_fwhm_tol = optimization_config_det.ft_fwhm_tol)
-                end
-                @debug "Found optimal $filter_type FT at $(result_ft.ft) with FWHM $(round(u"keV", result_ft.min_fwhm, digits=2))"
-                yield()
-                @debug_plot begin
-                    p = LegendMakie.lplot(report_ft,
-                                          title = get_plottitle(filekey, det, "FEP FT Scan"; additional_type = string(filter_type)))
-                    save_plot(p, l200, filekey, det, Symbol("fwhm_ft_scan_$(filter_type)"))
-                end
-
-                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), ProcessStatus(1),
-                                   filter_type, result_rt.rt, result_ft.ft,
-                                   result_ft.min_fwhm, "-"))
-
-                # add results to dict
-                result_rt_ft_dict[filter_type] = merge(result_rt, result_ft)
-                log_info_dict[filter_type] = log_info
-                processed_dict[filter_type] = true
-
-                # call garbage collector
-                yield()
-            catch e
-                e isa ProcessStepError || @error "Filter: $filter_type filter optimization: $(truncate_error(e))"
-                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), ProcessStatus(0),
-                                   filter_type, "-", "-", "-",
-                                   "$(truncate_error(e))"))
-                # add results to dict
-                log_info_dict[filter_type] = log_info
+        for (filter_type, res) in results
+            if res isa Exception
+                log_info_dict[filter_type] = log_nt((det, detector_status(chinfo_det.usability),
+                                                     detector_status(chinfo_det.psd_usability), ProcessStatus(0), filter_type,
+                                                     fill("-", 9)..., truncate_error(res)))
                 processed_dict[filter_type] = false
+            else
+                log_info_dict[filter_type] = log_nt((det, detector_status(chinfo_det.usability),
+                                                     detector_status(chinfo_det.psd_usability), ProcessStatus(1), filter_type,
+                                                     res.log.objective, res.pars.rt, res.pars.ft, res.pars.fwhm, res.pars.w90,
+                                                     res.log.legacy_rt, res.log.legacy_ft, res.pars.converged,
+                                                     res.log.crosscheck_warning, "-"))
+                result_rt_ft_dict[filter_type] = res.pars
+                processed_dict[filter_type] = true
             end
         end
+
         # return results
         return (result = result_rt_ft_dict, log = log_info_dict, processed = processed_dict)
     end
