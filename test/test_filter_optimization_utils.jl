@@ -35,6 +35,10 @@ include(joinpath(@__DIR__, "..", "src", "filter_optimization_utils.jl"))
         @test parent(omask) == mask
         @test_throws DimensionMismatch single_site_aoe_cut(a, e[begin:end-1]; aoe_cut_sigma = 2.0)
         @test_throws ArgumentError single_site_aoe_cut(a[begin:begin+49], e[begin:begin+49]; aoe_cut_sigma = 2.0)
+        # a flat A/E plateau above the mode has no Gaussian high side
+        rng_flat = MersenneTwister(1)
+        a_flat = vcat(1.0 .+ 0.01 .* randn(rng_flat, 3000), 1.0 .+ 0.15 .* rand(rng_flat, 15000), 0.85 .+ 0.08 .* randn(rng_flat, 8000)) .* 1000.0
+        @test_throws "The A/E fit is implausible" single_site_aoe_cut(a_flat, fill(1000.0, length(a_flat)); aoe_cut_sigma = 2.0)
     end
 
     @testset "crosscheck_warning" begin

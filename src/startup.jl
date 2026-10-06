@@ -34,7 +34,7 @@ using ParallelProcessingTools: getlabel
     include(joinpath(@__DIR__,"log_texts.jl"))
 
     # filter optimization helpers run inside the per-detector closures on the workers
-    import RadiationDetectorDSP: TrapezoidalChargeFilter, CUSPChargeFilter, ZACChargeFilter
+    import RadiationDetectorDSP: TrapezoidalChargeFilter, CUSPChargeFilter, ZACChargeFilter, InvCRFilter, shift_waveform
     include(joinpath(@__DIR__, "filter_optimization_utils.jl"))
 
     # free memory
