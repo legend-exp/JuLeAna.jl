@@ -73,4 +73,29 @@ include(joinpath(@__DIR__, "..", "src", "filter_optimization_utils.jl"))
             @test collect(h["residuals"].rise_time) == [0.5, 0.7] .* u"µs"
         end
     end
+
+    @testset "limit_peak_waveforms" begin
+        data = (waveform_presummed = collect(1:10), waveform_windowed = collect(11:20), presum_rate = fill(4, 10))
+        kept = limit_peak_waveforms(data, :Tl208FEP, 20)
+        @test kept == (wvfs_pre = collect(1:10), wvfs_wdw = collect(11:20), presum_rate = fill(4, 10))
+        reduced = @test_logs (:warn, r"exceed 4") limit_peak_waveforms(data, :Tl208FEP, 4)
+        @test length(reduced.wvfs_pre) == 4
+        @test all(in(1:4), reduced.wvfs_pre)
+        @test reduced.wvfs_wdw == reduced.wvfs_pre .+ 10
+    end
+
+    @testset "fit_crosscheck_peak" begin
+        rng = MersenneTwister(1)
+        σ = 1.0
+        line = 1592.51u"keV"
+        e_cal = vcat(ustrip(u"keV", line) .+ σ .* randn(rng, 20000), 1570.0 .+ 45.0 .* rand(rng, 4000)) .* u"keV"
+        fit = fit_crosscheck_peak(e_cal, line, DEP_WINDOW; containment = 0.9)
+        @test fit.μ ≈ line atol = 0.05u"keV"
+        @test fit.σ ≈ σ * u"keV" rtol = 0.05
+        @test fit.fwhm ≈ 2.355 * σ * u"keV" rtol = 0.05
+        @test fit.w90 ≈ 3.29 * σ * u"keV" rtol = 0.1
+        @test fit.n_events == count(e -> line - first(DEP_WINDOW) < e < line + last(DEP_WINDOW), e_cal)
+        @test fit.f_fit(ustrip(u"keV", line)) > 0
+        @test_throws ArgumentError fit_crosscheck_peak(e_cal[begin:begin+49], line, DEP_WINDOW; containment = 0.9)
+    end
 end
