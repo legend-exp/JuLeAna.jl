@@ -41,7 +41,8 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
     pars_tau = get_values(l200.par.rpars.pz[period, run])
     @debug "Loaded decay times"
 
-    pars_aoeopt = get_values(PropDict(l200.par.rpars.aoeopt[period, run]))
+    aoeopt_filename = joinpath(data_path(l200.par.rpars.aoeopt), string(period), "$run.yaml")
+    pars_aoeopt = isfile(aoeopt_filename) ? get_values(PropDict(l200.par.rpars.aoeopt[period, run])) : PropDict()
     @debug "Loaded A/E filter optimization pars of $(length(keys(pars_aoeopt))) detectors"
 
     optimization_config = dataprod_config(l200).dsp(filekey).flt_optimization
@@ -89,7 +90,9 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
         if !reprocess && !redo_detector(det) && haskey(pars_db, det)
             @debug "Detector $(det) already processed, check missing filters"
             for filter_type in e_filter
-                if haskey(pars_db[det], filter_type)
+                if haskey(pars_db[det], filter_type) && !(all(k -> haskey(pars_db[det][filter_type], k), (:objective, :w90, :legacy, :converged)) && haskey(pars_db[det][filter_type].legacy, :rt) && haskey(pars_db[det][filter_type].legacy, :ft))
+                    @info "Detector $det, filter $filter_type: pars from the previous method, re-optimizing"
+                elseif haskey(pars_db[det], filter_type)
                     @debug "Filter $filter_type already processed, skip"
                     pars_flt = pars_db[det][filter_type]
                     log_info_dict[filter_type] = log_nt((det, detector_status(chinfo_det.usability),
