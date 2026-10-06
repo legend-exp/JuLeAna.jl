@@ -51,6 +51,14 @@ include(joinpath(@__DIR__, "..", "src", "filter_optimization_utils.jl"))
         missing_new = merge(base, (shifts = (SEP = base.shifts.SEP,),))
         @test occursin("DEP crosscheck missing at the new optimum", crosscheck_warning(base, missing_new; max_shift_sigma = 0.5))
         @test occursin("DEP crosscheck missing at the legacy optimum", crosscheck_warning(missing_new, base; max_shift_sigma = 0.5))
+        nan_shift = merge(base, (shifts = merge(base.shifts, (DEP = (shift = NaN * u"keV", σ = 1.0u"keV"),)),))
+        @test occursin("DEP new shift not finite", crosscheck_warning(base, nan_shift; max_shift_sigma = 0.5))
+        @test occursin("DEP legacy shift not finite", crosscheck_warning(nan_shift, base; max_shift_sigma = 0.5))
+        nan_sigma = merge(base, (shifts = merge(base.shifts, (DEP = (shift = 0.10u"keV", σ = NaN * u"keV"),)),))
+        @test occursin("DEP new σ not finite", crosscheck_warning(base, nan_sigma; max_shift_sigma = 0.5))
+        nan_slow = merge(base, (slow_mean_residual = NaN,))
+        @test occursin("slow-pulse residual not finite", crosscheck_warning(base, nan_slow; max_shift_sigma = 0.5))
+        @test occursin("slow-pulse residual not finite", crosscheck_warning(nan_slow, base; max_shift_sigma = 0.5))
         nothing_checked = (shifts = NamedTuple(), slow_mean_residual = -0.30)
         @test crosscheck_warning(nothing_checked, nothing_checked; max_shift_sigma = 0.5) == ""
     end
@@ -64,6 +72,7 @@ include(joinpath(@__DIR__, "..", "src", "filter_optimization_utils.jl"))
         @test write_fltopt_tables(path, (; evaluation, residuals)) == path
         lh5open(path) do h
             ev = h["evaluation"]
+            # String columns are read with col[:] because collect fails on LH5 string arrays.
             @test ev.scan[:] == ["noise", "ft_scan", "lattice"]
             @test collect(ev.rt) == [5.0, 5.0, 5.5] .* u"µs"
             @test isequal(collect(ev.fwhm), [NaN, 2.5, 2.4] .* u"keV")
