@@ -65,6 +65,7 @@ using ProgressLogging: ProgressLogging
 using ProgressMeter: ProgressMeter, Progress, next!, update!
 using PropDicts: PropDicts, PropDict
 using PropertyFunctions: PropertyFunctions, @pf, filterby
+using RadiationDetectorDSP: RadiationDetectorDSP, CUSPChargeFilter, InvCRFilter, TrapezoidalChargeFilter, ZACChargeFilter, shift_waveform
 using StatsBase: StatsBase, Histogram, fit, mean, median, quantile, sample, std
 using StructArrays: StructArray
 using Tachikoma: Tachikoma
@@ -86,6 +87,7 @@ include("progress.jl")
 include("parallel.jl")
 include("qc.jl")
 include("hit_data.jl")
+include("filter_optimization_utils.jl")
 include("processing_config.jl")
 include("processor_graph.jl")
 include("processing_loop.jl")
