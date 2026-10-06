@@ -35,7 +35,7 @@ using LegendDataManagement: LegendDataManagement, DataCategory, DataPeriod, Data
                             is_lrun, ljl_propfunc, lreport, lreport!, lstring, partitioninfo, process_failed, process_succeeded,
                             process_warning, read_ldata, readlprops, runinfo, start_filekey, writelprops, writelreport
 using LegendDataManagement.LDMUtils: LDMUtils, create_logtbl, create_metadatatbl, create_pars, create_validity, get_partitionvalidity,
-                                     get_plottitle, get_preportfilename, get_rreportfilename, savelfig, writevalidity
+                                     get_plottitle, get_pltfilename, get_preportfilename, get_rreportfilename, savelfig, writevalidity
 using LegendDataTypes: LegendDataTypes, decode_data, fast_flatten
 using LegendDSP: LegendDSP, DSPConfig, dsp_decay_times, dsp_icpc_compressed, dsp_pmts, dsp_qc_flt_optimization_compressed,
                  dsp_qdrift_flt_optimization, dsp_sipm_compressed
