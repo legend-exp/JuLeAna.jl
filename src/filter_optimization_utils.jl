@@ -20,19 +20,25 @@ Gaussian is fitted to the high side of the A/E peak with `fit_half_trunc_gauss`,
 above `μ - aoe_cut_sigma * σ` are kept. This is not the calibrated A/E cut.
 
 Returns the selection mask, which has the axes of `a`, and the report
-`(h, f_fit, μ, σ, cut_value, n_sigma, sf)`, where `sf` is the kept fraction.
+`(h, f_fit, μ, σ, cut_value, n_sigma, sf)`, where `sf` is the kept fraction of the events with
+finite A/E. Throws an `ErrorException` if the fit yields a non-finite `μ` or a non-positive or
+non-finite `σ`.
 """
 function single_site_aoe_cut(a::AbstractVector, e::AbstractVector; aoe_cut_sigma::Real)
     axes(a) == axes(e) || throw(DimensionMismatch("a and e must share axes: $(axes(a)) vs $(axes(e))"))
     aoe = ustrip.(a) ./ ustrip.(e)
     aoe_valid = collect(filter(x -> isfinite(x) && x > 0, aoe))
+    # At least 100 events keep the quantile bounds and the fit meaningful.
     length(aoe_valid) >= 100 || throw(ArgumentError("The A/E selection needs at least 100 finite positive A/E values, got $(length(aoe_valid))"))
+    # The 1% and 99.5% quantiles exclude the low-A/E multi-site tail and high outliers from the
+    # fit range; relative_cut = 0.5 restricts the fit to the region above half the peak height.
     cuts = cut_single_peak(aoe_valid, quantile(aoe_valid, 0.01), quantile(aoe_valid, 0.995); relative_cut = 0.5)
     (; result, report) = fit_half_trunc_gauss(aoe_valid, cuts; left = false, uncertainty = false)
     μ, σ = mvalue(result.μ), mvalue(result.σ)
+    isfinite(μ) && isfinite(σ) && σ > 0 || error("The A/E fit is degenerate: μ = $μ, σ = $σ")
     cut_value = μ - aoe_cut_sigma * σ
     mask = map(x -> isfinite(x) && x > cut_value, aoe)
-    return mask, (h = report.h, f_fit = report.f_fit, μ = μ, σ = σ, cut_value = cut_value, n_sigma = aoe_cut_sigma, sf = count(mask) / length(mask))
+    return mask, (h = report.h, f_fit = report.f_fit, μ = μ, σ = σ, cut_value = cut_value, n_sigma = aoe_cut_sigma, sf = count(mask) / count(isfinite, aoe))
 end
 
 
@@ -47,7 +53,8 @@ percent of events by `t90 - t10`.
 
 A peak is flagged when its shift changes by more than `max_shift_sigma` times its σ at the new
 optimum, or when it is missing at one of the two optima; the slow-pulse class is flagged when
-its mean residual changes by more than `max_shift_sigma`.
+its mean residual changes by more than `max_shift_sigma`. A non-finite shift, σ or residual is
+always flagged as "not finite".
 """
 function crosscheck_warning(legacy::NamedTuple, new::NamedTuple; max_shift_sigma::Real)
     warnings = String[]
@@ -56,11 +63,23 @@ function crosscheck_warning(legacy::NamedTuple, new::NamedTuple; max_shift_sigma
             push!(warnings, "$peak crosscheck missing at the $(haskey(new.shifts, peak) ? "legacy" : "new") optimum")
             continue
         end
+        nonfinite = String[]
+        for (label, x) in (("legacy shift", legacy.shifts[peak].shift), ("new shift", new.shifts[peak].shift), ("new σ", new.shifts[peak].σ))
+            isfinite(x) || push!(nonfinite, label)
+        end
+        if !isempty(nonfinite)
+            push!(warnings, "$peak $(join(nonfinite, ", ")) not finite")
+            continue
+        end
         Δ = new.shifts[peak].shift - legacy.shifts[peak].shift
         abs(Δ) > max_shift_sigma * new.shifts[peak].σ && push!(warnings, "$peak shift changed by $(round(u"keV", Δ, digits = 2))")
     end
     Δslow = new.slow_mean_residual - legacy.slow_mean_residual
-    abs(Δslow) > max_shift_sigma && push!(warnings, "slow-pulse residual changed by $(round(Δslow, digits = 2))σ")
+    if !isfinite(Δslow)
+        push!(warnings, "slow-pulse residual not finite")
+    elseif abs(Δslow) > max_shift_sigma
+        push!(warnings, "slow-pulse residual changed by $(round(Δslow, digits = 2))σ")
+    end
     return join(warnings, "; ")
 end
 
@@ -70,7 +89,8 @@ end
 
 Write every entry of `tables` (anything `TypedTables.Table` accepts) to the LH5 file `path`
 under its name. Symbol and string columns are stored as strings, `Measurement` values as
-their central values.
+their central values. An existing file at `path` is overwritten. Read string columns back with
+`col[:]`; `collect` fails on LH5 string arrays.
 """
 function write_fltopt_tables(path::AbstractString, tables::NamedTuple)
     lh5open(path, "w") do h
