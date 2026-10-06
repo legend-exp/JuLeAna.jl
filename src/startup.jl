@@ -33,6 +33,10 @@ using ParallelProcessingTools: getlabel
     global_logger(UnderscoreSafeLogger(TerminalLogger()))
     include(joinpath(@__DIR__,"log_texts.jl"))
 
+    # filter optimization helpers run inside the per-detector closures on the workers
+    import RadiationDetectorDSP: TrapezoidalChargeFilter, CUSPChargeFilter, ZACChargeFilter
+    include(joinpath(@__DIR__, "filter_optimization_utils.jl"))
+
     # free memory
     GC.gc()
 end
