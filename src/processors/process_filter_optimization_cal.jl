@@ -118,6 +118,10 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
         end
         yield()
 
+        haskey(pars_tau, det) && haskey(pars_tau[det], :τ) || throw(ErrorException("Detector $det has no decay time τ in the pz pars of $period-$run"))
+        haskey(pars_aoeopt, det) && !(haskey(pars_aoeopt[det], :sg) && haskey(pars_aoeopt[det].sg, :wl)) &&
+            throw(ErrorException("Detector $det has no SG window length sg.wl in the aoeopt pars of $period-$run"))
+
         # SG window length of the A/E crosscheck: aoeopt pars of this run, else the DSP config default
         sg_wl, sg_wl_source = if haskey(pars_aoeopt, det)
             pars_aoeopt[det].sg.wl, "aoeopt pars"
