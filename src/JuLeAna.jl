@@ -65,6 +65,7 @@ using ProgressLogging: ProgressLogging
 using ProgressMeter: ProgressMeter, Progress, next!, update!
 using PropDicts: PropDicts, PropDict
 using PropertyFunctions: PropertyFunctions, @pf, filterby
+using Random: Random, AbstractRNG, MersenneTwister, shuffle
 using RadiationDetectorDSP: RadiationDetectorDSP, CUSPChargeFilter, InvCRFilter, TrapezoidalChargeFilter, ZACChargeFilter, shift_waveform
 using StatsBase: StatsBase, Histogram, fit, mean, median, quantile, sample, std
 using StructArrays: StructArray
