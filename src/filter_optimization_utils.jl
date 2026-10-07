@@ -75,7 +75,8 @@ Warning text for a new optimum that degrades the reconstruction relative to the 
 `""` if nothing is flagged. Both arguments carry `shifts`, a NamedTuple of `(shift, σ)` per
 crosscheck peak (the fitted position relative to its FEP-calibrated expectation, and the peak
 width), and `slow_mean_residual`, the mean FEP residual in units of σ of the slowest five
-percent of events by `t90 - t10`.
+percent of events by `t90 - t10`. Both also carry `rows`, the crosscheck table rows with `peak` and
+`status`; every peak whose status is not `"ok"` is reported with the optima at which its fit failed.
 
 Only degradations are flagged: a peak when `abs(new shift) > abs(legacy shift) +
 max_shift_sigma * σ` with σ at the new optimum, or when it is missing at one of the two optima;
@@ -84,7 +85,12 @@ of σ). A non-finite shift, σ or residual is always flagged as "not finite".
 """
 function crosscheck_warning(legacy::NamedTuple, new::NamedTuple; max_shift_sigma::Real)
     warnings = String[]
+    failed = Dict{String, Vector{String}}()
+    for (label, cc) in (("legacy", legacy), ("new", new)), row in cc.rows
+        row.status == "ok" || push!(get!(failed, row.peak, String[]), label)
+    end
     for peak in union(keys(legacy.shifts), keys(new.shifts))
+        haskey(failed, String(peak)) && continue
         if !(haskey(legacy.shifts, peak) && haskey(new.shifts, peak))
             push!(warnings, "$peak crosscheck missing at the $(haskey(new.shifts, peak) ? "legacy" : "new") optimum")
             continue
@@ -100,6 +106,9 @@ function crosscheck_warning(legacy::NamedTuple, new::NamedTuple; max_shift_sigma
         s_legacy, s_new = legacy.shifts[peak].shift, new.shifts[peak].shift
         abs(s_new) > abs(s_legacy) + max_shift_sigma * new.shifts[peak].σ &&
             push!(warnings, "$peak shift grew from $(round(u"keV", s_legacy, digits = 2)) to $(round(u"keV", s_new, digits = 2))")
+    end
+    for peak in sort!(collect(keys(failed)))
+        push!(warnings, "$peak fit failed ($(join(failed[peak], ", ")))")
     end
     r_legacy, r_new = legacy.slow_mean_residual, new.slow_mean_residual
     if !(isfinite(r_legacy) && isfinite(r_new))
@@ -222,6 +231,22 @@ end
 
 
 """
+    try_fit_crosscheck_peak(e_cal, line, window; containment)
+
+`(fit_crosscheck_peak(e_cal, line, window; containment), "ok")`, or `(nothing, "failed: ...")` if
+the fit throws an `ErrorException` or `ArgumentError`. Every other exception propagates.
+"""
+function try_fit_crosscheck_peak(e_cal, line, window; containment)
+    try
+        return fit_crosscheck_peak(e_cal, line, window; containment), "ok"
+    catch err
+        err isa Union{ErrorException, ArgumentError} || rethrow()
+        return nothing, "failed: $(truncate_error(err, 200))"
+    end
+end
+
+
+"""
     crosscheck_optimum(sets::NamedTuple, pulse::NamedTuple, aoe::AbstractVector, aoe_mask,
                        dsp_config::DSPConfig, opt_config::PropDict, flt_config::PropDict,
                        flt::Symbol, rt::Unitful.Time, ft::Unitful.Time)
@@ -231,9 +256,9 @@ Reconstruction crosscheck of filter `flt` at `(rt, ft)`.
 The FEP set is evaluated with `evaluate_energy_point`; its qdrift slope `fct` and simple
 calibration `m_cal_simple` are applied unchanged to the DEP and SEP sets (present in `sets` if
 enabled) and to the FEP events selected by `aoe_mask` (`nothing` disables this check). Every
-peak is fitted with `fit_crosscheck_peak`. A failing FEP fit throws; failing DEP, SEP and
-single-site FEP fits are recorded in the `status` of their row and left out of `fits` and
-`shifts`.
+peak is fitted with `fit_crosscheck_peak`. A failing FEP fit throws; DEP, SEP and single-site
+FEP fits that fail with an `ErrorException` or `ArgumentError` are recorded in the `status` of
+their row and left out of `fits` and `shifts`.
 
 Per-event FEP residuals `(e - μ) / σ` cover the events inside the FEP window with finite
 `t10`, `t90` and A/E; `slow_mean` is their mean over the slowest five percent by `t90 - t10`.
@@ -271,15 +296,10 @@ function crosscheck_optimum(sets::NamedTuple, pulse::NamedTuple, aoe::AbstractVe
 
     fit_names, fit_values, statuses = Symbol[], NamedTuple[], String[]
     for c in checks
-        fit, status = try
-            fit_crosscheck_peak(c.e_cal, c.line, c.window; containment), "ok"
-        catch e
-            e isa InterruptException && rethrow()
-            # every other crosscheck is calibrated with the FEP fit
-            c.name == :FEP && rethrow()
-            @warn "$(c.name) crosscheck of $flt at rt = $rt, ft = $ft failed: $(truncate_error(e))"
-            nothing, "failed: $(truncate_error(e, 200))"
-        end
+        # every other crosscheck is calibrated with the FEP fit
+        fit, status = c.name == :FEP ? (fit_crosscheck_peak(c.e_cal, c.line, c.window; containment), "ok") :
+            try_fit_crosscheck_peak(c.e_cal, c.line, c.window; containment)
+        status == "ok" || @warn "$(c.name) crosscheck of $flt at rt = $rt, ft = $ft: $status"
         push!(statuses, status)
         isnothing(fit) || (push!(fit_names, c.name); push!(fit_values, fit))
     end
@@ -469,14 +489,14 @@ function optimize_channel_filter(sets::NamedTuple, pulse::NamedTuple, flt::Symbo
                valid[partialsortperm(aoe[valid], 1:n_class, rev = true)])
     wvfs = prep.wvfs_pz[idx]
     flt_legacy, flt_new = map(((rt_enc, legacy_ft), (rt_new, ft_new))) do (rt, ft)
-        # the filters take all times in one type, as in dsp_energy_rtft
+        # the filters take all times in one floating-point type
         flt_obj = if flt == :trap
             T = typeof(float(prep.sampling_period))
             TrapezoidalChargeFilter(convert(T, rt), convert(T, ft))
         else
             # CUSP and ZAC with the constants of dsp_energy_rtft
             flt_length = getproperty(dsp_config, Symbol("flt_length_$(flt)"))
-            T = typeof(flt_length)
+            T = typeof(float(flt_length))
             (flt == :cusp ? CUSPChargeFilter : ZACChargeFilter)(convert(T, rt), convert(T, ft), convert(T, 10000000.0u"µs"),
                 flt_length, ustrip(NoUnits, flt_length / prep.sampling_period))
         end
