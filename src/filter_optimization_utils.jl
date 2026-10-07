@@ -13,31 +13,36 @@ const DEP_PEAKNAME = :Tl208DEP_Bi212FEP
 const SEP_PEAKNAME = :Tl208SEP
 
 """
-    single_site_aoe_cut(a::AbstractVector, e::AbstractVector; aoe_cut_sigma::Real)
+    single_site_aoe_cut(a_fit::AbstractVector, e_fit::AbstractVector, a::AbstractVector, e::AbstractVector; aoe_cut_sigma::Real)
 
-Coarse in-situ single-site selection on the A/E values `a ./ e` (units stripped). A truncated
-Gaussian is fitted to the high side of the A/E peak with `fit_half_trunc_gauss`, and events
-above `μ - aoe_cut_sigma * σ` are kept. This is not the calibrated A/E cut.
+Coarse in-situ single-site selection. The single-site A/E band is fitted on the A/E values
+`a_fit ./ e_fit` (units stripped) of a nearly pure single-site sample, the DEP: a truncated
+Gaussian is fitted to the high side of its A/E peak with `fit_half_trunc_gauss`. Events of
+`a ./ e`, the FEP, above `μ - aoe_cut_sigma * σ` are kept. The band is not energy-corrected
+between the two samples, and this is not the calibrated A/E cut.
 
 Returns the selection mask, which has the axes of `a`, and the report
-`(h, f_fit, μ, σ, cut_value, n_sigma, sf)`, where `sf` is the kept fraction of the events with
-finite A/E. Throws an `ErrorException` if the fit yields a non-finite `μ`, a non-positive or
-non-finite `σ`, or a `μ` outside the range of the A/E peak given by `cut_single_peak`.
+`(h, f_fit, μ, σ, cut_value, n_sigma, sf)`, where `h` and `f_fit` describe the fitted
+`a_fit ./ e_fit` distribution and `sf` is the kept fraction of the `a ./ e` events with finite
+A/E. Throws an `ArgumentError` with fewer than 100 finite positive fit values, and an
+`ErrorException` if the fit yields a non-finite `μ`, a non-positive or non-finite `σ`, or a
+`μ` outside the range of the A/E peak given by `cut_single_peak`.
 """
-function single_site_aoe_cut(a::AbstractVector, e::AbstractVector; aoe_cut_sigma::Real)
+function single_site_aoe_cut(a_fit::AbstractVector, e_fit::AbstractVector, a::AbstractVector, e::AbstractVector; aoe_cut_sigma::Real)
+    axes(a_fit) == axes(e_fit) || throw(DimensionMismatch("a_fit and e_fit must share axes: $(axes(a_fit)) vs $(axes(e_fit))"))
     axes(a) == axes(e) || throw(DimensionMismatch("a and e must share axes: $(axes(a)) vs $(axes(e))"))
-    aoe = ustrip.(a) ./ ustrip.(e)
-    aoe_valid = collect(filter(x -> isfinite(x) && x > 0, aoe))
+    aoe_fit = collect(filter(x -> isfinite(x) && x > 0, ustrip.(a_fit) ./ ustrip.(e_fit)))
     # At least 100 events keep the quantile bounds and the fit meaningful.
-    length(aoe_valid) >= 100 || throw(ArgumentError("The A/E selection needs at least 100 finite positive A/E values, got $(length(aoe_valid))"))
+    length(aoe_fit) >= 100 || throw(ArgumentError("The A/E selection needs at least 100 finite positive A/E values to fit, got $(length(aoe_fit))"))
     # The 1% and 99.5% quantiles exclude the low-A/E multi-site tail and high outliers from the
     # fit range; relative_cut = 0.5 restricts the fit to the region above half the peak height.
-    cuts = cut_single_peak(aoe_valid, quantile(aoe_valid, 0.01), quantile(aoe_valid, 0.995); relative_cut = 0.5)
-    (; result, report) = fit_half_trunc_gauss(aoe_valid, cuts; left = false, uncertainty = false)
+    cuts = cut_single_peak(aoe_fit, quantile(aoe_fit, 0.01), quantile(aoe_fit, 0.995); relative_cut = 0.5)
+    (; result, report) = fit_half_trunc_gauss(aoe_fit, cuts; left = false, uncertainty = false)
     μ, σ = mvalue(result.μ), mvalue(result.σ)
     isfinite(μ) && isfinite(σ) && σ > 0 || error("The A/E fit is degenerate: μ = $μ, σ = $σ")
     cuts.low <= μ <= cuts.high || error("The A/E fit is implausible: μ = $μ outside the fit range $(cuts.low) .. $(cuts.high)")
     cut_value = μ - aoe_cut_sigma * σ
+    aoe = ustrip.(a) ./ ustrip.(e)
     mask = map(x -> isfinite(x) && x > cut_value, aoe)
     return mask, (h = report.h, f_fit = report.f_fit, μ = μ, σ = σ, cut_value = cut_value, n_sigma = aoe_cut_sigma, sf = count(mask) / count(isfinite, aoe))
 end
@@ -46,16 +51,16 @@ end
 """
     crosscheck_warning(legacy::NamedTuple, new::NamedTuple; max_shift_sigma::Real)
 
-Warning text for a new optimum that moves the reconstruction relative to the legacy optimum,
+Warning text for a new optimum that degrades the reconstruction relative to the legacy optimum,
 `""` if nothing is flagged. Both arguments carry `shifts`, a NamedTuple of `(shift, σ)` per
 crosscheck peak (the fitted position relative to its FEP-calibrated expectation, and the peak
 width), and `slow_mean_residual`, the mean FEP residual in units of σ of the slowest five
 percent of events by `t90 - t10`.
 
-A peak is flagged when its shift changes by more than `max_shift_sigma` times its σ at the new
-optimum, or when it is missing at one of the two optima; the slow-pulse class is flagged when
-its mean residual changes by more than `max_shift_sigma`. A non-finite shift, σ or residual is
-always flagged as "not finite".
+Only degradations are flagged: a peak when `abs(new shift) > abs(legacy shift) +
+max_shift_sigma * σ` with σ at the new optimum, or when it is missing at one of the two optima;
+the slow-pulse class when `abs(new residual) > abs(legacy residual) + max_shift_sigma` (in units
+of σ). A non-finite shift, σ or residual is always flagged as "not finite".
 """
 function crosscheck_warning(legacy::NamedTuple, new::NamedTuple; max_shift_sigma::Real)
     warnings = String[]
@@ -72,14 +77,15 @@ function crosscheck_warning(legacy::NamedTuple, new::NamedTuple; max_shift_sigma
             push!(warnings, "$peak $(join(nonfinite, ", ")) not finite")
             continue
         end
-        Δ = new.shifts[peak].shift - legacy.shifts[peak].shift
-        abs(Δ) > max_shift_sigma * new.shifts[peak].σ && push!(warnings, "$peak shift changed by $(round(u"keV", Δ, digits = 2))")
+        s_legacy, s_new = legacy.shifts[peak].shift, new.shifts[peak].shift
+        abs(s_new) > abs(s_legacy) + max_shift_sigma * new.shifts[peak].σ &&
+            push!(warnings, "$peak shift grew from $(round(u"keV", s_legacy, digits = 2)) to $(round(u"keV", s_new, digits = 2))")
     end
-    Δslow = new.slow_mean_residual - legacy.slow_mean_residual
-    if !isfinite(Δslow)
+    r_legacy, r_new = legacy.slow_mean_residual, new.slow_mean_residual
+    if !(isfinite(r_legacy) && isfinite(r_new))
         push!(warnings, "slow-pulse residual not finite")
-    elseif abs(Δslow) > max_shift_sigma
-        push!(warnings, "slow-pulse residual changed by $(round(Δslow, digits = 2))σ")
+    elseif abs(r_new) > abs(r_legacy) + max_shift_sigma
+        push!(warnings, "slow-pulse residual grew from $(round(r_legacy, digits = 2))σ to $(round(r_new, digits = 2))σ")
     end
     return join(warnings, "; ")
 end
@@ -322,8 +328,9 @@ Optimization of energy filter `flt` of one detector on the prepared peak sets `s
    objective and the legacy optimum `(rt_enc, legacy_ft)`;
 3. joint lattice search from `(rt_enc, ft0)` with `optimize_rtft`;
 4. crosschecks at the legacy and the new optimum (`crosscheck_optimum`, `crosscheck_warning`),
-   with the single-site A/E selection made on the energies at the new optimum; a failing A/E
-   selection drops the FEP_SSE crosscheck and its figure and is reported in the warning;
+   with the single-site A/E band fitted on the DEP and applied to the FEP, both with the
+   energies at the new optimum; a failing A/E selection drops the FEP_SSE crosscheck and its
+   figure and is reported in the warning;
 5. figures through `f_save(fig, name)` with titles `f_title(label, flt)`, and tables written
    to `f_tablepath(flt)` with `write_fltopt_tables`.
 
@@ -405,7 +412,8 @@ function optimize_channel_filter(sets::NamedTuple, pulse::NamedTuple, flt::Symbo
     # A failing A/E selection drops the FEP_SSE crosscheck and is reported in the crosscheck warning.
     aoe_mask, report_aoe, aoe_failure = if opt_config.crosscheck.aoe_cut
         try
-            (single_site_aoe_cut(pulse.a, e_new; aoe_cut_sigma = opt_config.crosscheck.aoe_cut_sigma)..., "")
+            e_dep_new = dsp_energy_rtft(sets.dep.prep, dsp_config, rt_new, ft_new, flt)
+            (single_site_aoe_cut(sets.dep.a, e_dep_new, pulse.a, e_new; aoe_cut_sigma = opt_config.crosscheck.aoe_cut_sigma)..., "")
         catch e
             e isa InterruptException && rethrow()
             @warn "Single-site A/E selection of $flt failed: $(truncate_error(e))"
@@ -508,10 +516,11 @@ end
 Filter optimization of one detector. Loads the FEP waveforms and, if enabled in
 `opt_config.crosscheck`, the DEP and SEP waveforms with `f_load(peakname)` (as returned by
 `load_peak_waveforms`), applies the QC, computes qdrift and prepares every set once
-(`prepare_peak_set`), computes the FEP pulse shapes on the windowed waveforms with the SG window
-length `sg_wl`, and runs
-`optimize_channel_filter` for every filter in `filter_types`, a vector of filter `Symbol`s
-(the keys of a `PropDict`, whose eltype is wider than `Symbol`).
+(`prepare_peak_set`), computes the FEP pulse shapes (and, for the single-site A/E selection,
+the DEP current amplitudes `sets.dep.a`) on the windowed waveforms with the SG window length
+`sg_wl`, and runs `optimize_channel_filter` for every filter in `filter_types`, a vector of
+filter `Symbol`s (the keys of a `PropDict`, whose eltype is wider than `Symbol`). Throws an
+`ArgumentError` if `opt_config.crosscheck.aoe_cut` is enabled without `crosscheck.dep`.
 
 Returns a `Dict` from filter to its `(pars, log)`, or to the exception that stopped that
 filter. Errors while loading or preparing a peak set propagate.
@@ -519,6 +528,8 @@ filter. Errors while loading or preparing a peak set propagate.
 function run_filter_optimization_channel(f_load::Function, filter_types::AbstractVector, dsp_config::DSPConfig,
         opt_config::PropDict, τ::Unitful.Time, f_evaluate_qc, sg_wl::Unitful.Time, sg_wl_source::AbstractString;
         f_title::Function, f_save::Function, f_tablepath::Function)
+    opt_config.crosscheck.aoe_cut && !opt_config.crosscheck.dep && throw(ArgumentError(
+        "The single-site A/E selection (crosscheck.aoe_cut) is fitted on the DEP and needs crosscheck.dep"))
     peaknames = (fep = Symbol(opt_config.peakname),)
     opt_config.crosscheck.dep && (peaknames = merge(peaknames, (dep = DEP_PEAKNAME,)))
     opt_config.crosscheck.sep && (peaknames = merge(peaknames, (sep = SEP_PEAKNAME,)))
@@ -530,8 +541,14 @@ function run_filter_optimization_channel(f_load::Function, filter_types::Abstrac
             throw(ErrorException("$(peaknames[key]): $(truncate_error(e))"))
         end
         # the raw presummed waveforms serve only the FEP noise scan, the windowed ones only the
-        # FEP pulse shapes
-        key == :fep ? set : (prep = set.prep, qdrift = set.qdrift)
+        # FEP pulse shapes and the DEP A/E of the single-site selection
+        if key == :fep
+            set
+        elseif key == :dep && opt_config.crosscheck.aoe_cut
+            (prep = set.prep, qdrift = set.qdrift, a = dsp_pulse_shape_flt_optimization((wvfs_pz = set.wvfs_wdw_pz,), dsp_config, sg_wl).a)
+        else
+            (prep = set.prep, qdrift = set.qdrift)
+        end
     end)
     pulse = dsp_pulse_shape_flt_optimization((wvfs_pz = sets.fep.wvfs_wdw_pz,), dsp_config, sg_wl)
     sets = merge(sets, (fep = Base.structdiff(sets.fep, NamedTuple{(:wvfs_wdw_pz,)}),))
