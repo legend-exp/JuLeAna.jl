@@ -17,41 +17,56 @@ include(joinpath(@__DIR__, "..", "src", "filter_optimization_utils.jl"))
 
     @testset "single_site_aoe_cut" begin
         rng = MersenneTwister(42)
-        n_ss, n_ms = 20000, 8000
+        # fit sample (DEP-like): nearly pure single-site
+        n_fit_ss, n_fit_ms = 20000, 2000
+        e_fit = fill(500.0, n_fit_ss + n_fit_ms)
+        a_fit = vcat(1.0 .+ 0.01 .* randn(rng, n_fit_ss), 0.85 .+ 0.05 .* randn(rng, n_fit_ms)) .* e_fit
+        # selected sample (FEP-like): single-site and multi-site events, different energy
+        n_ss, n_ms = 6000, 14000
         e = fill(1000.0, n_ss + n_ms)
-        aoe_true = vcat(1.0 .+ 0.01 .* randn(rng, n_ss), 0.85 .+ 0.05 .* randn(rng, n_ms))
-        a = aoe_true .* e
-        mask, report = single_site_aoe_cut(a, e; aoe_cut_sigma = 2.0)
+        a = vcat(1.0 .+ 0.01 .* randn(rng, n_ss), 0.85 .+ 0.05 .* randn(rng, n_ms)) .* e
+        mask, report = single_site_aoe_cut(a_fit, e_fit, a, e; aoe_cut_sigma = 2.0)
         @test keys(report) == (:h, :f_fit, :μ, :σ, :cut_value, :n_sigma, :sf)
-        @test report.μ ≈ 1.0 atol = 0.003
-        @test report.σ ≈ 0.01 rtol = 0.2
+        @test report.μ ≈ 1.0 atol = 0.01
+        @test report.σ ≈ 0.01 rtol = 0.6
         @test report.cut_value ≈ report.μ - 2.0 * report.σ
+        @test axes(mask) == axes(a)
         @test count(mask[begin:n_ss]) / n_ss > 0.95
         @test count(mask[n_ss+1:end]) / n_ms < 0.1
+        # sf refers to the selected sample, the histogram to the fit sample
         @test report.sf == count(mask) / length(mask)
-        # the mask keeps the axes of the input
-        omask, _ = single_site_aoe_cut(OffsetArray(a, -7), OffsetArray(e, -7); aoe_cut_sigma = 2.0)
+        @test sum(report.h.weights) <= n_fit_ss + n_fit_ms
+        # the mask keeps the axes of the selected sample
+        omask, _ = single_site_aoe_cut(a_fit, e_fit, OffsetArray(a, -7), OffsetArray(e, -7); aoe_cut_sigma = 2.0)
         @test axes(omask) == axes(OffsetArray(a, -7))
         @test parent(omask) == mask
-        @test_throws DimensionMismatch single_site_aoe_cut(a, e[begin:end-1]; aoe_cut_sigma = 2.0)
-        @test_throws ArgumentError single_site_aoe_cut(a[begin:begin+49], e[begin:begin+49]; aoe_cut_sigma = 2.0)
+        @test_throws DimensionMismatch single_site_aoe_cut(a_fit, e_fit, a, e[begin:end-1]; aoe_cut_sigma = 2.0)
+        @test_throws DimensionMismatch single_site_aoe_cut(a_fit, e_fit[begin:end-1], a, e; aoe_cut_sigma = 2.0)
+        @test_throws ArgumentError single_site_aoe_cut(a_fit[begin:begin+49], e_fit[begin:begin+49], a, e; aoe_cut_sigma = 2.0)
         # a flat A/E plateau above the mode has no Gaussian high side
         rng_flat = MersenneTwister(1)
         a_flat = vcat(1.0 .+ 0.01 .* randn(rng_flat, 3000), 1.0 .+ 0.15 .* rand(rng_flat, 15000), 0.85 .+ 0.08 .* randn(rng_flat, 8000)) .* 1000.0
-        @test_throws "The A/E fit is implausible" single_site_aoe_cut(a_flat, fill(1000.0, length(a_flat)); aoe_cut_sigma = 2.0)
+        @test_throws "The A/E fit is implausible" single_site_aoe_cut(a_flat, fill(1000.0, length(a_flat)), a, e; aoe_cut_sigma = 2.0)
     end
 
     @testset "crosscheck_warning" begin
         base = (shifts = (DEP = (shift = 0.10u"keV", σ = 1.0u"keV"), SEP = (shift = -0.20u"keV", σ = 1.2u"keV")),
                 slow_mean_residual = -0.30)
         @test crosscheck_warning(base, base; max_shift_sigma = 0.5) == ""
-        moved = merge(base, (shifts = merge(base.shifts, (DEP = (shift = 0.70u"keV", σ = 1.0u"keV"),)),))
-        @test occursin("DEP", crosscheck_warning(base, moved; max_shift_sigma = 0.5))
-        @test !occursin("SEP", crosscheck_warning(base, moved; max_shift_sigma = 0.5))
-        within = merge(base, (shifts = merge(base.shifts, (DEP = (shift = 0.55u"keV", σ = 1.0u"keV"),)),))
-        @test crosscheck_warning(base, within; max_shift_sigma = 0.5) == ""
-        slow = merge(base, (slow_mean_residual = 0.40,))
-        @test occursin("slow-pulse", crosscheck_warning(base, slow; max_shift_sigma = 0.5))
+        # |0.70| > |0.10| + 0.5 * 1.0
+        grown = merge(base, (shifts = merge(base.shifts, (DEP = (shift = 0.70u"keV", σ = 1.0u"keV"),)),))
+        @test occursin("DEP shift grew", crosscheck_warning(base, grown; max_shift_sigma = 0.5))
+        @test !occursin("SEP", crosscheck_warning(base, grown; max_shift_sigma = 0.5))
+        # an improvement of the same size is not flagged
+        @test crosscheck_warning(grown, base; max_shift_sigma = 0.5) == ""
+        # a sign change without growth is not flagged: |-0.55| <= |0.10| + 0.5
+        flipped = merge(base, (shifts = merge(base.shifts, (DEP = (shift = -0.55u"keV", σ = 1.0u"keV"),)),))
+        @test crosscheck_warning(base, flipped; max_shift_sigma = 0.5) == ""
+        slow = merge(base, (slow_mean_residual = -0.90,))
+        @test occursin("slow-pulse residual grew", crosscheck_warning(base, slow; max_shift_sigma = 0.5))
+        @test crosscheck_warning(slow, base; max_shift_sigma = 0.5) == ""
+        slow_flip = merge(base, (slow_mean_residual = 0.40,))
+        @test crosscheck_warning(base, slow_flip; max_shift_sigma = 0.5) == ""
         missing_new = merge(base, (shifts = (SEP = base.shifts.SEP,),))
         @test occursin("DEP crosscheck missing at the new optimum", crosscheck_warning(base, missing_new; max_shift_sigma = 0.5))
         @test occursin("DEP crosscheck missing at the legacy optimum", crosscheck_warning(missing_new, base; max_shift_sigma = 0.5))
