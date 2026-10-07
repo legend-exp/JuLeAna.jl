@@ -23,6 +23,7 @@ using ParallelProcessingTools: getlabel
     using HDF5
     using LegendDataTypes: fast_flatten, flatten_by_key, map_chunked
     using Base.Iterators, StructArrays
+    using Random: MersenneTwister, AbstractRNG, shuffle
 
     # set logging to Terminallogger for Markdown output
     using Logging: global_logger

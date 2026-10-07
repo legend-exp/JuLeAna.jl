@@ -104,12 +104,26 @@ include(joinpath(@__DIR__, "..", "src", "filter_optimization_utils.jl"))
 
     @testset "limit_peak_waveforms" begin
         data = (waveform_presummed = collect(1:10), waveform_windowed = collect(11:20), presum_rate = fill(4, 10))
-        kept = limit_peak_waveforms(data, :Tl208FEP, 20)
+        kept = limit_peak_waveforms(data, :Tl208FEP, 20, MersenneTwister(1))
         @test kept == (wvfs_pre = collect(1:10), wvfs_wdw = collect(11:20), presum_rate = fill(4, 10))
-        reduced = @test_logs (:warn, r"exceed 4") limit_peak_waveforms(data, :Tl208FEP, 4)
+        reduced = @test_logs (:warn, r"exceed 4") limit_peak_waveforms(data, :Tl208FEP, 4, MersenneTwister(1))
         @test length(reduced.wvfs_pre) == 4
-        @test all(in(1:4), reduced.wvfs_pre)
+        @test allunique(reduced.wvfs_pre)
+        @test issorted(reduced.wvfs_pre)
         @test reduced.wvfs_wdw == reduced.wvfs_pre .+ 10
+        # the same seed selects the same events
+        again = @test_logs (:warn, r"exceed 4") limit_peak_waveforms(data, :Tl208FEP, 4, MersenneTwister(1))
+        @test again == reduced
+        # the selection draws from all events, not only the first max_wvfs
+        big = (waveform_presummed = collect(1:1000), waveform_windowed = collect(1:1000), presum_rate = fill(4, 1000))
+        sel = @test_logs (:warn, r"exceed 500") limit_peak_waveforms(big, :Tl208FEP, 500, MersenneTwister(7)).wvfs_pre
+        @test allunique(sel)
+        @test minimum(sel) <= 10 && maximum(sel) >= 990
+        @test count(>(500), sel) > 200
+        # generic indices
+        odata = (waveform_presummed = OffsetArray(collect(1:10), -3), waveform_windowed = OffsetArray(collect(11:20), -3), presum_rate = OffsetArray(fill(4, 10), -3))
+        osel = @test_logs (:warn, r"exceed 4") limit_peak_waveforms(odata, :Tl208FEP, 4, MersenneTwister(1))
+        @test allunique(osel.wvfs_pre) && all(in(1:10), osel.wvfs_pre)
     end
 
     @testset "fit_crosscheck_peak" begin
