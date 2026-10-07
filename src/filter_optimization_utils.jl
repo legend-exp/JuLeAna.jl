@@ -115,28 +115,34 @@ end
 
 Presummed and windowed waveforms and presum rates of the `peakname` events of detector `det`
 from the jlpks tier: of the run of `filekey`, or of all runs of the partition `partinfo_det`
-with `n_evts` events per run. See `limit_peak_waveforms` for sets above `max_wvfs` events.
+with `n_evts` events per run. Sets above `max_wvfs` events are reduced with
+`limit_peak_waveforms`, with an RNG seeded from the detector and the filekey (or the runs of
+the partition), so that repeated runs select the same events.
 """
 function load_peak_waveforms(l200::LegendData, filekey::FileKey, det, peakname::Symbol, max_wvfs::Integer)
-    limit_peak_waveforms(read_ldata(peakname, l200, DataTier(:jlpks), filekey, det), peakname, max_wvfs)
+    rng = MersenneTwister(hash((string(det), string(filekey))))
+    limit_peak_waveforms(read_ldata(peakname, l200, DataTier(:jlpks), filekey, det), peakname, max_wvfs, rng)
 end
 
 function load_peak_waveforms(l200::LegendData, partinfo_det, det, peakname::Symbol, max_wvfs::Integer; n_evts::Integer)
-    limit_peak_waveforms(read_ldata(peakname, l200, DataTier(:jlpks), :cal, partinfo_det, det; n_evts), peakname, max_wvfs)
+    rng = MersenneTwister(hash((string(det), join(string.(partinfo_det.period, "-", partinfo_det.run), ","))))
+    limit_peak_waveforms(read_ldata(peakname, l200, DataTier(:jlpks), :cal, partinfo_det, det; n_evts), peakname, max_wvfs, rng)
 end
 
 
 """
-    limit_peak_waveforms(peak_data, peakname::Symbol, max_wvfs::Integer)
+    limit_peak_waveforms(peak_data, peakname::Symbol, max_wvfs::Integer, rng::AbstractRNG)
 
 `(wvfs_pre, wvfs_wdw, presum_rate)` of `peak_data`. A set with more than `max_wvfs` events is
-reduced to `max_wvfs` indices drawn with replacement from the first `max_wvfs` events.
+reduced to `max_wvfs` distinct events drawn with `rng` without replacement from all events,
+kept in their original order.
 """
-function limit_peak_waveforms(peak_data, peakname::Symbol, max_wvfs::Integer)
+function limit_peak_waveforms(peak_data, peakname::Symbol, max_wvfs::Integer, rng::AbstractRNG)
     wvfs_pre, wvfs_wdw, presum_rate = peak_data.waveform_presummed, peak_data.waveform_windowed, peak_data.presum_rate
     if length(wvfs_pre) > max_wvfs
         @warn "$peakname events exceed $max_wvfs, keep only $max_wvfs events"
-        sel = rand(1:max_wvfs, max_wvfs)
+        idxs = collect(eachindex(wvfs_pre))
+        sel = sort(shuffle(rng, idxs)[begin:begin+max_wvfs-1])
         wvfs_pre, wvfs_wdw, presum_rate = wvfs_pre[sel], wvfs_wdw[sel], presum_rate[sel]
     end
     return (; wvfs_pre, wvfs_wdw, presum_rate)
