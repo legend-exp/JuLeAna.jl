@@ -38,7 +38,7 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
     dsp_config_pd = dataprod_config(l200).dsp(filekey)
     @debug "Loaded DSP config: $(lstring(dsp_config_pd))"
 
-    pars_tau = get_values(l200.par.rpars.pz[period, run])
+    pars_tau = get_values(PropDict(l200.par.rpars.pz[period, run]))
     @debug "Loaded decay times"
 
     aoeopt_filename = joinpath(data_path(l200.par.rpars.aoeopt), string(period), "$run.yaml")
@@ -171,6 +171,16 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
 
     @info "Finished filter optimization"
 
+    # a re-optimized filter replaces its previous entry, so fields of an earlier method do not survive the merge
+    for (chinfo_det, res_det) in result_flt
+        haskey(res_det, :result) || continue
+        for filter_type in keys(res_det.result)
+            if haskey(pars_db, chinfo_det.detector) && haskey(pars_db[chinfo_det.detector], filter_type)
+                @info "Detector $(chinfo_det.detector), filter $filter_type: replacing the previous pars entry"
+                delete!(pars_db[chinfo_det.detector], filter_type)
+            end
+        end
+    end
     pars_db = create_pars(pars_db, result_flt)
     write_pars(l200.par.rpars.fltopt[period], run, pars_db)
     write_validity(l200.par.rpars.fltopt, filekey, (period, run))
