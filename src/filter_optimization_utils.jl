@@ -442,7 +442,7 @@ function optimize_channel_filter(sets::NamedTuple, pulse::NamedTuple, flt::Symbo
         figsize = (700, 300 * length(peaks)), title = f_title("Crosscheck Peaks", flt)), Symbol("peaks_$(flt)"))
     f_save(LegendMakie.lplot((legacy = cc_legacy.residuals, new = cc_new.residuals); figsize = (900, 900),
         title = f_title("FEP Residuals", flt)), Symbol("residuals_$(flt)"))
-    isnothing(report_aoe) || f_save(LegendMakie.lplot(report_aoe, title = f_title("Single-Site A/E Selection", flt)), Symbol("aoe_cut_$(flt)"))
+    isnothing(report_aoe) || f_save(LegendMakie.lplot(report_aoe, figsize = (800, 500), title = f_title("Single-Site A/E Selection", flt)), Symbol("aoe_cut_$(flt)"))
 
     # example waveforms: fastest, slowest and highest-A/E events
     n_class = opt_config.n_example_wvfs
