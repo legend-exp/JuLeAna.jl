@@ -108,6 +108,10 @@ function p_process_filter_optimization(processing_config::PropDict, l200::Legend
             return (processed = processed_dict, log = log_info_dict, validity = validity_det)
         end
 
+        haskey(pars_tau, det) && haskey(pars_tau[det], :τ) || throw(ErrorException("Detector $det has no decay time τ in the pz pars of partition $part"))
+        haskey(pars_aoeopt_det, det) && !(haskey(pars_aoeopt_det[det], :sg) && haskey(pars_aoeopt_det[det].sg, :wl)) &&
+            throw(ErrorException("Detector $det has no SG window length sg.wl in the aoeopt pars of partition $part"))
+
         # SG window length of the A/E crosscheck: aoeopt pars of this partition, else the DSP config default
         sg_wl, sg_wl_source = if haskey(pars_aoeopt_det, det)
             pars_aoeopt_det[det].sg.wl, "aoeopt pars"
