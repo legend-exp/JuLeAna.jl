@@ -7,6 +7,9 @@ using OffsetArrays
 import Measurements
 using Measurements: value as mvalue
 
+# stand-in for the logging helper of src/log_texts.jl
+truncate_error(e::Exception, max_length::Int = 1000) = first(sprint(showerror, e), max_length)
+
 include(joinpath(@__DIR__, "..", "src", "filter_optimization_utils.jl"))
 
 @testset "filter optimization utils" begin
@@ -47,6 +50,25 @@ include(joinpath(@__DIR__, "..", "src", "filter_optimization_utils.jl"))
         rng_flat = MersenneTwister(1)
         a_flat = vcat(1.0 .+ 0.01 .* randn(rng_flat, 3000), 1.0 .+ 0.15 .* rand(rng_flat, 15000), 0.85 .+ 0.08 .* randn(rng_flat, 8000)) .* 1000.0
         @test_throws "The A/E fit is implausible" single_site_aoe_cut(a_flat, fill(1000.0, length(a_flat)), a, e; aoe_cut_sigma = 2.0)
+    end
+
+    @testset "select_single_site" begin
+        rng = MersenneTwister(42)
+        e_fit = fill(500.0, 22000)
+        a_fit = vcat(1.0 .+ 0.01 .* randn(rng, 20000), 0.85 .+ 0.05 .* randn(rng, 2000)) .* e_fit
+        e = fill(1000.0, 20000)
+        a = vcat(1.0 .+ 0.01 .* randn(rng, 6000), 0.85 .+ 0.05 .* randn(rng, 14000)) .* e
+        mask, report, failure = select_single_site(a_fit, e_fit, a, e; aoe_cut_sigma = 2.0)
+        @test failure == "" && mask == single_site_aoe_cut(a_fit, e_fit, a, e; aoe_cut_sigma = 2.0)[1] && !isnothing(report)
+        # fit failures (ErrorException, ArgumentError) are recorded
+        a_flat = vcat(1.0 .+ 0.01 .* randn(MersenneTwister(1), 3000), 1.0 .+ 0.15 .* rand(MersenneTwister(1), 15000), 0.85 .+ 0.08 .* randn(MersenneTwister(1), 8000)) .* 1000.0
+        mask, report, failure = @test_logs (:warn, r"selection failed") match_mode = :any select_single_site(a_flat, fill(1000.0, length(a_flat)), a, e; aoe_cut_sigma = 2.0)
+        @test isnothing(mask) && isnothing(report) && occursin("A/E selection failed: ", failure) && occursin("implausible", failure)
+        mask, report, failure = @test_logs (:warn, r"selection failed") match_mode = :any select_single_site(a_fit[begin:begin+49], e_fit[begin:begin+49], a, e; aoe_cut_sigma = 2.0)
+        @test isnothing(mask) && occursin("at least 100", failure)
+        # other exceptions propagate
+        @test_throws DimensionMismatch select_single_site(a_fit, e_fit, a, e[begin:end-1]; aoe_cut_sigma = 2.0)
+        @test_throws MethodError select_single_site(fill(nothing, 200), e_fit[begin:begin+199], a, e; aoe_cut_sigma = 2.0)
     end
 
     @testset "crosscheck_warning" begin

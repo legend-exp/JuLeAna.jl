@@ -49,6 +49,26 @@ end
 
 
 """
+    select_single_site(a_fit, e_fit, a, e; aoe_cut_sigma::Real)
+
+`single_site_aoe_cut` with its fit failures recorded instead of thrown. Returns
+`(mask, report, failure)` with `failure == ""` on success. An `ErrorException` or
+`ArgumentError` (a degenerate fit, too few events) yields `(nothing, nothing, failure)` with a
+description of the error; every other exception, such as a `MethodError` or a
+`DimensionMismatch`, propagates.
+"""
+function select_single_site(a_fit, e_fit, a, e; aoe_cut_sigma::Real)
+    try
+        return (single_site_aoe_cut(a_fit, e_fit, a, e; aoe_cut_sigma)..., "")
+    catch err
+        err isa Union{ErrorException, ArgumentError} || rethrow()
+        @warn "Single-site A/E selection failed: $(truncate_error(err))"
+        return nothing, nothing, "A/E selection failed: $(truncate_error(err, 200))"
+    end
+end
+
+
+"""
     crosscheck_warning(legacy::NamedTuple, new::NamedTuple; max_shift_sigma::Real)
 
 Warning text for a new optimum that degrades the reconstruction relative to the legacy optimum,
@@ -150,7 +170,8 @@ end
 
 
 """
-    prepare_peak_set(wvfs::NamedTuple, dsp_config::DSPConfig, τ::Unitful.Time, f_evaluate_qc, qc_string::AbstractString)
+    prepare_peak_set(wvfs::NamedTuple, dsp_config::DSPConfig, τ::Unitful.Time, f_evaluate_qc, qc_string::AbstractString;
+                     pulse_wvfs::Bool)
 
 Apply the QC selection `qc_string` to the waveforms of one peak as returned by
 `load_peak_waveforms`, compute qdrift from the windowed waveforms and prepare the presummed
@@ -158,9 +179,9 @@ waveforms once with `dsp_flt_optimization_prepare`.
 
 Returns `(wvfs_pre, prep, qdrift, wvfs_wdw_pz)` of the events passing the QC, where
 `wvfs_wdw_pz` are the windowed waveforms, baseline-subtracted with the presummed baseline mean
-divided by the presum rate and deconvolved with `InvCRFilter(τ)`.
+divided by the presum rate and deconvolved with `InvCRFilter(τ)` if `pulse_wvfs`, else `nothing`.
 """
-function prepare_peak_set(wvfs::NamedTuple, dsp_config::DSPConfig, τ::Unitful.Time, f_evaluate_qc, qc_string::AbstractString)
+function prepare_peak_set(wvfs::NamedTuple, dsp_config::DSPConfig, τ::Unitful.Time, f_evaluate_qc, qc_string::AbstractString; pulse_wvfs::Bool)
     dsp_qc = dsp_qc_flt_optimization_compressed(wvfs.wvfs_pre, dsp_config, τ, f_evaluate_qc)
     qc = findall(ljl_propfunc(qc_string).(dsp_qc))
     isempty(qc) && throw(ErrorException("No event passes the QC selection $qc_string"))
@@ -170,7 +191,7 @@ function prepare_peak_set(wvfs::NamedTuple, dsp_config::DSPConfig, τ::Unitful.T
     qdrift = dsp_qdrift_flt_optimization(wvfs_wdw, blmean_wdw, dsp_config, τ)
     # Pulse shapes need the full sampling of the windowed waveforms: the SG window of the
     # current is shorter than one presummed sample. Baseline and deconvolution as in the dsp tier.
-    wvfs_wdw_pz = InvCRFilter(τ).(shift_waveform.(wvfs_wdw, -blmean_wdw))
+    wvfs_wdw_pz = pulse_wvfs ? InvCRFilter(τ).(shift_waveform.(wvfs_wdw, -blmean_wdw)) : nothing
     return (; wvfs_pre, prep = dsp_flt_optimization_prepare(wvfs_pre, dsp_config, τ), qdrift, wvfs_wdw_pz)
 end
 
@@ -253,6 +274,7 @@ function crosscheck_optimum(sets::NamedTuple, pulse::NamedTuple, aoe::AbstractVe
         fit, status = try
             fit_crosscheck_peak(c.e_cal, c.line, c.window; containment), "ok"
         catch e
+            e isa InterruptException && rethrow()
             # every other crosscheck is calibrated with the FEP fit
             c.name == :FEP && rethrow()
             @warn "$(c.name) crosscheck of $flt at rt = $rt, ft = $ft failed: $(truncate_error(e))"
@@ -417,14 +439,8 @@ function optimize_channel_filter(sets::NamedTuple, pulse::NamedTuple, flt::Symbo
     aoe = ustrip.(pulse.a) ./ e_new
     # A failing A/E selection drops the FEP_SSE crosscheck and is reported in the crosscheck warning.
     aoe_mask, report_aoe, aoe_failure = if opt_config.crosscheck.aoe_cut
-        try
-            e_dep_new = dsp_energy_rtft(sets.dep.prep, dsp_config, rt_new, ft_new, flt)
-            (single_site_aoe_cut(sets.dep.a, e_dep_new, pulse.a, e_new; aoe_cut_sigma = opt_config.crosscheck.aoe_cut_sigma)..., "")
-        catch e
-            e isa InterruptException && rethrow()
-            @warn "Single-site A/E selection of $flt failed: $(truncate_error(e))"
-            nothing, nothing, "A/E selection failed: $(truncate_error(e, 200))"
-        end
+        e_dep_new = dsp_energy_rtft(sets.dep.prep, dsp_config, rt_new, ft_new, flt)
+        select_single_site(sets.dep.a, e_dep_new, pulse.a, e_new; aoe_cut_sigma = opt_config.crosscheck.aoe_cut_sigma)
     else
         nothing, nothing, ""
     end
@@ -498,8 +514,8 @@ function optimize_channel_filter(sets::NamedTuple, pulse::NamedTuple, flt::Symbo
          for row in cc.rows]
     end...))
     write_fltopt_tables(f_tablepath(flt), (evaluation = evaluation, crosscheck = crosscheck,
-        residuals_legacy = Base.structdiff(cc_legacy.residuals, NamedTuple{(:slow_mean,)}),
-        residuals_new = Base.structdiff(cc_new.residuals, NamedTuple{(:slow_mean,)})))
+        residuals_legacy = (; cc_legacy.residuals.residual, cc_legacy.residuals.qdrift, cc_legacy.residuals.rise_time, cc_legacy.residuals.aoe),
+        residuals_new = (; cc_new.residuals.residual, cc_new.residuals.qdrift, cc_new.residuals.rise_time, cc_new.residuals.aoe)))
 
     pars = (
         rt = rt_new, ft = ft_new,
@@ -540,24 +556,26 @@ function run_filter_optimization_channel(f_load::Function, filter_types::Abstrac
     opt_config.crosscheck.dep && (peaknames = merge(peaknames, (dep = DEP_PEAKNAME,)))
     opt_config.crosscheck.sep && (peaknames = merge(peaknames, (sep = SEP_PEAKNAME,)))
     sets = NamedTuple{keys(peaknames)}(map(keys(peaknames)) do key
+        pulse_wvfs = key == :fep || (key == :dep && opt_config.crosscheck.aoe_cut)
         set = try
-            prepare_peak_set(f_load(peaknames[key]), dsp_config, τ, f_evaluate_qc, opt_config.qc)
+            prepare_peak_set(f_load(peaknames[key]), dsp_config, τ, f_evaluate_qc, opt_config.qc; pulse_wvfs)
         catch e
             e isa InterruptException && rethrow()
             throw(ErrorException("$(peaknames[key]): $(truncate_error(e))"))
         end
         # the raw presummed waveforms serve only the FEP noise scan, the windowed ones only the
         # FEP pulse shapes and the DEP A/E of the single-site selection
+        pulse_wvfs && isnothing(set.wvfs_wdw_pz) && throw(ErrorException("$(peaknames[key]): the windowed waveforms for the pulse shapes were not prepared"))
         if key == :fep
             set
-        elseif key == :dep && opt_config.crosscheck.aoe_cut
+        elseif pulse_wvfs
             (prep = set.prep, qdrift = set.qdrift, a = dsp_pulse_shape_flt_optimization((wvfs_pz = set.wvfs_wdw_pz,), dsp_config, sg_wl).a)
         else
             (prep = set.prep, qdrift = set.qdrift)
         end
     end)
     pulse = dsp_pulse_shape_flt_optimization((wvfs_pz = sets.fep.wvfs_wdw_pz,), dsp_config, sg_wl)
-    sets = merge(sets, (fep = Base.structdiff(sets.fep, NamedTuple{(:wvfs_wdw_pz,)}),))
+    sets = merge(sets, (fep = (; sets.fep.wvfs_pre, sets.fep.prep, sets.fep.qdrift),))
     GC.gc()
 
     results = Dict{Symbol, Union{NamedTuple, Exception}}()
