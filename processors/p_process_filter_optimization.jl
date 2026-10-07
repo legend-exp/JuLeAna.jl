@@ -52,7 +52,7 @@ function p_process_filter_optimization(processing_config::PropDict, l200::Legend
 
         validity_det = get_partitionvalidity(l200, det, part)
 
-        pars_tau = get_values(l200.par.ppars.pz[det, part])
+        pars_tau = get_values(PropDict(l200.par.ppars.pz[det, part]))
         @debug "Loaded decay times"
 
         # A/E filter optimization pars of this partition, empty if the detector has none yet
@@ -131,6 +131,7 @@ function p_process_filter_optimization(processing_config::PropDict, l200::Legend
                 f_tablepath = flt -> replace(LegendDataManagement.LDMUtils.get_pltfilename(l200, part, filekey_det.setup, filekey_det.category, det, Symbol("fltopt_tables_$(flt)")), r"\.png$" => ".lh5")
             )
         catch e
+            e isa InterruptException && rethrow()
             @error "Filter optimization of $det in $(part) failed: $(truncate_error(e))"
             throw(LoadError(string(part), 154, "Filter optimization of $det in $(part) failed: $(truncate_error(e))"))
         end
@@ -150,6 +151,13 @@ function p_process_filter_optimization(processing_config::PropDict, l200::Legend
         result_det = (result = result_rt_ft_dict, processed = processed_dict, log = log_info_dict, validity = validity_det)
         result_flt_det = Dict{NamedTuple, NamedTuple}(chinfo_det => result_det)
         
+        # a re-optimized filter replaces its previous entry, so fields of an earlier method do not survive the merge
+        for filter_type in keys(result_rt_ft_dict)
+            if haskey(pars_db_det, det) && haskey(pars_db_det[det], filter_type)
+                @info "Detector $det, filter $filter_type: replacing the previous pars entry"
+                delete!(pars_db_det[det], filter_type)
+            end
+        end
         pars_db_det = create_pars(pars_db_det, result_flt_det)
         writelprops(l200.par.ppars.fltopt[det], part, pars_db_det)
         writevalidity(l200.par.ppars.fltopt[det], filekey_det, part)

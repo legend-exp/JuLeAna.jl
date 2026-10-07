@@ -73,6 +73,7 @@ include(joinpath(@__DIR__, "..", "src", "filter_optimization_utils.jl"))
 
     @testset "crosscheck_warning" begin
         base = (shifts = (DEP = (shift = 0.10u"keV", σ = 1.0u"keV"), SEP = (shift = -0.20u"keV", σ = 1.2u"keV")),
+                rows = ((peak = "FEP", status = "ok"), (peak = "DEP", status = "ok"), (peak = "SEP", status = "ok"), (peak = "FEP_SSE", status = "ok")),
                 slow_mean_residual = -0.30)
         @test crosscheck_warning(base, base; max_shift_sigma = 0.5) == ""
         # |0.70| > |0.10| + 0.5 * 1.0
@@ -100,8 +101,19 @@ include(joinpath(@__DIR__, "..", "src", "filter_optimization_utils.jl"))
         nan_slow = merge(base, (slow_mean_residual = NaN,))
         @test occursin("slow-pulse residual not finite", crosscheck_warning(base, nan_slow; max_shift_sigma = 0.5))
         @test occursin("slow-pulse residual not finite", crosscheck_warning(nan_slow, base; max_shift_sigma = 0.5))
-        nothing_checked = (shifts = NamedTuple(), slow_mean_residual = -0.30)
+        nothing_checked = (shifts = NamedTuple(), rows = ((peak = "FEP", status = "ok"),), slow_mean_residual = -0.30)
         @test crosscheck_warning(nothing_checked, nothing_checked; max_shift_sigma = 0.5) == ""
+        # failed fits are reported from the table rows, also when the peak has no shift at either optimum
+        failed_dep = (shifts = (SEP = base.shifts.SEP,), slow_mean_residual = -0.30,
+                      rows = ((peak = "FEP", status = "ok"), (peak = "DEP", status = "failed: too few events"), (peak = "SEP", status = "ok")))
+        @test crosscheck_warning(failed_dep, failed_dep; max_shift_sigma = 0.5) == "DEP fit failed (legacy, new)"
+        # a fit that fails at one optimum is reported once, with that optimum
+        @test crosscheck_warning(base, failed_dep; max_shift_sigma = 0.5) == "DEP fit failed (new)"
+        @test crosscheck_warning(failed_dep, base; max_shift_sigma = 0.5) == "DEP fit failed (legacy)"
+        failed_sse = merge(base, (rows = ((peak = "FEP", status = "ok"), (peak = "FEP_SSE", status = "failed: x")),))
+        @test crosscheck_warning(base, failed_sse; max_shift_sigma = 0.5) == "FEP_SSE fit failed (new)"
+        both = crosscheck_warning(failed_dep, failed_sse; max_shift_sigma = 0.5)
+        @test occursin("DEP fit failed (legacy)", both) && occursin("FEP_SSE fit failed (new)", both)
     end
 
     @testset "write_fltopt_tables" begin
@@ -161,6 +173,20 @@ include(joinpath(@__DIR__, "..", "src", "filter_optimization_utils.jl"))
         @test fit.n_events == count(e -> line - first(DEP_WINDOW) < e < line + last(DEP_WINDOW), e_cal)
         @test fit.f_fit(ustrip(u"keV", line)) > 0
         @test_throws ArgumentError fit_crosscheck_peak(e_cal[begin:begin+49], line, DEP_WINDOW; containment = 0.9)
+    end
+
+    @testset "try_fit_crosscheck_peak" begin
+        rng = MersenneTwister(1)
+        line = 1592.51u"keV"
+        e_cal = (ustrip(u"keV", line) .+ randn(rng, 5000)) .* u"keV"
+        fit, status = try_fit_crosscheck_peak(e_cal, line, DEP_WINDOW; containment = 0.9)
+        @test status == "ok"
+        @test fit.μ ≈ line atol = 0.1u"keV"
+        # a fit failure is recorded
+        fit, status = try_fit_crosscheck_peak(e_cal[begin:begin+49], line, DEP_WINDOW; containment = 0.9)
+        @test isnothing(fit) && startswith(status, "failed: ")
+        # anything else propagates
+        @test_throws MethodError try_fit_crosscheck_peak(ustrip.(u"keV", e_cal), line, DEP_WINDOW; containment = 0.9)
     end
 
     @testset "snap_seed" begin
