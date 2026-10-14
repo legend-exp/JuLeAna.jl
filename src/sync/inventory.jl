@@ -212,10 +212,10 @@ period_level(dir::Node) = isempty(filekey_groups(dir))
 """
     ensure_detectors!(dir::Node)::Node
 
-The `:detectors` child of the listed directory `dir`, appended when it is not there
-yet. `dir` is a run directory (it holds filekey files) or a period directory (it
-holds run directories). The `remote_path` of the node does not exist on the host; it
-only identifies the node.
+The `:detectors` child of the listed directory `dir`, inserted as its first child when
+it is not there yet, so it stays above the runs and filekey rows. `dir` is a run
+directory (it holds filekey files) or a period directory (it holds run directories).
+The `remote_path` of the node does not exist on the host; it only identifies the node.
 """
 function ensure_detectors!(dir::Node)
     dir.children === nothing && throw(ArgumentError(
@@ -225,7 +225,7 @@ function ensure_detectors!(dir::Node)
     isempty(filekey_groups(dir)) && isempty(run_dirs(dir)) && throw(ArgumentError(
         "$(dir.label) holds no filekey files and no run directories, so it has no detectors"))
     node = Node("detectors", joinpath(dir.remote_path, "detectors"), :detectors; parent = dir)
-    push!(dir.children, node)
+    pushfirst!(dir.children, node)
     node
 end
 

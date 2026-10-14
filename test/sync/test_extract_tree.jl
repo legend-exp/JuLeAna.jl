@@ -14,8 +14,8 @@
 
         node = Node("r000", dsp, :dir)
         expand!(h, p, node; detectors = true)
-        @test [c.kind for c in node.children] == [:group, :group, :detectors]
-        detectors = node.children[3]
+        @test [c.kind for c in node.children] == [:detectors, :group, :group]
+        detectors = node.children[1]
         @test detectors.label == "detectors"
         @test detectors.remote_path == joinpath(dsp, "detectors")
         @test detectors.parent === node
@@ -42,7 +42,7 @@
     @testset "expand_detectors! lists the groups of the first file" begin
         node = Node("r000", dsp, :dir)
         expand!(h, p, node; detectors = true)
-        detectors = node.children[3]
+        detectors = node.children[1]
         expand_detectors!(h, helper, detectors)
         @test [c.label for c in detectors.children] == ["B00000C", "V01234A", "aux"]
         @test all(c -> c.kind == :detector && c.parent === detectors, detectors.children)
@@ -60,7 +60,7 @@
     @testset "a tier with one group named after it has no detectors" begin
         node = Node("r000", evt, :dir)
         expand!(h, p, node; detectors = true)
-        detectors = node.children[end]
+        detectors = node.children[1]
         @test detectors.kind == :detectors
         @test has_detectors(detectors)                  # not inspected yet
         expand_detectors!(h, helper, detectors)
@@ -73,7 +73,7 @@
         expand!(h, p, node; detectors = true)
         @test_throws "only detector rows can be extracted" set_mode!(node, :extract)
         @test_throws "mode must be" set_mode!(node, :sideways)
-        detectors = expand_detectors!(h, helper, node.children[3])
+        detectors = expand_detectors!(h, helper, node.children[1])
         set_mode!(detectors.children[1], :extract)
         @test detectors.children[1].mode == :extract
         @test effective_mode(detectors.children[1]) == :extract
@@ -85,7 +85,7 @@
     @testset "detector rows take no :copy or :link" begin
         node = Node("r000", dsp, :dir)
         expand!(h, p, node; detectors = true)
-        detectors = expand_detectors!(h, helper, node.children[3])
+        detectors = expand_detectors!(h, helper, node.children[1])
         @test_throws "use :extract, not :copy" set_mode!(detectors.children[1], :copy)
         @test_throws "use :extract, not :link" set_mode!(detectors, :link)
         @test detectors.children[1].mode == :none
@@ -100,7 +100,7 @@
     @testset "a run transferred whole takes no per-detector changes" begin
         node = Node("r000", dsp, :dir)
         expand!(h, p, node; detectors = true)
-        detectors = expand_detectors!(h, helper, node.children[3])
+        detectors = expand_detectors!(h, helper, node.children[1])
         for mode in (:copy, :link)
             set_mode!(node, mode)
             @test_throws "already transferred whole" set_mode!(detectors.children[1], :extract)
@@ -150,7 +150,7 @@
         root = production_tree(h, p)
         run = find_node!(h, p, root, relative(p, dsp))
         expand_detectors!(h, helper, ensure_detectors!(run))
-        detectors = run.children[end]
+        detectors = run.children[1]
         set_mode!(detectors.children[3], :extract)      # aux
         set_mode!(detectors.children[1], :extract)      # B00000C
         set_mode!(filekey_groups(run)[2], :copy)
@@ -184,13 +184,13 @@
         root = production_tree(h, p)
         run = find_node!(h, p, root, relative(p, dsp))
         expand_detectors!(h, helper, ensure_detectors!(run))
-        set_mode!(run.children[end].children[2], :extract)     # V01234A
+        set_mode!(run.children[1].children[2], :extract)     # V01234A
         sel = Selection(p, "local", root)
 
         fresh = production_tree(h, p)
         apply_selection!(h, p, fresh, sel; helper)
         restored = find_node!(h, p, fresh, relative(p, dsp))
-        @test [c.mode for c in restored.children[end].children] == [:none, :extract, :none]
+        @test [c.mode for c in restored.children[1].children] == [:none, :extract, :none]
 
         bad = Selection("local", "xprod", sel.remote_root, sel.local_root, nothing,
                         sel.copy, String[], now(), [ExtractEntry(relative(p, dsp), ["Z99999Z"])])

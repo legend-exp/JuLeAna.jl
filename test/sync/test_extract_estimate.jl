@@ -36,7 +36,7 @@
         @test (est2.extract_bytes, est2.extract_files) == ((400 + 1200) * 1, 1)
         @test est2.files == 1 && est2.bytes == filesize(files[2])
 
-        for row in run.children[end].children       # unmarking every detector ends the extraction
+        for row in run.children[1].children       # unmarking every detector ends the extraction
             set_mode!(row, :none)
         end
         est3 = running_estimate(root)

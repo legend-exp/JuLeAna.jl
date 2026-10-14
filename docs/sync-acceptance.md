@@ -131,7 +131,7 @@ top-level directory recursively.
       room for one run's selection (`df -h /tmp` there); if it does not, set
       `staging` for `viper` in `config/sync/hosts.json` to `/ptmp/<user>/juleana-sync`.
 - [ ] Walk to `tier/jldsp` -> `cal` -> `p18` -> `r000` and press `enter` on the
-      `detectors` row: one row per group of the first file, sized, within a few
+      `detectors` row (the first row below the run, above the filekey rows): one row per group of the first file, sized, within a few
       seconds. On a `jlevt` run the `detectors` row disappears with the status
       "have no per-detector groups". On a production in the `<tier>/<detector>`
       layout (jl-v0.8.0 on viper, for example `jlpks`) the same walk lists the
@@ -187,7 +187,7 @@ top-level directory recursively.
       and extract top-level groups. A file in the mirror from an earlier extraction
       is still accepted and is rebuilt with the union when another detector is
       added.
-- [ ] Open a period directory (`p18`): a `detectors` row appears; opening it takes a
+- [ ] Open a period directory (`p18`): a `detectors` row appears above the run directories; opening it takes a
       few seconds per run and lists the union of the detectors. A category directory
       (`cal`) has no such row. Record the time for a period with many runs.
 - [ ] Mark one detector on the period row: the status bar shows `~... extract (N

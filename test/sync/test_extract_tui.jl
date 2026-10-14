@@ -69,6 +69,18 @@
         update!(m, KeyEvent(:escape))
     end
 
+    @testset "the detectors row follows the run row" begin
+        m = model()
+        to_run!(m, "jldsp", "cal")
+        run = current_node(m)
+        @test first(run.children).kind == :detectors
+        tb = draw(m)
+        y = find_text(tb, "] r000").y
+        @test occursin("detectors", row_text(tb, y + 1))
+        update!(m, KeyEvent(:down))
+        @test current_node(m).kind == :detectors
+    end
+
     @testset "t extracts through the interface" begin
         m = model()
         to_run!(m, "jldsp", "cal")

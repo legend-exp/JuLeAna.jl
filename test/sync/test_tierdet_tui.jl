@@ -50,7 +50,7 @@
         m = model()
         to_period!(m, "jlpks", "cal")
         period = current_node(m)
-        @test [c.kind for c in period.children] == [:dir, :dir, :detectors]
+        @test [c.kind for c in period.children] == [:detectors, :dir, :dir]
         open!(m, "detectors")
         tb = draw(m)
         for name in ("B00000C", "V01234A", "aux")
@@ -110,7 +110,7 @@
         period = period_row.parent.parent
         r000 = run_dirs(period)[1]
         goto!(m, r000); update!(m, KeyEvent(:enter)); settle!(m)
-        run_detectors = r000.children[end]
+        run_detectors = r000.children[1]
         goto!(m, run_detectors); update!(m, KeyEvent(:enter)); settle!(m)
         (m.tasks.active[] > 0 || isready(m.tasks.channel)) && settle!(m)
         row = run_detectors.children[1]

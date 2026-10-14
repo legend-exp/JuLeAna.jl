@@ -255,6 +255,7 @@
         update!(m, KeyEvent(:enter)); settle!(m)
         update!(m, KeyEvent(:down))       # p18
         update!(m, KeyEvent(:enter)); settle!(m)
+        update!(m, KeyEvent(:down))       # detectors
         update!(m, KeyEvent(:down))       # r000
         update!(m, KeyEvent(:enter)); settle!(m)
         run_node = current_node(m)

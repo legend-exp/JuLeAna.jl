@@ -28,7 +28,7 @@
     @testset "a run directory lists the detectors of the tier/detector layout" begin
         period = listed_period()
         run = run_dirs(period)[1]
-        detectors = expand_detectors!(h, helper, run.children[end])
+        detectors = expand_detectors!(h, helper, run.children[1])
         @test [c.label for c in detectors.children] == ["B00000C", "V01234A", "aux"]
         @test [c.size for c in detectors.children] == [400, 800, 1200]
         @test detectors.children[1].remote_path == joinpath(p18, "r000", "detectors", "B00000C")
@@ -37,8 +37,8 @@
 
     @testset "a period directory gets a detectors row when a run holds filekey files" begin
         period = listed_period()
-        @test [c.kind for c in period.children] == [:dir, :dir, :detectors]
-        row = period.children[3]
+        @test [c.kind for c in period.children] == [:detectors, :dir, :dir]
+        row = period.children[1]
         @test (row.label, row.remote_path, row.parent) == ("detectors", joinpath(p18, "detectors"), period)
         @test row.children === nothing
         @test all(r -> any(c -> c.kind == :detectors, r.children), run_dirs(period))
@@ -66,7 +66,7 @@
 
     @testset "the period row is the union with summed sizes" begin
         period = listed_period()
-        detectors = expand_detectors!(h, helper, period.children[3])
+        detectors = expand_detectors!(h, helper, period.children[1])
         @test [c.label for c in detectors.children] == ["B00000C", "V01234A", "aux"]
         # first-file bytes times the run's file count: r000 has two files, r001 one
         @test [c.size for c in detectors.children] == [400 * 2 + 400, 800 * 2 + 800, 1200 * 2]
@@ -85,18 +85,18 @@
 
     @testset "a period without a detector axis has an empty row" begin
         evt = listed_period(joinpath(tier, "jlevt", "phy", "p18"))
-        @test evt.children[end].kind == :detectors
-        row = expand_detectors!(h, helper, evt.children[end])
+        @test evt.children[1].kind == :detectors
+        row = expand_detectors!(h, helper, evt.children[1])
         @test row.children == Node[]
         @test !has_detectors(row)
     end
 
     @testset "run-level rows inherit a period-level mark" begin
         period = listed_period()
-        detectors = expand_detectors!(h, helper, period.children[3])
+        detectors = expand_detectors!(h, helper, period.children[1])
         runs = run_dirs(period)
-        r000 = expand_detectors!(h, helper, runs[1].children[end]).children
-        r001 = expand_detectors!(h, helper, runs[2].children[end]).children
+        r000 = expand_detectors!(h, helper, runs[1].children[1]).children
+        r001 = expand_detectors!(h, helper, runs[2].children[1]).children
         set_mode!(detectors.children[1], :extract)                  # B00000C for the period
         @test covering_extract(r000[1]) === detectors.children[1]
         @test covering_extract(r001[1]) === detectors.children[1]
@@ -156,9 +156,9 @@ end
         fresh = production_tree(h, p)
         apply_selection!(h, p, fresh, back; helper)
         fperiod = find_node!(h, p, fresh, relative(p, p18))
-        @test [c.mode for c in fperiod.children[end].children] == [:extract, :none, :extract]
+        @test [c.mode for c in fperiod.children[1].children] == [:extract, :none, :extract]
         frun = find_node!(h, p, fresh, relative(p, r000_path))
-        @test [c.mode for c in frun.children[end].children] == [:none, :extract, :none]
+        @test [c.mode for c in frun.children[1].children] == [:none, :extract, :none]
         @test Selection(p, "local", fresh).extract == sel.extract
     end
 
@@ -228,7 +228,7 @@ end
         back = load_selection(path, p)
         fresh = production_tree(h, p)
         apply_selection!(h, p, fresh, back; helper)             # no error
-        frows = find_node!(h, p, fresh, relative(p, p18)).children[end].children
+        frows = find_node!(h, p, fresh, relative(p, p18)).children[1].children
         @test [c.mode for c in frows] == [:none, :none, :extract]
     end
 

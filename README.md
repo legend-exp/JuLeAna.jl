@@ -204,11 +204,12 @@ detectors; otherwise the file has no detector axis (`jlevt`, `jlskm`, `jlpmt`). 
 reduced file of the second layout contains the tier group with its attributes and the
 chosen children.
 
-Open a run directory of such a tier and press `enter` on its `detectors` row. The
+Open a run directory of such a tier. Its `detectors` row is the first row below the
+run, above the filekey rows; press `enter` on it. The
 tool inspects the first file of the run on the host and lists its detectors with
 their sizes. Move onto a detector and press `x` to mark it `[e]`. A period directory
 (a directory with run directories `r000`, ... of which at least one holds filekey
-files) has a `detectors` row too: it lists the union of the detectors of the first
+files) has a `detectors` row too, above its run directories: it lists the union of the detectors of the first
 file of every run, sized by the first-file bytes times the run's file count summed
 over the runs that hold the detector, and `x` on one of its rows extracts that
 detector from every run of the period. The run-level row of a detector that the

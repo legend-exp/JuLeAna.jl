@@ -75,6 +75,18 @@
         @test isempty(filekey_groups(node))
     end
 
+    @testset "detectors row comes first" begin
+        base = joinpath(FIXTURE_ROOT, "temp", "jl-dev", "generated", "tier", "jlevt", "phy", "p18")
+        run = Node("r000", joinpath(base, "r000"), :dir)
+        expand!(h, p, run; detectors = true)
+        @test first(run.children).kind == :detectors
+        @test [c.kind for c in run.children] == [:detectors, :group, :group]
+        period = Node("p18", base, :dir)
+        expand!(h, p, period; detectors = true)
+        @test first(period.children).kind == :detectors
+        @test ensure_detectors!(period) === first(period.children)
+    end
+
     @testset "local_state" begin
         dir = joinpath(FIXTURE_ROOT, "temp", "jl-dev", "generated", "tier",
                        "jlevt", "phy", "p18", "r000")
