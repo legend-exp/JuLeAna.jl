@@ -102,6 +102,7 @@ function rsync_command(h::RemoteHost, source_root::AbstractString, local_root::A
                        files_from::AbstractString; dry_run::Bool)
     args = String["-r", "-l", "-t", "-p", "--partial-dir=.juleana-partial", "--stats",
                   "--files-from=$files_from"]
+    append!(args, rsync_transport(h))
     push!(args, dry_run ? "--dry-run" : "--info=progress2")
     push!(args, rsync_source(h, source_root), rstrip(local_root, '/') * "/")
     # LC_ALL fixes the digit grouping in --stats, which parse_rsync_stats strips.

@@ -30,6 +30,8 @@
 
         ssh = collect(rsync_command(SSHHost("cslg4", nothing), p, "/tmp/files.txt"; dry_run = false).exec)
         @test ssh[end - 1] == "cslg4:" * FIXTURE_ROOT * "/"
+        @test ["-e", "ssh -o BatchMode=yes"] == ssh[findfirst(==("-e"), ssh) .+ (0:1)]
+        @test "-e" ∉ collect(rsync_command(h, p, "/tmp/files.txt"; dry_run = false).exec)
     end
 
     @testset "parse_progress" begin

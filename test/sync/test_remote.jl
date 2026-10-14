@@ -85,27 +85,58 @@
         own = collect(ssh_command(SSHHost("cslg4", "/tmp/sock-%C"), "true").exec)
         @test "ControlPath=/tmp/sock-%C" in own
         kept = collect(ssh_command(SSHHost("viper", nothing), "uname -a").exec)
-        @test kept == ["ssh", "-n", "viper", "uname -a"]
+        @test kept == ["ssh", "-n", "-o", "BatchMode=yes", "viper", "uname -a"]
     end
 
-    @testset "ssh never reads the terminal" begin
+    @testset "ssh never reads or prompts on the terminal" begin
         for control_path in (nothing, "/tmp/sock-%C")
-            parts = collect(ssh_command(SSHHost("cslg4", control_path), "true").exec)
-            @test findfirst(==("-n"), parts) < findfirst(==("cslg4"), parts)
+            s = SSHHost("cslg4", control_path)
+            parts = collect(ssh_command(s, "true").exec)
+            alias = findfirst(==("cslg4"), parts)
+            @test findfirst(==("-n"), parts) < alias
+            @test findfirst(==("BatchMode=yes"), parts) < alias
+            # rsync's transport is batch too, and keeps its standard input (no -n).
+            transport = JuleanaSync.rsync_transport(s)
+            @test transport[1] == "-e"
+            words = split(transport[2])
+            @test words[1] == "ssh" && "BatchMode=yes" in words && "-n" ∉ words
+            @test ("ControlPath=/tmp/sock-%C" in words) == (control_path !== nothing)
         end
+        @test isempty(JuleanaSync.rsync_transport(h))
+        @test_throws "whitespace" JuleanaSync.rsync_transport(SSHHost("cslg4", "/tmp/a b/sock-%C"))
     end
 
     @testset "spawned processes do not inherit stdin" begin
-        # A command that reads stdin must see end-of-file at once, not wait for the terminal.
-        function finishes(f)
-            task = Threads.@spawn f()
-            timedwait(() -> istaskdone(task), 10.0) == :ok || return false
-            fetch(task)
-            true
+        # The child's standard input is a pipe this process keeps open, so a command that
+        # reads it blocks forever unless the tool gives it the null device.
+        dataflow = normpath(joinpath(@__DIR__, "..", ".."))
+        script = """
+            include($(repr(joinpath(dataflow, "src", "sync", "JuleanaSync.jl"))))
+            using .JuleanaSync: LocalHost, run_remote, stream_remote, file_exists, dir_exists, push_file
+            h = LocalHost()
+            run_remote(h, `cat`) == "" || error("run_remote")
+            stream_remote(h, `cat`, identity) == "" || error("stream_remote")
+            dir = mktempdir()
+            file_exists(h, joinpath(dir, "x")) && error("file_exists")
+            dir_exists(h, dir) || error("dir_exists")
+            write(joinpath(dir, "x"), "x")
+            push_file(h, joinpath(dir, "x"), joinpath(dir, "y")) == joinpath(dir, "y", "x") || error("push_file")
+            println("done")
+            """
+        out = tempname()
+        cmd = `$(Base.julia_cmd()) --startup-file=no --project=$dataflow -e $script`
+        proc = open(pipeline(cmd; stdout = out, stderr = stderr), "w")
+        try
+            exited = timedwait(() -> process_exited(proc), 30.0) == :ok
+            @test exited
+            if exited
+                @test success(proc)
+                @test strip(read(out, String)) == "done"
+            end
+        finally
+            process_running(proc) && kill(proc)
+            close(proc)
         end
-        @test finishes(() -> run_remote(h, `cat`) == "")
-        @test finishes(() -> stream_remote(h, `cat`, identity) == "")
-        @test finishes(() -> JuleanaSync.run_rsync(`cat`, nothing) == ("\n", ""))
     end
 
     @testset "SSHHost(alias) follows the ssh configuration" begin

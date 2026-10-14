@@ -209,8 +209,8 @@ run, above the filekey rows; press `enter` on it. The
 tool inspects the first file of the run on the host and lists its detectors with
 their sizes. Move onto a detector and press `x` to mark it `[e]`. A period directory
 (a directory with run directories `r000`, ... of which at least one holds filekey
-files) has a `detectors` row too, above its run directories: it lists the union of the detectors of the first
-file of every run, sized by the first-file bytes times the run's file count summed
+files) has a `detectors` row too, above its run directories: it lists the union of
+the detectors of the first file of every run, sized by the first-file bytes times the run's file count summed
 over the runs that hold the detector, and `x` on one of its rows extracts that
 detector from every run of the period. The run-level row of a detector that the
 period extracts shows the inherited `[e]` and cannot be toggled; unmark the period
@@ -356,8 +356,10 @@ readable and keeps working as new runs appear under a chosen directory.
   to start otherwise rather than transferring without progress or totals.
 - `ssh` access to the host, and GNU `find`, `du` and `rmdir` on it (all present
   on `cslg4`).
-  The tool starts `ssh` and `rsync` with no terminal input, so authentication must
-  work without a prompt (a key, or a ControlMaster opened beforehand).
+  The tool runs `ssh` in batch mode and gives it and `rsync` no terminal input: a
+  connection that would need a prompt (password, passphrase, host-key confirmation)
+  fails at once with ssh's error. For hosts that need interactive authentication,
+  open the connection in a terminal first (`ssh <host>`).
 - For extraction, Julia on the host (`~/.juliaup/bin/julia` by default) and an
   environment with HDF5.jl and ParallelProcessingTools.jl; neither host needs
   `h5ls`, `h5copy` or h5py.

@@ -85,11 +85,36 @@ end
     ssh_command(h::SSHHost, remote::AbstractString)::Cmd
 
 The `ssh` invocation that runs the single shell command `remote` on `h`. `-n` keeps
-ssh from reading the terminal, which the interface holds in raw mode.
+ssh from reading standard input, and `BatchMode=yes` keeps it from prompting on the
+terminal, which the interface holds in raw mode: a connection that needs a password,
+passphrase or host-key confirmation fails at once with ssh's error.
 """
-ssh_command(h::SSHHost, remote::AbstractString) = h.control_path === nothing ?
-    `ssh -n $(h.alias) $remote` :
-    `ssh -n -o ControlMaster=auto -o ControlPath=$(h.control_path) -o ControlPersist=60s $(h.alias) $remote`
+ssh_command(h::SSHHost, remote::AbstractString) =
+    `ssh -n -o BatchMode=yes $(ssh_options(h)) $(h.alias) $remote`
+
+"""
+    ssh_options(h::SSHHost)::Vector{String}
+
+The connection-sharing options of `h`: none when the ssh configuration has its own
+ControlMaster, the tool's control socket otherwise.
+"""
+ssh_options(h::SSHHost) = h.control_path === nothing ? String[] :
+    ["-o", "ControlMaster=auto", "-o", "ControlPath=$(h.control_path)", "-o", "ControlPersist=60s"]
+
+"""
+    rsync_transport(h::RemoteHost)::Vector{String}
+
+The rsync arguments that select the ssh transport for `h`: a batch-mode ssh with the
+options of [`ssh_options`](@ref), and none for a `LocalHost`. The transport keeps its
+standard input, which is rsync's channel to the remote side, so it gets no `-n`.
+"""
+function rsync_transport(h::SSHHost)
+    words = ["ssh", "-o", "BatchMode=yes", ssh_options(h)...]
+    any(w -> any(isspace, w), words) && throw(ArgumentError(
+        "an ssh option contains whitespace, which rsync -e cannot carry: $(join(words, ' '))"))
+    ["-e", join(words, ' ')]
+end
+rsync_transport(::LocalHost) = String[]
 
 """
     remote_command(h::RemoteHost, cmd::Cmd)::Cmd
@@ -376,7 +401,7 @@ compares content instead of size and time, which a file that is rewritten with t
 same size within one second needs.
 """
 push_command(h::SSHHost, file::AbstractString, remote_dir::AbstractString; checksum::Bool = false) =
-    `rsync -t $(checksum ? ["--checksum"] : String[]) -- $file $(h.alias):$(rstrip(remote_dir, '/'))/`
+    `rsync -t $(rsync_transport(h)) $(checksum ? ["--checksum"] : String[]) -- $file $(h.alias):$(rstrip(remote_dir, '/'))/`
 
 """
     push_file(h::RemoteHost, file, remote_dir; checksum = false)::String
