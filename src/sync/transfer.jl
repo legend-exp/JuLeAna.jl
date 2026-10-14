@@ -52,7 +52,7 @@ one. Apple's openrsync has neither `--info=progress2` nor a `--stats` this tool
 can read, so it is rejected by name rather than being discovered mid-transfer.
 """
 function check_rsync()
-    out = read(ignorestatus(`rsync --version`), String)
+    out = read(pipeline(ignorestatus(`rsync --version`); stdin = devnull), String)
     line = String(first(eachsplit(out, '\n')))
     occursin("openrsync", line) && throw(ErrorException(
         "found Apple openrsync ($line), which has no --info=progress2 and no usable --stats. " *
@@ -139,12 +139,14 @@ end
 # printed can be reported. GNU rsync can exit 0 while still writing a warning
 # to stderr (for example about a file that vanished mid-transfer), so stderr is
 # read and returned rather than discarded on the success path. Progress
-# readings are separated by carriage returns, not newlines.
+# readings are separated by carriage returns, not newlines. rsync reads no
+# terminal input: its stdin is /dev/null, and the ssh transport it starts talks
+# to rsync over its own pipe.
 function run_rsync(cmd::Cmd, progress)
     errfile = tempname()
     transcript = IOBuffer()
     chunk = IOBuffer()
-    proc = open(pipeline(ignorestatus(cmd); stderr = errfile), "r")
+    proc = open(pipeline(ignorestatus(cmd); stdin = devnull, stderr = errfile), "r")
     while !eof(proc)
         c = read(proc, Char)
         if c == '\r' || c == '\n'

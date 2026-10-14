@@ -39,7 +39,7 @@ SSHHost(alias::AbstractString, control_path::Union{Nothing,AbstractString}) =
 function SSHHost(alias::AbstractString)
     out = IOBuffer()
     err = IOBuffer()
-    proc = run(pipeline(ignorestatus(`ssh -G $alias`); stdout = out, stderr = err))
+    proc = run(pipeline(ignorestatus(`ssh -G $alias`); stdin = devnull, stdout = out, stderr = err))
     success(proc) || throw(ErrorException(
         "ssh -G $alias failed with exit code $(proc.exitcode)\n$(String(take!(err)))"))
     has_control_master(String(take!(out))) && return SSHHost(alias, nothing)
@@ -84,11 +84,12 @@ end
 """
     ssh_command(h::SSHHost, remote::AbstractString)::Cmd
 
-The `ssh` invocation that runs the single shell command `remote` on `h`.
+The `ssh` invocation that runs the single shell command `remote` on `h`. `-n` keeps
+ssh from reading the terminal, which the interface holds in raw mode.
 """
 ssh_command(h::SSHHost, remote::AbstractString) = h.control_path === nothing ?
-    `ssh $(h.alias) $remote` :
-    `ssh -o ControlMaster=auto -o ControlPath=$(h.control_path) -o ControlPersist=60s $(h.alias) $remote`
+    `ssh -n $(h.alias) $remote` :
+    `ssh -n -o ControlMaster=auto -o ControlPath=$(h.control_path) -o ControlPersist=60s $(h.alias) $remote`
 
 """
     remote_command(h::RemoteHost, cmd::Cmd)::Cmd
@@ -109,7 +110,7 @@ function run_remote(h::RemoteHost, cmd::Cmd)
     full = remote_command(h, cmd)
     out = IOBuffer()
     err = IOBuffer()
-    proc = run(pipeline(ignorestatus(full); stdout = out, stderr = err))
+    proc = run(pipeline(ignorestatus(full); stdin = devnull, stdout = out, stderr = err))
     success(proc) || throw(ErrorException(
         "remote command failed with exit code $(proc.exitcode): $full\n$(String(take!(err)))"))
     String(take!(out))
@@ -254,7 +255,7 @@ function stream_remote(h::RemoteHost, cmd::Cmd, on_line)
     full = remote_command(h, cmd)
     errfile = tempname()
     proc, text = try
-        proc = open(pipeline(ignorestatus(full); stderr = errfile), "r")
+        proc = open(pipeline(ignorestatus(full); stdin = devnull, stderr = errfile), "r")
         try
             for line in eachline(proc)
                 on_line(line)
@@ -311,7 +312,7 @@ as "absent".
 """
 function file_exists(h::SSHHost, path::AbstractString)
     err = IOBuffer()
-    proc = run(pipeline(ignorestatus(remote_command(h, `test -f $path`)); stderr = err))
+    proc = run(pipeline(ignorestatus(remote_command(h, `test -f $path`)); stdin = devnull, stderr = err))
     proc.exitcode in (0, 1) || throw(ErrorException(
         "test -f $path on $(h.alias) failed with exit code $(proc.exitcode)\n$(String(take!(err)))"))
     proc.exitcode == 0
@@ -326,7 +327,7 @@ Whether the directory `path` exists on `h`, with the same error handling as
 """
 function dir_exists(h::SSHHost, path::AbstractString)
     err = IOBuffer()
-    proc = run(pipeline(ignorestatus(remote_command(h, `test -d $path`)); stderr = err))
+    proc = run(pipeline(ignorestatus(remote_command(h, `test -d $path`)); stdin = devnull, stderr = err))
     proc.exitcode in (0, 1) || throw(ErrorException(
         "test -d $path on $(h.alias) failed with exit code $(proc.exitcode)\n$(String(take!(err)))"))
     proc.exitcode == 0
@@ -390,7 +391,7 @@ function push_file(h::SSHHost, file::AbstractString, remote_dir::AbstractString;
     out = IOBuffer()
     err = IOBuffer()
     cmd = push_command(h, file, remote_dir; checksum)
-    proc = run(pipeline(ignorestatus(cmd); stdout = out, stderr = err))
+    proc = run(pipeline(ignorestatus(cmd); stdin = devnull, stdout = out, stderr = err))
     success(proc) || throw(ErrorException(
         "rsync failed with exit code $(proc.exitcode): $cmd\n$(String(take!(err)))"))
     joinpath(remote_dir, basename(file))

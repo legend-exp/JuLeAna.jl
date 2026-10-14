@@ -5,7 +5,7 @@
 
     @testset "remote_command wraps only for ssh" begin
         @test remote_command(h, `echo a b`) == `echo a b`
-        @test collect(remote_command(ssh, `echo 'a b'`).exec) == ["ssh", "cslg4", "echo 'a b'"]
+        @test collect(remote_command(ssh, `echo 'a b'`).exec) == ["ssh", "-n", "cslg4", "echo 'a b'"]
     end
 
     @testset "stream_remote delivers lines and returns standard error" begin

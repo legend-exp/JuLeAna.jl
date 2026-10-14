@@ -356,6 +356,8 @@ readable and keeps working as new runs appear under a chosen directory.
   to start otherwise rather than transferring without progress or totals.
 - `ssh` access to the host, and GNU `find`, `du` and `rmdir` on it (all present
   on `cslg4`).
+  The tool starts `ssh` and `rsync` with no terminal input, so authentication must
+  work without a prompt (a key, or a ControlMaster opened beforehand).
 - For extraction, Julia on the host (`~/.juliaup/bin/julia` by default) and an
   environment with HDF5.jl and ParallelProcessingTools.jl; neither host needs
   `h5ls`, `h5copy` or h5py.

@@ -85,7 +85,27 @@
         own = collect(ssh_command(SSHHost("cslg4", "/tmp/sock-%C"), "true").exec)
         @test "ControlPath=/tmp/sock-%C" in own
         kept = collect(ssh_command(SSHHost("viper", nothing), "uname -a").exec)
-        @test kept == ["ssh", "viper", "uname -a"]
+        @test kept == ["ssh", "-n", "viper", "uname -a"]
+    end
+
+    @testset "ssh never reads the terminal" begin
+        for control_path in (nothing, "/tmp/sock-%C")
+            parts = collect(ssh_command(SSHHost("cslg4", control_path), "true").exec)
+            @test findfirst(==("-n"), parts) < findfirst(==("cslg4"), parts)
+        end
+    end
+
+    @testset "spawned processes do not inherit stdin" begin
+        # A command that reads stdin must see end-of-file at once, not wait for the terminal.
+        function finishes(f)
+            task = Threads.@spawn f()
+            timedwait(() -> istaskdone(task), 10.0) == :ok || return false
+            fetch(task)
+            true
+        end
+        @test finishes(() -> run_remote(h, `cat`) == "")
+        @test finishes(() -> stream_remote(h, `cat`, identity) == "")
+        @test finishes(() -> JuleanaSync.run_rsync(`cat`, nothing) == ("\n", ""))
     end
 
     @testset "SSHHost(alias) follows the ssh configuration" begin
