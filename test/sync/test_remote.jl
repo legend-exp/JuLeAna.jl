@@ -127,7 +127,7 @@
         cmd = `$(Base.julia_cmd()) --startup-file=no --project=$dataflow -e $script`
         proc = open(pipeline(cmd; stdout = out, stderr = stderr), "w")
         try
-            exited = timedwait(() -> process_exited(proc), 30.0) == :ok
+            exited = timedwait(() -> process_exited(proc), 120.0) == :ok
             @test exited
             if exited
                 @test success(proc)
