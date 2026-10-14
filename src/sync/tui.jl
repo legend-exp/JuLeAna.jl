@@ -776,8 +776,15 @@ function update!(m::SyncModel, e::TaskEvent)
     end
 
     if startswith(id, "sizes:")
-        e.value isa Exception && return show_error!(m, e.value)
+        if e.value isa Exception
+            # A dialog the user is working in stays open; the failure goes to the status line.
+            m.modal_kind == :none && return show_error!(m, e.value)
+            m.status = string("sizes of ", basename(chopprefix(id, "sizes:")), ": ",
+                              sprint(showerror, e.value))
+            return m
+        end
         node, bytes = e.value
+        node.children === nothing && return m
         for child in node.children
             child.kind == :dir && (child.size = bytes[child.remote_path])
         end

@@ -23,6 +23,14 @@
         drain_tasks!(e -> update!(m, e), m.tasks)
     end
 
+    # Deliver exactly the next background event, so a test can look at the model
+    # between the listing and the sizes that follow it.
+    function deliver_next!(m::SyncModel)
+        timedwait(() -> isready(m.tasks.channel), 30.0) == :ok ||
+            error("no background event within 30 s")
+        update!(m, take!(m.tasks.channel))
+    end
+
     function model(; mount_root = nothing, out = joinpath(mktempdir(), "test.json"),
                    root = FIXTURE_ROOT)
         local_root = mktempdir()
@@ -55,8 +63,8 @@
         @test current_node(m).label == "tier"
         update!(m, KeyEvent(:enter))
         @test occursin("listing", row_text(draw(m), 30))
-        settle!(m)
-        settle!(m)                        # the sizes of the listed directories
+        deliver_next!(m)                  # the listing
+        deliver_next!(m)                  # the sizes of the listed directories
         tb = draw(m)
         @test find_text(tb, "jlevt") !== nothing
         @test find_text(tb, "jlhit") !== nothing
@@ -67,14 +75,6 @@
         @test find_text(draw(m), "jlevt") === nothing
         update!(m, KeyEvent(:enter))
         @test find_text(draw(m), "jlevt") !== nothing
-    end
-
-    # Deliver exactly the next background event, so a test can look at the model
-    # between the listing and the sizes that follow it.
-    function deliver_next!(m::SyncModel)
-        timedwait(() -> isready(m.tasks.channel), 30.0) == :ok ||
-            error("no background event within 30 s")
-        update!(m, take!(m.tasks.channel))
     end
 
     @testset "sizes follow the listing" begin
@@ -111,13 +111,16 @@
         end
         tier = current_node(m)
         update!(m, KeyEvent(:enter))
-        deliver_next!(m)
+        deliver_next!(m)                  # the listing
         update!(m, KeyEvent(:down))       # jlevt
+        jlevt = current_node(m)
+        @test jlevt.size === nothing      # the sizes have not been delivered
         update!(m, KeyEvent(:enter))
-        @test current_node(m).remote_path in m.pending
-        settle!(m)
+        @test jlevt.remote_path in m.pending
+        # Two events follow, the sizes and the listing of jlevt, in either order.
+        deliver_next!(m)
+        deliver_next!(m)
         @test isempty(m.pending)
-        jlevt = tier.children[1]
         @test [c.label for c in jlevt.children] == ["phy"]
         @test [c.size for c in tier.children] == [4096 + 8192, 2048 + 1024 + 18]
     end
@@ -141,6 +144,28 @@
         @test m.modal_kind == :error
         @test occursin("not a directory", m.modal.message)
         @test all(c -> c.size === nothing, tier.children)
+    end
+
+    @testset "a failing sizing leaves an open dialog alone" begin
+        root = joinpath(mktempdir(), "remote")
+        cp(joinpath(@__DIR__, "fixtures", "remote"), root)
+        write(joinpath(root, "test", "config.json"),
+              replace(read(joinpath(root, "test", "config.json.in"), String), "@REMOTE_ROOT@" => root))
+        m = model(; root)
+        for _ in 1:4
+            update!(m, KeyEvent(:down))
+        end
+        tier = current_node(m)
+        update!(m, KeyEvent(:enter))
+        timedwait(() -> isready(m.tasks.channel), 30.0) == :ok || error("no listing within 30 s")
+        rm(joinpath(tier.remote_path, "jlhit"); recursive = true)
+        deliver_next!(m)
+        open_message!(m, "Working", "a dialog the user is reading")
+        @test m.modal_kind == :message
+        deliver_next!(m)
+        @test m.modal_kind == :message
+        @test m.modal.message == "a dialog the user is reading"
+        @test occursin("sizes of tier: ", m.status) && occursin("not a directory", m.status)
     end
 
     @testset "space toggles copy and updates the total" begin
