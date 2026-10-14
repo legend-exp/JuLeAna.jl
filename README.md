@@ -179,7 +179,7 @@ This opens a terminal interface:
 | `x` | On a detector row below a `detectors` row (of a run or of a period): extract this detector (`[e]`), or stop extracting it |
 | `e` | Ask rsync exactly what the selection would move |
 | `t` | Estimate, confirm, and transfer |
-| `s` | Save the selection to `config/sync/<production>.json` |
+| `s` | Save the selection to `config/sync/<production>.yaml` |
 | `q` | Leave, offering to save first |
 | `ctrl+c` | Same as `q`, outside a dialog |
 
@@ -272,7 +272,7 @@ runs and shows the rsync progress afterward.
 
 ### Remote setup
 
-Per host, `config/sync/hosts.json` accepts these optional keys next to `remote_root`:
+Per host, `config/sync/hosts.yaml` accepts these optional keys next to `remote_root`:
 
 | Key | Default | Meaning |
 |-----|---------|---------|
@@ -280,7 +280,7 @@ Per host, `config/sync/hosts.json` accepts these optional keys next to `remote_r
 | `julia_project` | `~/.julia/environments/juleana-sync` | Environment with HDF5 and ParallelProcessingTools |
 | `staging` | `${TMPDIR:-/tmp}/juleana-sync-$(id -un)` | Staging directory (an absolute path or one starting with `~`); set it to a scratch area (for example `/ptmp/<user>/juleana-sync`) when `/tmp` on the login node is small |
 
-`hosts.json` is tracked in git; the selections saved under `config/sync/` are
+`hosts.yaml` is tracked in git; the selections saved under `config/sync/` are
 git-ignored. The free space of `/tmp` on `viper` has not been measured; if a run's
 selection does not fit there, set `staging` for `viper` to a directory below
 `/ptmp/<user>/`.
@@ -305,20 +305,20 @@ runs in the main process for fewer than four files and otherwise uses
 | Option | Description |
 |--------|-------------|
 | `--host ALIAS` | ssh alias of the machine holding the production (default `cslg4`) |
-| `--remote-root PATH` | Remote directory holding the productions (default: the entry for `--host` in `config/sync/hosts.json`) |
+| `--remote-root PATH` | Remote directory holding the productions (default: the entry for `--host` in `config/sync/hosts.yaml`) |
 | `--local-root PATH` | Local directory mirroring it (default `../data` next to this checkout) |
 | `--mount-root PATH` | Where the remote root is mounted; enables link mode |
 | `--production PATH` | Production to sync, relative to the remote root (default: choose in the interface) |
-| `--out FILE` | Where the interface saves the selection (default `config/sync/<production>.json`, with `/` in the production path replaced by `-`) |
+| `--out FILE` | Where the interface saves the selection (default `config/sync/<production>.yaml`, with `/` in the production path replaced by `-`); the name must end in `.yaml` |
 | `--jobs N` | Worker processes the remote extraction helper may use (default: the helper decides) |
 | `--staging PATH` | Staging directory on the host for extraction (default: the host's `staging` key, else `${TMPDIR:-/tmp}/juleana-sync-$(id -un)`) |
-| `--from FILE` | Apply a saved selection without starting the interface; the production is taken from the selection unless `--production` is given, in which case the two must agree |
+| `--from FILE` | Apply a saved selection without starting the interface; the production is taken from the selection unless `--production` is given, in which case the two must agree; a selection saved as `.json` is read as well |
 | `--dry-run` | With `--from`: ask rsync what would move and print it, then stop |
 | `--yes` | With `--from`: transfer without asking |
 
 ## Hosts, layouts and site overlays
 
-The remote root of each host is listed in `config/sync/hosts.json`, so
+The remote root of each host is listed in `config/sync/hosts.yaml`, so
 `--host viper` works without `--remote-root`. The productions sit at different
 places on the two sites:
 
@@ -335,14 +335,14 @@ down to the parent of the production. The production's own `config.json` is read
 first, then the overlays from the root downwards. A later file wins, so each
 overlay overrides the production and a deeper overlay overrides a shallower one.
 `$_` expands to the directory of the file it is written in. The overlays are
-always copied with the production, and `config_local.json` is derived from the
+always copied with the production, and `config_local.yaml` is derived from the
 merged config. The row of the production in the interface lists the overlays
 that were applied.
 
 ## Re-applying a selection
 
 ``` bash
-julia --project=. sync.jl --from config/sync/test.json --yes
+julia --project=. sync.jl --from config/sync/test.yaml --yes
 ```
 
 The saved selection lists only the rows that were chosen explicitly, so it stays
@@ -387,5 +387,5 @@ about to land, and one standing where a fresh link is about to replace it. A reg
 file or a directory is never removed. The one exception to never replacing a file is
 a reduced file written by the tool itself, which is rebuilt with the union of its
 old and new groups. The local
-config it writes is a sibling, `config_local.json`, so the mirror stays
+config it writes is a sibling, `config_local.yaml`, so the mirror stays
 byte-identical to the remote.

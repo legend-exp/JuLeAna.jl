@@ -36,7 +36,7 @@
         sel = Selection("local", "xprod", EXTRACT_ROOT, local_root, nothing,
                         ["xprod/config.json", "xprod/legend-metadata"], String[], now(),
                         [ExtractEntry(relative(p, dsp), ["aux"])])
-        selpath = save_selection(joinpath(mktempdir(), "xprod.json"), sel)
+        selpath = save_selection(joinpath(mktempdir(), "xprod.yaml"), sel)
         options = Options("local", EXTRACT_ROOT, local_root, nothing, "xprod", selpath, selpath,
                           dry_run, yes, 0, helper)
         path = tempname()

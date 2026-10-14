@@ -351,7 +351,7 @@ function check_staging_space(staging::AbstractString, free::Integer, needed::Int
     ceil(Int, STAGING_MARGIN * needed) <= free && return nothing
     throw(ErrorException(
         "staging directory $staging has $(format_bytes(free)) free but the extraction needs about " *
-        "$(format_bytes(needed)); set \"staging\" for this host in config/sync/hosts.json or pass --staging"))
+        "$(format_bytes(needed)); set \"staging\" for this host in config/sync/hosts.yaml or pass --staging"))
 end
 
 """
@@ -494,7 +494,7 @@ end
 Bring the mirror in line with `sel`. With `dry_run` it only asks rsync what would
 move, inspects the files to extract with the remote helper, and returns an
 [`Estimate`](@ref); otherwise it transfers, creates the links and writes
-`config_local.json`, and returns a [`TransferResult`](@ref).
+`config_local.yaml`, and returns a [`TransferResult`](@ref).
 
 `progress` is called with a [`Progress`](@ref) for each reading rsync prints.
 Extract entries are reduced on the host by the remote helper (`helper` says how to

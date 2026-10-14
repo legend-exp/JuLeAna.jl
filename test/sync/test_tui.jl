@@ -31,7 +31,7 @@
         update!(m, take!(m.tasks.channel))
     end
 
-    function model(; mount_root = nothing, out = joinpath(mktempdir(), "test.json"),
+    function model(; mount_root = nothing, out = joinpath(mktempdir(), "test.yaml"),
                    root = FIXTURE_ROOT)
         local_root = mktempdir()
         p = Production(h, "test", root, local_root; mount_root)
@@ -203,7 +203,7 @@
     end
 
     @testset "s saves the selection" begin
-        out = joinpath(mktempdir(), "sync", "test.json")
+        out = joinpath(mktempdir(), "sync", "test.yaml")
         m = model(; out)
         update!(m, KeyEvent(:down))
         update!(m, KeyEvent(' '))
@@ -213,7 +213,7 @@
         @test isfile(out)
         # The right span names the selection file. A path outside the default
         # selection directory is shown by its basename, so the bar fits.
-        @test occursin("saved: test.json", row_text(draw(m), 30))
+        @test occursin("saved: test.yaml", row_text(draw(m), 30))
         back = load_selection(out, m.production)
         @test joinpath("test", "config.json") in back.copy
         @test joinpath("test", "legend-metadata") in back.copy
@@ -264,7 +264,7 @@
         @test occursin("transferred", m.modal.message)
         @test occursin("LEGEND_DATA_CONFIG=", m.modal.message)
         @test isfile(joinpath(m.production.local_root, "test", "config.json"))
-        @test isfile(joinpath(m.production.local_root, "test", "config_local.json"))
+        @test isfile(joinpath(m.production.local_root, "test", "config_local.yaml"))
         @test m.progress === nothing
         # Local state is refreshed, so the details pane no longer says missing.
         update!(m, KeyEvent(:enter))       # close the summary
@@ -387,7 +387,7 @@
     end
 
     @testset "q asks to save when the selection changed" begin
-        out = joinpath(mktempdir(), "test.json")
+        out = joinpath(mktempdir(), "test.yaml")
         m = model(; out)
         update!(m, KeyEvent(:down))
         update!(m, KeyEvent(' '))
@@ -449,7 +449,7 @@
         local_root = mktempdir()
         nested = Production(h, "temp/jl-dev", FIXTURE_ROOT, local_root)
         options = Options("local", FIXTURE_ROOT, local_root, nothing, "temp/jl-dev",
-                          joinpath(mktempdir(), "sel.json"), nothing, false, false)
+                          joinpath(mktempdir(), "sel.yaml"), nothing, false, false)
         tb = draw(SyncModel(h, nested, options); width = 160)
         @test find_text(tb, "overlays: config_fixture.json, temp/config_site.yaml") !== nothing
 
@@ -476,12 +476,12 @@
         @test find_text(tb, "Production: temp/jl-dev") !== nothing
         @test find_text(tb, "config.json") !== nothing
         @test m.options.production == "temp/jl-dev"
-        @test m.options.out == joinpath(DEFAULT_SELECTION_DIR, "temp-jl-dev.json")
+        @test m.options.out == joinpath(DEFAULT_SELECTION_DIR, "temp-jl-dev.yaml")
         @test m.production.name == "temp/jl-dev"
 
         # The tree screen behaves as before: save writes the chosen file.
         m.options = Options("local", FIXTURE_ROOT, local_root, nothing, "temp/jl-dev",
-                            joinpath(mktempdir(), "sel.json"), nothing, false, false)
+                            joinpath(mktempdir(), "sel.yaml"), nothing, false, false)
         update!(m, KeyEvent('s'))
         @test load_selection(m.options.out, m.production).production == "temp/jl-dev"
     end

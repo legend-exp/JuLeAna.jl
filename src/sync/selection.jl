@@ -307,7 +307,7 @@ end
     selection_propdict(sel::Selection)::PropDict
 
 The serialized form. A missing mount root is written as `""`: `readprops` trims
-JSON nulls, so a null would come back as an absent key. The extract entries are
+nulls, so a null would come back as an absent key. The extract entries are
 written as objects; a file without the key reads as no entries.
 """
 selection_propdict(sel::Selection) = PropDict(
@@ -341,11 +341,13 @@ end
 """
     save_selection(path::AbstractString, sel::Selection)::String
 
-Write `sel` and return `path`.
+Write `sel` as YAML and return `path`, which must end in `.yaml`: `readprops`
+picks the format from the extension.
 """
 function save_selection(path::AbstractString, sel::Selection)
+    endswith(path, ".yaml") || throw(ArgumentError("a selection file must end in .yaml, got $path"))
     mkpath(dirname(path))
-    writeprops(path, selection_propdict(sel))
+    YAML.write_file(path, selection_propdict(sel))
     path
 end
 

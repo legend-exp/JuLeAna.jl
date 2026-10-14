@@ -148,10 +148,10 @@ end
         @test sel.extract == [ExtractEntry(relative(p, p18), ["B00000C", "aux"]),
                               ExtractEntry(relative(p, r000_path), ["V01234A"])]
 
-        path = save_selection(joinpath(mktempdir(), "tprod.json"), sel)
+        path = save_selection(joinpath(mktempdir(), "tprod.yaml"), sel)
         back = load_selection(path, p)
         @test back.extract == sel.extract
-        @test occursin("\"dir\"", read(path, String)) && !occursin("run_dir", read(path, String))
+        @test all(e -> haskey(e, "dir") && !haskey(e, "run_dir"), YAML.load_file(path)["extract"])
 
         fresh = production_tree(h, p)
         apply_selection!(h, p, fresh, back; helper)
@@ -224,7 +224,7 @@ end
         sel = Selection(p, "local", root)
         @test relative(p, r001.remote_path) in sel.copy
         @test sel.extract == [ExtractEntry(relative(p, p18), ["aux"])]
-        path = save_selection(joinpath(mktempdir(), "held.json"), sel)
+        path = save_selection(joinpath(mktempdir(), "held.yaml"), sel)
         back = load_selection(path, p)
         fresh = production_tree(h, p)
         apply_selection!(h, p, fresh, back; helper)             # no error

@@ -171,13 +171,13 @@ end
 """
     write_local_config(p::Production)::String
 
-Write `config_local.json` next to the mirrored `config.json` and return its path.
+Write `config_local.yaml` next to the mirrored `config.json` and return its path.
 The mirrored `config.json` stays byte-identical to the remote one, so rsync never
 sees it as locally modified.
 """
 function write_local_config(p::Production)
-    path = joinpath(p.local_root, p.name, "config_local.json")
+    path = joinpath(p.local_root, p.name, "config_local.yaml")
     mkpath(dirname(path))
-    writeprops(path, local_config(p))
+    YAML.write_file(path, local_config(p))
     path
 end

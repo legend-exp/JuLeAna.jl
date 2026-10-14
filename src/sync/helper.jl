@@ -132,7 +132,7 @@ function bootstrap_environment!(h::RemoteHost, c::HelperConfig)
     existing = ensure_environment(h, c)
     existing.present && throw(ErrorException(
         "the helper environment $(existing.project) already exists; refusing to modify it. " *
-        "Add the missing packages ($(isempty(existing.lacking) ? "none" : join(existing.lacking, ", "))) yourself, or name another julia_project in hosts.json"))
+        "Add the missing packages ($(isempty(existing.lacking) ? "none" : join(existing.lacking, ", "))) yourself, or name another julia_project in hosts.yaml"))
     make_dir(h, julia_project(h, c))
     run_remote(h, bootstrap_command(h, c))
     status = ensure_environment(h, c)

@@ -14,9 +14,9 @@
 
     @testset "the selection file is named after the production" begin
         @test parse_options(["--production", "test"]).out ==
-              joinpath(DEFAULT_SELECTION_DIR, "test.json")
+              joinpath(DEFAULT_SELECTION_DIR, "test.yaml")
         @test parse_options(["--production", "juleana/tmp/jl-v0.7.0dev1"]).out ==
-              joinpath(DEFAULT_SELECTION_DIR, "juleana-tmp-jl-v0.7.0dev1.json")
+              joinpath(DEFAULT_SELECTION_DIR, "juleana-tmp-jl-v0.7.0dev1.yaml")
     end
 
     @testset "remote roots per host" begin
@@ -39,16 +39,17 @@
                            "--remote-root", "/data/l200",
                            "--local-root", "/tmp/mirror",
                            "--mount-root", "/Volumes/cslg4",
-                           "--from", "/tmp/sel.json", "--dry-run", "--yes"])
+                           "--from", "/tmp/sel.yaml", "--dry-run", "--yes"])
         @test o.host == "other"
         @test o.production == "preprod"
         @test o.remote_root == "/data/l200"
         @test o.local_root == "/tmp/mirror"
         @test o.mount_root == "/Volumes/cslg4"
-        @test o.from == "/tmp/sel.json"
+        @test o.from == "/tmp/sel.yaml"
         @test o.dry_run && o.yes
-        @test o.out == joinpath(DEFAULT_SELECTION_DIR, "preprod.json")
-        @test parse_options(["--out", "/tmp/x.json"]).out == "/tmp/x.json"
+        @test o.out == joinpath(DEFAULT_SELECTION_DIR, "preprod.yaml")
+        @test parse_options(["--out", "/tmp/x.yaml"]).out == "/tmp/x.yaml"
+        @test_throws "--out must end in .yaml, got /tmp/x.json" parse_options(["--out", "/tmp/x.json"])
     end
 
     @testset "user-supplied paths are made absolute" begin
@@ -74,7 +75,7 @@
         evt = joinpath("temp", "jl-dev", "generated", "tier", "jlevt", "phy", "p18", "r000")
         sel = Selection("local", "test", FIXTURE_ROOT, local_root, nothing,
                         [joinpath("test", "config.json"), evt], String[], now())
-        selpath = save_selection(joinpath(mktempdir(), "test.json"), sel)
+        selpath = save_selection(joinpath(mktempdir(), "test.yaml"), sel)
 
         options = Options("local", FIXTURE_ROOT, local_root, nothing, "test",
                           selpath, selpath, true, false)
@@ -97,7 +98,7 @@
         evt = joinpath("temp", "jl-dev", "generated", "tier", "jlevt", "phy", "p18", "r000")
         sel = Selection("local", "test", FIXTURE_ROOT, local_root, nothing,
                         [joinpath("test", "config.json"), evt], String[], now())
-        selpath = save_selection(joinpath(mktempdir(), "test.json"), sel)
+        selpath = save_selection(joinpath(mktempdir(), "test.yaml"), sel)
 
         options = Options("local", FIXTURE_ROOT, local_root, nothing, "test",
                           selpath, selpath, false, true)
@@ -119,7 +120,7 @@
         sel = Selection("local", "temp/jl-dev", FIXTURE_ROOT, local_root, nothing,
                         ["temp/jl-dev/config.json", "config_fixture.json", "temp/config_site.yaml",
                          "temp/jl-dev/legend-metadata"], String[], now())
-        selpath = save_selection(joinpath(mktempdir(), "sel.json"), sel)
+        selpath = save_selection(joinpath(mktempdir(), "sel.yaml"), sel)
         options = parse_options(["--remote-root", FIXTURE_ROOT, "--local-root", local_root,
                                  "--from", selpath, "--dry-run"])
         @test options.production == ""
@@ -139,7 +140,7 @@
         h = LocalHost()
         sel = Selection("local", "preprod", FIXTURE_ROOT, local_root, nothing,
                         String[], String[], now())
-        selpath = save_selection(joinpath(mktempdir(), "preprod.json"), sel)
+        selpath = save_selection(joinpath(mktempdir(), "preprod.yaml"), sel)
         options = Options("local", FIXTURE_ROOT, local_root, nothing, "test",
                           selpath, selpath, true, true)
         @test_throws "is for production preprod" main(options, h)

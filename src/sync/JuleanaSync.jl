@@ -8,8 +8,9 @@ using PropDicts
 # `text`, `value`, `right` and `Table` that would collide with it. Both are imported
 # by name, so a collision shows up here as a load error rather than at a call site.
 # Loading LegendDataManagement is also what brings in JSON, which PropDicts needs
-# for the extension that reads and writes the config files. YAML is imported
-# directly for PropDicts' YAML reader, which the site overlay configs use.
+# for the extension that reads the productions' config.json files. YAML is imported
+# directly for PropDicts' YAML reader and for writing the selections and local
+# configs, which are YAML files.
 import LegendDataManagement
 import YAML
 import TOML

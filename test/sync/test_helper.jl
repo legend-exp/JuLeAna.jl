@@ -145,13 +145,23 @@
         end
     end
 
-    @testset "hosts.json keys" begin
-        file = joinpath(work, "hosts.json")
+    @testset "hosts.yaml keys" begin
+        @test basename(DEFAULT_HOSTS_FILE) == "hosts.yaml"
+        @test isfile(DEFAULT_HOSTS_FILE)
+        file = joinpath(work, "hosts.yaml")
         write(file, """
-        {"alpha": {"remote_root": "/srv/alpha", "julia": "/opt/j/bin/julia",
-                   "julia_project": "~/envs/sync", "staging": "/ptmp/u/stage"},
-         "beta": {"remote_root": "/srv/beta", "staging": null}}
+        alpha:
+          remote_root: /srv/alpha
+          julia: /opt/j/bin/julia
+          julia_project: ~/envs/sync
+          staging: /ptmp/u/stage
+        beta:
+          remote_root: /srv/beta
+          staging: ~
         """)
+        @test host_remote_root(file, "alpha") == "/srv/alpha"
+        @test host_remote_root(file, "beta") == "/srv/beta"
+        @test_throws "host gamma is not listed in $file" host_remote_root(file, "gamma")
         a = host_helper_config(file, "alpha")
         @test (a.julia, a.julia_project, a.staging) ==
               ("/opt/j/bin/julia", "~/envs/sync", "/ptmp/u/stage")

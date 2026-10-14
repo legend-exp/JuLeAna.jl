@@ -194,7 +194,7 @@
                       FIXTURE_ROOT) in sel.copy
         @test sel.link == [relpath(raw, FIXTURE_ROOT)]
 
-        path = save_selection(joinpath(mktempdir(), "sync", "test.json"), sel)
+        path = save_selection(joinpath(mktempdir(), "sync", "test.yaml"), sel)
         @test isfile(path)
         back = load_selection(path, p)
         @test back.copy == sel.copy
@@ -205,7 +205,7 @@
         # A hand-written selection without copy entries still gets the mandatory ones.
         bare = Selection("cslg4", "test", sel.remote_root, sel.local_root, nothing,
                          String[], [first(sel.link)], sel.created)
-        bare_path = save_selection(joinpath(mktempdir(), "bare.json"), bare)
+        bare_path = save_selection(joinpath(mktempdir(), "bare.yaml"), bare)
         loaded = load_selection(bare_path, p)
         @test loaded.copy == sort(mandatory_copies(p))
         @test joinpath("test", "config.json") in loaded.copy
@@ -216,14 +216,14 @@
         # A selection without a mount root round-trips as nothing, not "".
         plain = Production(h, "test", FIXTURE_ROOT, local_root)
         sel2 = Selection(plain, "cslg4", production_tree(h, plain))
-        path2 = save_selection(joinpath(mktempdir(), "test.json"), sel2)
+        path2 = save_selection(joinpath(mktempdir(), "test.yaml"), sel2)
         @test load_selection(path2, plain).mount_root === nothing
     end
 
     @testset "mismatch errors" begin
         root = production_tree(h, p)
         sel = Selection(p, "cslg4", root)
-        path = save_selection(joinpath(mktempdir(), "test.json"), sel)
+        path = save_selection(joinpath(mktempdir(), "test.yaml"), sel)
 
         other_dir = mktempdir()
         cp(joinpath(FIXTURE_ROOT, "test"), joinpath(other_dir, "test"))
@@ -236,7 +236,7 @@
 
         renamed = Selection("cslg4", "preprod", sel.remote_root, sel.local_root,
                             nothing, sel.copy, sel.link, sel.created)
-        path3 = save_selection(joinpath(mktempdir(), "preprod.json"), renamed)
+        path3 = save_selection(joinpath(mktempdir(), "preprod.yaml"), renamed)
         @test_throws "is for production preprod" load_selection(path3, p)
     end
 
@@ -261,7 +261,7 @@
         @test sel.production == "temp/jl-dev"
         @test sel.copy == sort(["temp/jl-dev/config.json", "config_fixture.json",
                                 "temp/config_site.yaml", "temp/jl-dev/legend-metadata"])
-        path = save_selection(joinpath(mktempdir(), "temp-jl-dev.json"), sel)
+        path = save_selection(joinpath(mktempdir(), "temp-jl-dev.yaml"), sel)
         @test load_selection(path, n).production == "temp/jl-dev"
         @test_throws "is for production temp/jl-dev" load_selection(path, p)
         root = production_tree(h, n)

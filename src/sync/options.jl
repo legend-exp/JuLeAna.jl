@@ -2,13 +2,13 @@
 # layout is the same here as on the remote.
 const DEFAULT_LOCAL_ROOT = normpath(joinpath(@__DIR__, "..", "..", "..", "data"))
 const DEFAULT_SELECTION_DIR = normpath(joinpath(@__DIR__, "..", "..", "config", "sync"))
-const DEFAULT_HOSTS_FILE = joinpath(DEFAULT_SELECTION_DIR, "hosts.json")
+const DEFAULT_HOSTS_FILE = joinpath(DEFAULT_SELECTION_DIR, "hosts.yaml")
 
 """
     host_remote_root(file::AbstractString, host::AbstractString)::String
 
-The remote root that `file` (a JSON object mapping host aliases to
-`{"remote_root": ...}`) lists for `host`.
+The remote root that `file` (a YAML or JSON mapping of host aliases to
+`{remote_root: ...}`) lists for `host`.
 """
 function host_remote_root(file::AbstractString, host::AbstractString)
     hosts = readprops(file; subst_pathvar = false, subst_env = false)
@@ -39,7 +39,7 @@ Where the interface saves the selection for `production` unless told otherwise.
 Directory separators in the production path become dashes.
 """
 default_selection_path(production::AbstractString) =
-    joinpath(DEFAULT_SELECTION_DIR, replace(production, '/' => '-') * ".json")
+    joinpath(DEFAULT_SELECTION_DIR, replace(production, '/' => '-') * ".yaml")
 
 """
     Options
@@ -86,7 +86,7 @@ function parse_options(args::AbstractVector{<:AbstractString}; hosts_file::Abstr
             arg_type = String
             default = "cslg4"
         "--remote-root"
-            help = "remote directory holding the productions (default: the host's entry in config/sync/hosts.json)"
+            help = "remote directory holding the productions (default: the host's entry in config/sync/hosts.yaml)"
             dest_name = "remote_root"
             arg_type = String
             default = ""
@@ -105,7 +105,7 @@ function parse_options(args::AbstractVector{<:AbstractString}; hosts_file::Abstr
             arg_type = String
             default = "0"
         "--staging"
-            help = "directory on the host where extracted files are staged (default: the host's entry in config/sync/hosts.json, else \$TMPDIR/juleana-sync-\$USER)"
+            help = "directory on the host where extracted files are staged (default: the host's entry in config/sync/hosts.yaml, else \$TMPDIR/juleana-sync-\$USER)"
             arg_type = String
             default = ""
         "--production"
@@ -113,7 +113,7 @@ function parse_options(args::AbstractVector{<:AbstractString}; hosts_file::Abstr
             arg_type = String
             default = ""
         "--out"
-            help = "where the interface saves the selection"
+            help = "where the interface saves the selection (a .yaml file)"
             arg_type = String
             default = ""
         "--from"
@@ -136,6 +136,7 @@ function parse_options(args::AbstractVector{<:AbstractString}; hosts_file::Abstr
     mount = isempty(parsed["mount_root"]) ? nothing : abspath(parsed["mount_root"])
     out = !isempty(parsed["out"]) ? parsed["out"] :
           isempty(parsed["production"]) ? "" : default_selection_path(parsed["production"])
+    isempty(out) || endswith(out, ".yaml") || throw(ArgumentError("--out must end in .yaml, got $out"))
     remote_root = isempty(parsed["remote_root"]) ?
                   host_remote_root(hosts_file, parsed["host"]) : parsed["remote_root"]
 

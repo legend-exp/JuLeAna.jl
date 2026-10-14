@@ -54,7 +54,7 @@ Do not paste per-detector numbers or plots: sizes, file counts and timings only.
 - [ ] `t` transfers it; the gauge advances and the summary names the bytes, the
       file count and the `LEGEND_DATA_CONFIG` line.
 - [ ] The file is at the mirrored path and its size matches the remote one.
-- [ ] `<local-root>/<production>/config_local.json` exists;
+- [ ] `<local-root>/<production>/config_local.yaml` exists;
       `<local-root>/<production>/config.json` is byte-identical to the remote one.
 - [ ] Running `t` again transfers 0 bytes.
 
@@ -73,7 +73,7 @@ Do not paste per-detector numbers or plots: sizes, file counts and timings only.
 
 ## Hybrid read
 
-- [ ] `export LEGEND_DATA_CONFIG=<local-root>/<production>/config_local.json`
+- [ ] `export LEGEND_DATA_CONFIG=<local-root>/<production>/config_local.yaml`
 - [ ] In Julia: `using LegendDataManagement; l200 = LegendData(:l200)` and read
       the copied `jlevt` file through it.
 - [ ] Read a waveform from the linked `raw` file for the same filekey; it goes
@@ -83,9 +83,9 @@ Do not paste per-detector numbers or plots: sizes, file counts and timings only.
 
 ## Headless re-apply
 
-- [ ] `s` in the interface writes `config/sync/<production>.json`, with `/` in
+- [ ] `s` in the interface writes `config/sync/<production>.yaml`, with `/` in
       the production path replaced by `-`.
-- [ ] `julia --project=. sync.jl --from config/sync/<production>.json --dry-run`
+- [ ] `julia --project=. sync.jl --from config/sync/<production>.yaml --dry-run`
       prints an estimate of 0 bytes, because everything is already there; no
       `--production` is needed.
 - [ ] Delete one copied file and re-run without `--dry-run` and with `--yes`:
@@ -107,7 +107,7 @@ Do not paste per-detector numbers or plots: sizes, file counts and timings only.
 - [ ] `t` transfers it; the file is at the mirrored path
       `<local-root>/juleana/tmp/jl-v0.7.0dev1/...`.
 - [ ] `<local-root>/juleana/config_viper.yaml` is mirrored, and
-      `<local-root>/juleana/tmp/jl-v0.7.0dev1/config_local.json` holds absolute
+      `<local-root>/juleana/tmp/jl-v0.7.0dev1/config_local.yaml` holds absolute
       local paths for every key, including `tier/raw`.
 
 ## Detector extraction
@@ -131,7 +131,7 @@ top-level directory recursively.
       without touching a real one.)
 - [ ] The same bootstrap on `viper`. Record whether `/tmp` on the login node has
       room for one run's selection (`df -h /tmp` there); if it does not, set
-      `staging` for `viper` in `config/sync/hosts.json` to `/ptmp/<user>/juleana-sync`.
+      `staging` for `viper` in `config/sync/hosts.yaml` to `/ptmp/<user>/juleana-sync`.
 - [ ] Walk to `tier/jldsp` -> `cal` -> `p18` -> `r000` and press `enter` on the
       `detectors` row (the first row below the run, above the filekey rows): one
       row per group of the first file, sized, within a few seconds. On a `jlevt` run the `detectors` row disappears with the status
@@ -169,14 +169,14 @@ top-level directory recursively.
       reports the failure and names the staging directory, and the rerun skips the
       finished files. Interrupt an rsync pull and confirm `.juleana-partial`
       directories remain in the mirror and the rerun completes.
-- [ ] Headless: `julia --project=. sync.jl --from config/sync/<production>.json --dry-run`
+- [ ] Headless: `julia --project=. sync.jl --from config/sync/<production>.yaml --dry-run`
       prints the estimate with the extract part, then the staging directory and
       its free space. With the helper environment absent it stops with an error
       that names the `Pkg.add` command.
 - [ ] A missing Julia executable (set `julia` for the host to a wrong path) stops
       with the remote error message attached.
-- [ ] `git status` in the checkout shows `config/sync/hosts.json` as tracked and
-      any saved `config/sync/<production>.json` as ignored.
+- [ ] `git status` in the checkout shows `config/sync/hosts.yaml` as tracked and
+      any saved `config/sync/<production>.yaml` as ignored.
 
 ### Tier/detector layout and period selection
 

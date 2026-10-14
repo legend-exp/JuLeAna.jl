@@ -174,5 +174,6 @@ dmypy.json
 !test/sync/fixtures/**/*.lh5
 
 # Saved selections are personal; the hosts file is shared.
+config/sync/*.yaml
 config/sync/*.json
-!config/sync/hosts.json
+!config/sync/hosts.yaml

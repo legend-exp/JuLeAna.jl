@@ -94,10 +94,10 @@
         @test filesize(joinpath(p.local_root, evt,
                                 "l200-p18-r000-phy-20251107T192416Z-tier_jlevt.lh5")) == 8192
         @test isfile(joinpath(p.local_root, "test", "legend-metadata", "README.md"))
-        # The mirrored config.json is untouched and config_local.json sits beside it.
+        # The mirrored config.json is untouched and config_local.yaml sits beside it.
         @test read(joinpath(p.local_root, "test", "config.json"), String) ==
               read(joinpath(FIXTURE_ROOT, "test", "config.json"), String)
-        @test result.config == joinpath(p.local_root, "test", "config_local.json")
+        @test result.config == joinpath(p.local_root, "test", "config_local.yaml")
         @test isfile(result.config)
         @test result.warnings == ""
         @test occursin("LEGEND_DATA_CONFIG=$(result.config)", summary_text(result))

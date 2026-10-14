@@ -128,7 +128,7 @@
         @test_throws "no groups for dir run" ExtractEntry("run", String[])
         good = Selection("local", "xprod", EXTRACT_ROOT, local_root, nothing, String[], String[], now(),
                          [ExtractEntry("good/run", ["a"])])
-        path = save_selection(joinpath(mktempdir(), "bad.json"), good)
+        path = save_selection(joinpath(mktempdir(), "bad.yaml"), good)
         write(path, replace(read(path, String), "good/run" => "/etc"))
         @test_throws "dir must be relative, got /etc" load_selection(path, p)
     end
@@ -136,14 +136,58 @@
     @testset "extract entries round trip through a file" begin
         none = Selection("local", "xprod", EXTRACT_ROOT, local_root, nothing,
                          String[], String[], now())
-        path = save_selection(joinpath(mktempdir(), "none.json"), none)
+        path = save_selection(joinpath(mktempdir(), "none.yaml"), none)
         @test load_selection(path, p).extract == ExtractEntry[]
 
         two = Selection("local", "xprod", EXTRACT_ROOT, local_root, nothing, String[], String[], now(),
                         [ExtractEntry("a/run", ["z", "m"]), ExtractEntry("b/run", ["y", "x"])])
-        path = save_selection(joinpath(mktempdir(), "two.json"), two)
+        path = save_selection(joinpath(mktempdir(), "two.yaml"), two)
         @test load_selection(path, p).extract == [ExtractEntry("a/run", ["m", "z"]),
                                                   ExtractEntry("b/run", ["x", "y"])]
+    end
+
+    @testset "a selection is written as YAML and reads back field by field" begin
+        period = relative(p, dirname(dsp))
+        copies = sort!([mandatory_copies(p); relative(p, joinpath(evt, "1234"))])
+        sel = Selection("local", "xprod", EXTRACT_ROOT, local_root, nothing, copies,
+                        [relative(p, evt)], DateTime(2026, 10, 14, 9, 5, 3, 7),
+                        [ExtractEntry(relative(p, dsp), ["0815", "B00000C", "aux"]),
+                         ExtractEntry(period, ["true", "V00000A"])])
+        path = save_selection(joinpath(mktempdir(), "xprod.yaml"), sel)
+        @test endswith(path, ".yaml")
+        @test !startswith(read(path, String), "{")
+        raw = YAML.load_file(path)
+        @test raw["mount_root"] == ""
+        @test raw["created"] == "2026-10-14T09:05:03.007"
+        @test raw["extract"][2]["groups"] == ["V00000A", "true"]
+        back = load_selection(path, p)
+        for field in fieldnames(Selection)
+            @test getfield(back, field) == getfield(sel, field)
+        end
+        @test back.mount_root === nothing
+        @test_throws "a selection file must end in .yaml, got x.json" save_selection("x.json", sel)
+
+        blank = Selection("local", "xprod", EXTRACT_ROOT, local_root, nothing,
+                          String[], String[], DateTime(2026, 1, 2))
+        path = save_selection(joinpath(mktempdir(), "blank.yaml"), blank)
+        raw = YAML.load_file(path)
+        @test (raw["copy"], raw["link"], raw["extract"]) == ([], [], [])
+        back = Selection(readprops(path; subst_pathvar = false, subst_env = false))
+        for field in fieldnames(Selection)
+            @test getfield(back, field) == getfield(blank, field)
+        end
+    end
+
+    @testset "a selection saved as JSON still loads" begin
+        sel = Selection("local", "xprod", EXTRACT_ROOT, local_root, nothing,
+                        sort(mandatory_copies(p)), [relative(p, evt)], DateTime(2026, 10, 14, 9, 5, 3),
+                        [ExtractEntry(relative(p, dsp), ["aux"])])
+        path = joinpath(mktempdir(), "legacy.json")
+        writeprops(path, selection_propdict(sel))
+        back = load_selection(path, p)
+        for field in fieldnames(Selection)
+            @test getfield(back, field) == getfield(sel, field)
+        end
     end
 
     @testset "the selection records extract entries" begin
@@ -160,7 +204,7 @@
         @test relative(p, joinpath(dsp, "l200-p18-r000-cal-20251107T192416Z-tier_jldsp.lh5")) in sel.copy
         @test !any(c -> occursin("detectors", c), sel.copy)
 
-        path = save_selection(joinpath(mktempdir(), "xprod.json"), sel)
+        path = save_selection(joinpath(mktempdir(), "xprod.yaml"), sel)
         back = load_selection(path, p)
         @test back.extract == sel.extract
         @test back.copy == sel.copy

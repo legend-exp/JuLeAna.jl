@@ -17,7 +17,7 @@
         local_root = mktempdir()
         p = Production(h, "xprod", EXTRACT_ROOT, local_root; mount_root)
         SyncModel(h, p, Options("local", EXTRACT_ROOT, local_root, mount_root, "xprod",
-                                joinpath(mktempdir(), "x.json"), nothing, false, false, 0, helper))
+                                joinpath(mktempdir(), "x.yaml"), nothing, false, false, 0, helper))
     end
     # Move the cursor onto the row labeled `label` and expand it.
     function open!(m::SyncModel, label)

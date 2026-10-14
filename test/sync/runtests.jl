@@ -2,6 +2,7 @@ using Test
 using Dates
 using PropDicts
 using TOML
+import YAML
 using HDF5
 using LegendDataManagement: LegendDataConfig, data_path
 import LegendDataManagement
@@ -29,7 +30,7 @@ using .JuleanaSync: main,
     Progress, TransferResult, check_rsync, check_mount, rsync_command,
     parse_progress, rsync_dry_run, remove_stale_links!, create_links!,
     apply!, summary_text,
-    Options, parse_options, run_headless, DEFAULT_LOCAL_ROOT, DEFAULT_SELECTION_DIR,
+    Options, parse_options, run_headless, DEFAULT_LOCAL_ROOT, DEFAULT_SELECTION_DIR, DEFAULT_HOSTS_FILE,
     SyncModel, checkbox, node_label, build_tree, rebuild_tree!, current_node,
     request_expand!, attach_listing!, show_error!, save!, details, status_bar,
     render_sync, run_tui, task_queue,

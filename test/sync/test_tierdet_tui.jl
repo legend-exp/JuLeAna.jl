@@ -19,7 +19,7 @@
         local_root = mktempdir()
         p = Production(h, "tprod", TIER_DET_ROOT, local_root)
         SyncModel(h, p, Options("local", TIER_DET_ROOT, local_root, nothing, "tprod",
-                                joinpath(mktempdir(), "x.json"), nothing, false, false, 0, helper))
+                                joinpath(mktempdir(), "x.yaml"), nothing, false, false, 0, helper))
     end
     function open!(m::SyncModel, label)
         for _ in 1:40

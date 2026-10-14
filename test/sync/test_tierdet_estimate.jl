@@ -85,7 +85,7 @@
             sel = Selection("local", "tprod", TIER_DET_ROOT, local_root, nothing,
                             ["tprod/config.json", "tprod/legend-metadata"], String[], now(),
                             [ExtractEntry(relative(p, p18), ["B00000C", "aux"])])
-            selpath = save_selection(joinpath(mktempdir(), "tprod.json"), sel)
+            selpath = save_selection(joinpath(mktempdir(), "tprod.yaml"), sel)
             options = Options("local", TIER_DET_ROOT, local_root, nothing, "tprod", selpath, selpath,
                               dry_run, yes, 0, HelperConfig(; staging = joinpath(mktempdir(), "stage")))
             path = tempname()

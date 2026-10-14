@@ -74,10 +74,10 @@
         @test String(paths[Symbol("root")]) == LOCAL_ROOT
     end
 
-    @testset "config_local.json" begin
+    @testset "config_local.yaml" begin
         mkpath(joinpath(LOCAL_ROOT, "test"))
         path = write_local_config(p)
-        @test path == joinpath(LOCAL_ROOT, "test", "config_local.json")
+        @test path == joinpath(LOCAL_ROOT, "test", "config_local.yaml")
         @test isfile(path)
         # The mirrored config.json itself is never rewritten.
         @test !isfile(joinpath(LOCAL_ROOT, "test", "config.json"))
@@ -96,6 +96,16 @@
         @test data_path(setup, "tier", "jlhit", "cal", "p18", "r000") ==
               joinpath(LOCAL_ROOT, "temp", "jl-dev", "generated", "tier", "jlhit",
                        "cal", "p18", "r000")
+
+        @test !startswith(read(path, String), "{")
+        data = withenv("LEGEND_DATA_CONFIG" => path) do
+            LegendDataManagement.LegendData(:l200)
+        end
+        @test data_path(data, "tier") ==
+              joinpath(LOCAL_ROOT, "temp", "jl-dev", "generated", "tier")
+        @test data_path(data, "tier", "jlhit") ==
+              joinpath(LOCAL_ROOT, "temp", "jl-dev", "generated", "tier", "jlhit")
+        @test data_path(data, "metadata") == joinpath(LOCAL_ROOT, "test", "legend-metadata")
     end
 
     @testset "nested production with overlays" begin
@@ -148,10 +158,10 @@
         @test_throws "temp/x/../../test" Production(h, "temp/x/../../test", FIXTURE_ROOT, LOCAL_ROOT)
     end
 
-    @testset "config_local.json of a nested production" begin
+    @testset "config_local.yaml of a nested production" begin
         n = Production(h, "temp/jl-dev", FIXTURE_ROOT, LOCAL_ROOT)
         path = write_local_config(n)
-        @test path == joinpath(LOCAL_ROOT, "temp", "jl-dev", "config_local.json")
+        @test path == joinpath(LOCAL_ROOT, "temp", "jl-dev", "config_local.yaml")
         paths = only(values(readprops(path).setups)).paths
         @test String(paths[Symbol("tier/jlpks")]) == joinpath(LOCAL_ROOT, "preprod", "jlpeaks")
         @test String(paths[Symbol("tier/raw")]) == joinpath(LOCAL_ROOT, "temp", "raw-fixture")

@@ -33,7 +33,7 @@
         end
         @test !isdir(joinpath(stage, "xprod"))          # the staged files are gone ...
         @test isfile(joinpath(stage, "extract.jl"))     # ... and only they
-        @test isfile(joinpath(p.local_root, "xprod", "config_local.json"))
+        @test isfile(joinpath(p.local_root, "xprod", "config_local.yaml"))
         text = summary_text(result)
         @test occursin("extracted 2 files, 4 groups", text)
         @test occursin("LEGEND_DATA_CONFIG=", text)
