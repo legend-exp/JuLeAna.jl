@@ -163,6 +163,10 @@ Start listing `node` in the background. The listing is built on a detached node
 and linked in by [`attach_listing!`](@ref) on the main thread, so nothing the
 renderer is reading changes underneath it.
 
+The listing does not wait for directory sizes: the event handler starts a second task
+with id `sizes:<path>` once the listing is attached, and the children show `…` until it
+reports. That task is not in `m.pending`, so the user can open children meanwhile.
+
 The background task carries `node.remote_path` in its own id, `listing:<path>`,
 so that a listing which fails only clears its own entry from `m.pending` and
 never disturbs a second listing still in flight.
@@ -175,7 +179,7 @@ function request_expand!(m::SyncModel, node::Node)
     production = m.production
     spawn_task!(m.tasks, Symbol("listing:", node.remote_path)) do
         scratch = Node(node.label, node.remote_path, node.kind)
-        expand!(host, production, scratch; detectors = true)
+        expand!(host, production, scratch; detectors = true, sizes = false)
         (node, scratch.children)
     end
     m.status = "listing $(node.label)…"
@@ -759,7 +763,25 @@ function update!(m::SyncModel, e::TaskEvent)
             delete!(m.pending, path)
             return show_error!(m, e.value)
         end
-        return attach_listing!(m, e.value)
+        attach_listing!(m, e.value)
+        node, children = e.value
+        dirs = [c.remote_path for c in children if c.kind == :dir]
+        if !isempty(dirs)
+            host = m.host
+            spawn_task!(m.tasks, Symbol("sizes:", node.remote_path)) do
+                (node, Dict(zip(dirs, dir_sizes(host, dirs))))
+            end
+        end
+        return m
+    end
+
+    if startswith(id, "sizes:")
+        e.value isa Exception && return show_error!(m, e.value)
+        node, bytes = e.value
+        for child in node.children
+            child.kind == :dir && (child.size = bytes[child.remote_path])
+        end
+        return rebuild_tree!(m)
     end
 
     if startswith(id, "detectors:")

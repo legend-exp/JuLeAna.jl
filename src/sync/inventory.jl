@@ -116,22 +116,24 @@ function production_tree(h::RemoteHost, p::Production)
 end
 
 """
-    expand!(h::RemoteHost, p::Production, node::Node; detectors = false)::Node
+    expand!(h::RemoteHost, p::Production, node::Node; detectors = false, sizes = true)::Node
 
-List `node` if it has not been listed yet, size its directory children with one
-call, and refresh its local state. With `detectors`, a run directory, or a period directory with a run
-directory that holds filekey files, also gets its `:detectors` child. Returns `node`.
+List `node` if it has not been listed yet and refresh its local state. With `sizes`, the
+directory children are sized with one call; without it their `size` stays `nothing`.
+With `detectors`, a run directory, or a period directory with a run directory that
+holds filekey files, also gets its `:detectors` child. Returns `node`.
 """
-function expand!(h::RemoteHost, p::Production, node::Node; detectors::Bool = false)
+function expand!(h::RemoteHost, p::Production, node::Node; detectors::Bool = false,
+                 sizes::Bool = true)
     node.children === nothing || return node
     node.kind in (:section, :dir) || throw(ArgumentError(
         "a :$(node.kind) node cannot be expanded: $(node.label)"))
     children = group_children(list_dir(h, node.remote_path), node.remote_path)
     dirs = [c for c in children if c.kind == :dir]
-    if !isempty(dirs)
-        sizes = dir_sizes(h, [c.remote_path for c in dirs])
-        for i in eachindex(dirs, sizes)
-            dirs[i].size = sizes[i]
+    if sizes && !isempty(dirs)
+        bytes = dir_sizes(h, [c.remote_path for c in dirs])
+        for i in eachindex(dirs, bytes)
+            dirs[i].size = bytes[i]
         end
     end
     for child in children

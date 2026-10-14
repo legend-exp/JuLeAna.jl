@@ -27,12 +27,14 @@ Do not paste per-detector numbers or plots: sizes, file counts and timings only.
       `tier/jlpks`, `tier/raw`.
 - [ ] `enter` on `tier` lists it within a few seconds; the row shows `…listing`
       while the request is out.
-- [ ] Every row that appears shows a size, or `…` for a section.
+- [ ] The listed directories show `…` for their size first, and the sizes fill in
+      a moment later while the tree stays usable; a section keeps `…`. While a
+      selected directory has no size, the status bar total ends in `?`.
 - [ ] Expanding a second directory is visibly faster than the first: the ssh
       connection is being reused.
-- [ ] Expanding a period node of `tier/jldsp` sizes its run directories (about
-      27 GB each) with one `du -sb` call; record how long the expansion takes
-      and whether it is acceptable for interactive use.
+- [ ] Expanding a period node of `tier/jldsp` lists its run directories at once and
+      sizes them (about 27 GB each) with one `du -sb` call in the background; record
+      how long the sizes take to appear.
 - [ ] Outside a dialog, `ctrl+c` quits like `q` (offering to save first when
       the selection changed). While a transfer dialog is open no key is
       accepted; press `ctrl+c` at the terminal during a transfer and record
