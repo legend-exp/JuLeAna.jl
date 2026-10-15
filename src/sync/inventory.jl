@@ -12,7 +12,13 @@ period directory) or `:detector` (one detector of the files of that directory).
 directory. `mode` is the mode chosen explicitly on this node; the mode that
 actually applies is [`effective_mode`](@ref), which falls back to the ancestors.
 `holders` is set on the `:detector` rows of a period: the run directories that hold
-the detector, each with its number of filekey files.
+the detector, each with its number of files.
+
+`whole_files` is `true` on the `:detectors` row of a period directory whose run
+directories hold one file per detector (`jlqcs`, `jlpks`, `jlaux`, `jlhit`) and on
+the `:detector` rows below it. Such a row stands for those files themselves, so it
+can be copied or linked; every other `:detectors` row stands for HDF5 groups inside
+filekey files and can only be extracted.
 """
 mutable struct Node
     label::String
@@ -24,13 +30,14 @@ mutable struct Node
     parent::Union{Nothing,Node}
     local_state::Symbol
     holders::Vector{Pair{String,Int}}
+    whole_files::Bool
 end
 
 Node(label::AbstractString, remote_path::AbstractString, kind::Symbol;
      size = nothing, children = nothing, mode::Symbol = :none,
      parent = nothing, local_state::Symbol = :missing,
-     holders = Pair{String,Int}[]) =
-    Node(label, remote_path, kind, size, children, mode, parent, local_state, holders)
+     holders = Pair{String,Int}[], whole_files::Bool = false) =
+    Node(label, remote_path, kind, size, children, mode, parent, local_state, holders, whole_files)
 
 # A LEGEND tier file name: setup, period, run, category, an id, and the tier.
 # The id is either a timestamp (one file per filekey) or a detector name (one
@@ -120,8 +127,9 @@ end
 
 List `node` if it has not been listed yet and refresh its local state. With `sizes`, the
 directory children are sized with one call; without it their `size` stays `nothing`.
-With `detectors`, a run directory, or a period directory with a run directory that
-holds filekey files, also gets its `:detectors` child. Returns `node`.
+With `detectors`, a run directory with filekey files, or a period directory whose first
+run directory with tier files holds filekey files or per-detector files, also gets its
+`:detectors` child (a `whole_files` one for per-detector files). Returns `node`.
 """
 function expand!(h::RemoteHost, p::Production, node::Node; detectors::Bool = false,
                  sizes::Bool = true)
@@ -140,10 +148,19 @@ function expand!(h::RemoteHost, p::Production, node::Node; detectors::Bool = fal
         child.parent = node
     end
     node.children = children
-    # A run directory has filekey files; a period directory has a run directory that does.
-    if detectors && (!isempty(filekey_groups(node)) ||
-                     any(run -> !isempty(filekey_files(h, run.remote_path)), run_dirs(node)))
-        ensure_detectors!(node)
+    if detectors
+        if !isempty(filekey_groups(node))
+            ensure_detectors!(node)
+        else
+            # The first run directory with tier files decides which kind the period holds.
+            for run in run_dirs(node)
+                ids = [tier_file_id(e.name) for e in list_dir(h, run.remote_path) if e.kind == :file]
+                kinds = [first(id) for id in ids if id !== nothing]
+                isempty(kinds) && continue
+                ensure_detectors!(node; whole_files = :detector in kinds && :filekey ∉ kinds)
+                break
+            end
+        end
     end
     node.local_state = node_local_state(p, node)
     node
@@ -212,21 +229,23 @@ end
 period_level(dir::Node) = isempty(filekey_groups(dir))
 
 """
-    ensure_detectors!(dir::Node)::Node
+    ensure_detectors!(dir::Node; whole_files = false)::Node
 
 The `:detectors` child of the listed directory `dir`, inserted as its first child when
 it is not there yet, so it stays above the runs and filekey rows. `dir` is a run
 directory (it holds filekey files) or a period directory (it holds run directories).
-The `remote_path` of the node does not exist on the host; it only identifies the node.
+`whole_files` marks the new row as the one of a period of per-detector files. The
+`remote_path` of the node does not exist on the host; it only identifies the node.
 """
-function ensure_detectors!(dir::Node)
+function ensure_detectors!(dir::Node; whole_files::Bool = false)
     dir.children === nothing && throw(ArgumentError(
         "$(dir.label) has not been listed yet; expand it before asking for detectors"))
     i = findfirst(c -> c.kind == :detectors, dir.children)
     i === nothing || return dir.children[i]
     isempty(filekey_groups(dir)) && isempty(run_dirs(dir)) && throw(ArgumentError(
         "$(dir.label) holds no filekey files and no run directories, so it has no detectors"))
-    node = Node("detectors", joinpath(dir.remote_path, "detectors"), :detectors; parent = dir)
+    node = Node("detectors", joinpath(dir.remote_path, "detectors"), :detectors;
+                parent = dir, whole_files)
     pushfirst!(dir.children, node)
     node
 end
@@ -236,12 +255,18 @@ end
 
 Detached `:detector` rows for the listed directory `dir`. For a run directory, the
 first filekey file is inspected and each detector is sized by its stored bytes in
-that file. For a period directory, see [`period_detector_nodes`](@ref). A file
-without a detector axis (`jlevt`, `jlskm`, `jlpmt`) gives an empty vector; whether a
-tier has detectors is decided by looking, never by a list of tier names.
+that file. For a period directory, see [`period_detector_nodes`](@ref), or
+[`period_file_nodes`](@ref) when its `detectors` row is a `whole_files` one (the helper
+is not used then). A file without a detector axis (`jlevt`, `jlskm`, `jlpmt`) gives an
+empty vector; whether a tier has detectors is decided by looking, never by a list of
+tier names.
 """
 function detector_nodes(h::RemoteHost, helper::HelperConfig, dir::Node; jobs::Integer = 0)
-    period_level(dir) && return period_detector_nodes(h, helper, dir; jobs)
+    if period_level(dir)
+        i = dir.children === nothing ? nothing : findfirst(c -> c.kind == :detectors, dir.children)
+        i !== nothing && dir.children[i].whole_files && return period_file_nodes(h, dir)
+        return period_detector_nodes(h, helper, dir; jobs)
+    end
     file = only(first(filekey_groups(dir)).children)
     names, bytes = only(inspect_files(h, helper, [file.remote_path]; jobs))
     [Node(names[i], joinpath(dir.remote_path, "detectors", names[i]), :detector; size = bytes[i])
@@ -278,6 +303,33 @@ function period_detector_nodes(h::RemoteHost, helper::HelperConfig, period::Node
             push!(row.holders, run.remote_path => length(files))
         end
     end
+    [rows[name] for name in sort!(collect(keys(rows)))]
+end
+
+"""
+    period_file_nodes(h::RemoteHost, period::Node)::Vector{Node}
+
+Detached `:detector` rows for the listed period directory `period` of per-detector
+files: the union, sorted by name, of the detectors with a file in any of its run
+directories, one directory listing per run and no HDF5. A row's size is the sum of
+the sizes of the detector's files and its `holders` name the runs that have the
+file, each with 1. A period without a run directory that holds per-detector files
+is an error.
+"""
+function period_file_nodes(h::RemoteHost, period::Node)
+    rows = Dict{String,Node}()
+    for run in run_dirs(period), entry in list_dir(h, run.remote_path)
+        id = entry.kind == :file ? tier_file_id(entry.name) : nothing
+        (id === nothing || first(id) != :detector) && continue
+        row = get!(rows, last(id)) do
+            Node(last(id), joinpath(period.remote_path, "detectors", last(id)), :detector;
+                 size = 0, whole_files = true)
+        end
+        row.size += entry.size
+        push!(row.holders, run.remote_path => 1)
+    end
+    isempty(rows) && throw(ArgumentError(
+        "$(period.label) holds no per-detector files in any of its run directories"))
     [rows[name] for name in sort!(collect(keys(rows)))]
 end
 

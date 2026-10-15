@@ -15,6 +15,7 @@ using Tachikoma: TestBackend, Frame, Rect, KeyEvent, MouseEvent, mouse_left, mou
 include(joinpath(@__DIR__, "..", "..", "src", "sync", "JuleanaSync.jl"))
 include(joinpath(@__DIR__, "fixture_lh5.jl"))
 include(joinpath(@__DIR__, "fixture_extract_remote.jl"))
+include(joinpath(@__DIR__, "fixture_perdet_remote.jl"))
 
 # JuleanaSync exports nothing, so every name the tests use is named here. Each
 # task appends the names from its Interfaces/Produces block to this line.
@@ -45,7 +46,7 @@ using .JuleanaSync: main,
     bootstrap_environment!, parse_record, run_helper, helper_command, inspect_files, host_helper_config,
     HELPER_SCRIPT, HELPER_PACKAGES, DATAFLOW_PROJECT, DEFAULT_REMOTE_JULIA,
     DEFAULT_REMOTE_PROJECT, REMOTE_STAGING_SCRIPT,
-    ExtractEntry, ensure_detectors!, detector_nodes, attach_detectors!,
+    ExtractEntry, ensure_detectors!, detector_nodes, period_file_nodes, attach_detectors!,
     expand_detectors!, has_detectors,
     ExtractJob, staging_production_dir, plan_extraction, plan_bytes, plan_group_bytes, prepare_extraction,
     ExtractProgress, STAGING_MARGIN, check_staging_space, reduced_groups, reconcile_local, rsync_listed,
@@ -65,6 +66,7 @@ end
 
 const EXTRACT_ROOT = make_extract_remote()
 const TIER_DET_ROOT = make_tier_det_remote()
+const PERDET_ROOT = make_per_detector_remote()
 
 const LOCAL_ROOT = mktempdir()
 
@@ -81,6 +83,7 @@ run_file(name) = (isempty(SELECTED_TEST_FILES) || name in SELECTED_TEST_FILES) &
     run_file("test_selection.jl")
     run_file("test_extract_tree.jl")
     run_file("test_tierdet_tree.jl")
+    run_file("test_perdet_tree.jl")
     run_file("test_extract_estimate.jl")
     run_file("test_extract_transfer.jl")
     run_file("test_tierdet_transfer.jl")
