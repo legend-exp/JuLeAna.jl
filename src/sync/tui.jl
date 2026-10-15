@@ -262,8 +262,9 @@ end
 
 Inspect, in the background, the first file of the run below `node` (a `:detectors`
 row of a run) or the first file of each run of the period below it (a `:detectors`
-row of a period). The rows are built on detached nodes and linked in by the event handler,
-like a directory listing.
+row of a period). The `:detectors` row of a period of per-detector files is listed
+from the directory listings of its runs instead, without the helper. The rows are
+built on detached nodes and linked in by the event handler, like a directory listing.
 """
 function request_detectors!(m::SyncModel, node::Node)
     (node.children !== nothing || node.remote_path in m.pending) && return m
@@ -275,7 +276,8 @@ function request_detectors!(m::SyncModel, node::Node)
     spawn_task!(m.tasks, Symbol("detectors:", node.remote_path)) do
         (node, detector_nodes(host, helper, run; jobs))
     end
-    m.status = "inspecting the files of $(run.label)…"
+    m.status = node.whole_files ? "listing the detector files of $(run.label)…" :
+                                  "inspecting the files of $(run.label)…"
     rebuild_tree!(m)
 end
 
@@ -487,6 +489,11 @@ The right-hand pane: what the cursor is on, and the keys.
 function details(m::SyncModel)
     node = current_node(m)
     lines = node === nothing ? String[] :
+        node.kind == :detector && node.whole_files ? [node.label,
+            "files of this detector in the runs of $(node.parent.parent.label)",
+            "held by " * join(basename.(first.(node.holders)), ", "),
+            "size: " * (node.size === nothing ? "…" : format_bytes(node.size)),
+            "mark: " * (node.mode == :none ? "no" : String(node.mode)), ""] :
         node.kind == :detector ? [node.label,
             period_level(node.parent.parent) ?
                 "detector of the runs of $(node.parent.parent.label) ($(length(node.holders)) hold it)" :
@@ -495,6 +502,8 @@ function details(m::SyncModel)
                 (node.size === nothing ? "…" : format_bytes(node.size)),
             "extract: " * (node.mode == :extract ? "yes" :
                            effective_mode(node) == :extract ? "yes (whole period)" : "no"), ""] :
+        node.kind == :detectors && node.whole_files ? [node.label,
+            "enter lists the detector files of every run in $(node.parent.label)", ""] :
         node.kind == :detectors ? [node.label,
             period_level(node.parent) ?
                 "enter lists the detectors of the first file of every run in $(node.parent.label)" :
@@ -507,6 +516,7 @@ function details(m::SyncModel)
                 "overlays: " * (isempty(overlays) ? "none" : join(overlays, ", ")))
     end
     append!(lines, ["space copy   l link   n first N   x extract",
+                    "per-detector tiers: space/l mark a detector's files",
                     "enter expand/collapse   s save   mouse: click, wheel",
                     "e estimate   t sync   q quit"])
     Paragraph(join(lines, "\n"); block = Block(title = "Details"), wrap = word_wrap)
@@ -629,8 +639,9 @@ end
 # otherwise reopens a collapsed one.
 function expand_or_collapse!(m::SyncModel, node::Node; collapse::Bool)
     if node.children === nothing
-        node.kind == :detectors ? with_environment!(m, () -> request_detectors!(m, node)) :
-            request_expand!(m, node)
+        node.kind != :detectors ? request_expand!(m, node) :
+            node.whole_files ? request_detectors!(m, node) :
+            with_environment!(m, () -> request_detectors!(m, node))
     elseif collapse && !(node.remote_path in m.collapsed)
         push!(m.collapsed, node.remote_path)
         rebuild_tree!(m)
@@ -639,6 +650,15 @@ function expand_or_collapse!(m::SyncModel, node::Node; collapse::Bool)
         rebuild_tree!(m)
     end
     m
+end
+
+# Why space and l do nothing on `node`, or `nothing` when they act on it: a `detectors`
+# row has no path of its own, and the rows of HDF5 groups can only be extracted.
+function detector_hint(node::Node)
+    node.kind == :detectors && return node.whole_files ?
+        "space and l mark a detector below this row" : "use x on detector rows"
+    node.kind == :detector && !node.whole_files && return "use x on detector rows"
+    nothing
 end
 
 # Applies a mouse event to a list-like widget of `n` rows (TreeView or
@@ -751,16 +771,16 @@ function update!(m::SyncModel, e::KeyEvent)
     e.key == :char || return m
 
     if e.char == ' '
-        if node !== nothing && node.kind in (:detectors, :detector)
-            m.status = "use x on detector rows"
+        if node !== nothing && (hint = detector_hint(node)) !== nothing
+            m.status = hint
         elseif node !== nothing
             toggle_mode!(m, node, :copy)
         end
     elseif e.char == 'l'
         if m.production.mount_root === nothing
             m.status = "link mode needs a mount root; restart with --mount-root PATH"
-        elseif node !== nothing && node.kind in (:detectors, :detector)
-            m.status = "use x on detector rows"
+        elseif node !== nothing && (hint = detector_hint(node)) !== nothing
+            m.status = hint
         elseif node !== nothing
             toggle_mode!(m, node, :link)
         end
