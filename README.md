@@ -175,10 +175,10 @@ This opens a terminal interface:
 | `enter` | Expand or collapse; lists the directory the first time |
 | mouse wheel | Scroll the tree or the production picker |
 | left click | Select a row; a click on the selected row does what `enter` does |
-| `space` | Copy this row (`[x]`), or stop copying it |
-| `l` | Reach this row through the mount instead (`[~]`); needs `--mount-root` |
+| `space` | Copy this row (`[x]`), or stop copying it; on a detector row of a per-detector tier, copy that detector's files |
+| `l` | Reach this row through the mount instead (`[~]`); needs `--mount-root`; on a detector row of a per-detector tier, link that detector's files |
 | `n` | On a run directory: copy the first N filekeys |
-| `x` | On a detector row below a `detectors` row (of a run or of a period): extract this detector (`[e]`), or stop extracting it |
+| `x` | On a detector row below a `detectors` row of a per-filekey tier (of a run or of a period): extract this detector (`[e]`), or stop extracting it |
 | `e` | Ask rsync exactly what the selection would move |
 | `t` | Estimate, confirm, and transfer |
 | `s` | Save the selection to `config/sync/<production>.yaml` |
@@ -222,7 +222,7 @@ the plan merges them per run, so nothing is extracted twice. The status bar show
 approximate extracted size (`~1.2 G extract (2 files)`: the sizes in the first file
 times the number of files); `e` inspects every file and shows the exact size, the
 free space of the staging directory and the detectors left out (see below).
-`space`, `l` and `n` on a detector row only point to `x`. A copy or link mark and an
+`space`, `l` and `n` on a detector row of a per-filekey tier only point to `x`. A copy or link mark and an
 extract mark never cover the same run. A run-level detector mark is refused while its
 run, its period or a directory above is copied or linked. A period-level detector mark
 is refused while any run that holds the detector, or the period or a directory above,
@@ -272,6 +272,47 @@ followed by the bytes rsync moved for them.
 The interface accepts no key while it checks the helper environment, creates it, or
 transfers. During a transfer the gauge reads `extracting k/N files` while the helper
 runs and shows the rsync progress afterward.
+
+### Detector files of per-detector tiers
+
+Tiers such as `jlqcs`, `jlpks`, `jlaux` and `jlhit` hold one file per detector and run,
+named like `l200-p16-r000-cal-B00000C-tier_jlqcs.lh5`; each run directory already
+shows one row per detector file. A period directory whose first run directory with
+tier files holds such files has a `detectors` row above its run directories. `enter`
+on it lists every run directory of the period (one directory listing per run, no
+remote helper, no HDF5, no environment check) and shows the union of the detector
+names, each sized by the sum of its files over the runs. The details pane names the
+runs that hold the detector.
+
+On such a detector row `space` copies the detector's files from every run of the
+period and `l` links them, both through the usual rsync run and mount root; `x` is
+refused, because there is nothing to extract from a file that holds one detector. The
+run-level row of that detector shows the inherited `[x]` or `[~]` and cannot be
+toggled or excluded; unmark the period's detector instead. Other detectors of the same
+run and other runs can still be marked. A period-level mark and a whole copy or link
+exclude each other as extraction does: the mark is refused while the period, a run that
+holds the detector, a directory above, or one of the detector's files is copied or
+linked, and copying or linking a run, the period or a directory above is refused while
+a detector mark covers it. A copy mark and a link mark for the same detector and
+period cannot both exist.
+
+The selection stores the marks by intent, under the `detector_files` key of the YAML
+file (`dir` is the period directory relative to the remote root):
+
+```yaml
+detector_files:
+  - dir: juleana/jl-v0.8.1/generated/tier/jlqcs/cal/p16
+    detectors: [B00000C, V01234A]
+    mode: copy
+```
+
+The files are looked up when a transfer or estimate is planned, so a run added after
+the selection was saved is included. A run without a file for a detector is reported
+as "not in run" (`<detector> in <run>`, in the estimate, the headless output and the
+summary), as is a run directory without per-detector files; a period without any
+per-detector file is an error naming the entry. A file that the copy list already
+covers is not transferred twice. The status bar counts a marked row once, with one
+file or link per run that holds the detector.
 
 ### Remote setup
 

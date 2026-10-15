@@ -208,3 +208,27 @@ top-level directory recursively.
       A run that holds none of the chosen detectors has no files in the mirror.
 - [ ] Save, quit, and re-run headless with `--from`: the period entry is applied
       without the interface and gives the same extraction.
+
+### Detector files of a per-detector tier
+
+- [ ] On `viper`, production `jl-v0.8.1`, open `tier/jlqcs` -> `cal` -> a period:
+      a `detectors` row appears above the run directories. `enter` on it shows
+      `listing the detector files of ...` and then the detector names with sizes,
+      without a helper environment dialog. Record the time for a period with many
+      runs. A `jldsp` period still lists through the helper.
+- [ ] `space` on one detector: the row reads `[x]` and the status bar shows the sum
+      of its files and one file per run that holds it. `x` reports that the files
+      hold one detector each. Open a run: the detector's file shows `[x]` and
+      `space` or `l` on it says to unmark the period's detector.
+- [ ] `t` copies exactly that detector's files of every run into the mirror (compare
+      `ls` of two runs with the host) and nothing else of the period. A run that
+      lacks the detector is listed as `<detector> in <run>` under "not in run" in
+      the estimate and in the summary.
+- [ ] Change the mark to `l` (needs `--mount-root`): symlinks to the mounted files
+      are created for the same files and none for the other detectors.
+- [ ] `space` on the period or on a run that holds the detector while the detector
+      is marked reports `cannot mark ... :copy`; with the period copied, `space` on
+      the detector row reports `... is already transferred whole`.
+- [ ] Save, quit and run headless with `--from` and `--dry-run`: the estimate and the
+      pairs match the interface. The saved file lists the marks under
+      `detector_files`.
