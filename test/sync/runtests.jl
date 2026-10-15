@@ -48,7 +48,7 @@ using .JuleanaSync: main,
     DEFAULT_REMOTE_PROJECT, REMOTE_STAGING_SCRIPT,
     ExtractEntry, DetectorEntry, covering_detector, ensure_detectors!, detector_nodes, period_file_nodes, attach_detectors!,
     expand_detectors!, has_detectors,
-    ExtractJob, staging_production_dir, plan_extraction, plan_bytes, plan_group_bytes, prepare_extraction,
+    ExtractJob, staging_production_dir, plan_extraction, plan_detector_files, plan_bytes, plan_group_bytes, prepare_extraction,
     ExtractProgress, STAGING_MARGIN, check_staging_space, reduced_groups, reconcile_local, rsync_listed,
     with_environment!, start_bootstrap!, environment_ready!, request_detectors!, run_estimate!, toggle_extract!
 
@@ -87,6 +87,7 @@ run_file(name) = (isempty(SELECTED_TEST_FILES) || name in SELECTED_TEST_FILES) &
     run_file("test_extract_estimate.jl")
     run_file("test_extract_transfer.jl")
     run_file("test_tierdet_transfer.jl")
+    run_file("test_perdet_transfer.jl")
     run_file("test_tierdet_estimate.jl")
     run_file("test_estimate.jl")
     run_file("test_transfer.jl")

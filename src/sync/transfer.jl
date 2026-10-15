@@ -23,7 +23,8 @@ exiting 0. It is `""` when nothing was printed.
 staging directory and the HDF5 groups in them, `extracted_bytes` the bytes rsync
 moved for them, and `conflicts` the relative paths that were not extracted because
 a full local copy or a link stands there. `not_in_run` lists the
-`(run directory, detector)` pairs a period entry named but the run does not hold.
+`(run directory, detector)` pairs a period entry (extract or detector files) named
+but the run does not hold.
 """
 struct TransferResult
     bytes::Int
@@ -410,6 +411,62 @@ function reconcile_local(p::Production, plan::Vector{ExtractJob})
 end
 
 """
+    plan_detector_files(h, p, sel)
+
+`(copies, links, not_in_run)` for the detector file entries of `sel`, found by listing
+the run directories of each entry's period on `h` (the remote helper and HDF5 are not
+involved). `copies` and `links` are the relative paths of every file whose name carries
+a listed detector, in the mode of the entry, sorted and without duplicates; a file that
+`sel.copy` already covers, as itself or through a directory above it, is not added to
+either list, and neither is a file to be linked that `sel.link` covers. `not_in_run`
+holds a `(run directory, detector)` pair for each run without a file of the detector,
+which includes a run directory without per-detector files. An entry whose period holds
+no per-detector file at all, and a detector that is in both a copy and a link entry
+for the same period, are an `ArgumentError`.
+"""
+function plan_detector_files(h::RemoteHost, p::Production, sel::Selection)
+    modes = Dict{Tuple{String,String},Symbol}()
+    for entry in sel.detector_files, name in entry.detectors
+        get!(modes, (entry.dir, name), entry.mode) == entry.mode || throw(ArgumentError(
+            "detector $name of $(entry.dir) is in a copy and a link entry"))
+    end
+    covered(rel, paths) = any(c -> rel == c || startswith(rel, c * "/"), paths)
+    copies = String[]
+    links = String[]
+    not_in_run = Tuple{String,String}[]
+    for entry in sel.detector_files
+        dir = joinpath(p.remote_root, entry.dir)
+        runs = [e.name for e in sort!(list_dir(h, dir); by = e -> e.name)
+                if e.kind == :dir && occursin(RUN_DIR_EXPR, e.name)]
+        found = 0
+        for run in runs
+            files = Dict{String,String}()                # detector => file name
+            for e in list_dir(h, joinpath(dir, run))
+                id = e.kind == :file ? tier_file_id(e.name) : nothing
+                (id === nothing || first(id) != :detector) && continue
+                files[last(id)] = e.name
+            end
+            found += length(files)
+            for name in entry.detectors
+                if !haskey(files, name)
+                    push!(not_in_run, (joinpath(entry.dir, run), name))
+                    continue
+                end
+                rel = joinpath(entry.dir, run, files[name])
+                if entry.mode == :copy
+                    covered(rel, sel.copy) || push!(copies, rel)
+                else
+                    covered(rel, sel.copy) || covered(rel, sel.link) || push!(links, rel)
+                end
+            end
+        end
+        found == 0 && throw(ArgumentError(
+            "detector file entry $(entry.dir): no run directory holds per-detector files"))
+    end
+    sort!(unique!(copies)), sort!(unique!(links)), sort!(unique!(not_in_run))
+end
+
+"""
     rsync_dry_run(h::RemoteHost, p::Production, sel::Selection)::Estimate
 
 What the transfer would actually move, given what is already in the mirror.
@@ -494,7 +551,9 @@ end
 Bring the mirror in line with `sel`. With `dry_run` it only asks rsync what would
 move, inspects the files to extract with the remote helper, and returns an
 [`Estimate`](@ref); otherwise it transfers, creates the links and writes
-`config_local.yaml`, and returns a [`TransferResult`](@ref).
+`config_local.yaml`, and returns a [`TransferResult`](@ref). The detector file
+entries of `sel` are resolved to files first (see [`plan_detector_files`](@ref)) and
+join the copy and link lists.
 
 `progress` is called with a [`Progress`](@ref) for each reading rsync prints.
 Extract entries are reduced on the host by the remote helper (`helper` says how to
@@ -513,12 +572,16 @@ function apply!(h::RemoteHost, p::Production, sel::Selection;
     probe, io = mktemp(p.local_root)
     close(io)
     rm(probe)
-    isempty(sel.link) || check_mount(p)
-    staging, plan, not_in_run = isempty(sel.extract) ?
+    detector_copies, detector_links, detector_absent = plan_detector_files(h, p, sel)
+    resolved = Selection(sel.host, sel.production, sel.remote_root, sel.local_root, sel.mount_root,
+                         sort!(union(sel.copy, detector_copies)), sort!(union(sel.link, detector_links)),
+                         sel.created, sel.extract, sel.detector_files)
+    isempty(resolved.link) || check_mount(p)
+    staging, plan, extract_absent = isempty(sel.extract) ?
         ("", ExtractJob[], Tuple{String,String}[]) : prepare_extraction(h, p, sel, helper; jobs)
+    not_in_run = sort!(unique!(vcat(extract_absent, detector_absent)))
     if dry_run
-        estimate = rsync_dry_run(h, p, sel)
-        isempty(sel.extract) && return estimate
+        estimate = rsync_dry_run(h, p, resolved)
         return Estimate(estimate.bytes, estimate.files, estimate.links, true,
                         plan_bytes(h, helper, plan; jobs), length(plan), true, not_in_run)
     end
@@ -546,9 +609,9 @@ function apply!(h::RemoteHost, p::Production, sel::Selection;
                                extract_progress(ExtractProgress(done, length(plan), staged_bytes))
                        end)
         end
-        replaced = remove_stale_links!(p, sel)
+        replaced = remove_stale_links!(p, resolved)
         out, copy_warnings = rsync_listed(path -> rsync_command(h, p, path; dry_run = false),
-                                          sel.copy, progress)
+                                          resolved.copy, progress)
         push!(warnings, copy_warnings)
         if !isempty(plan)
             # The helper phase can be long; the mirror may have changed since the plan was checked.
@@ -563,8 +626,8 @@ function apply!(h::RemoteHost, p::Production, sel::Selection;
             push!(warnings, pull_warnings)
         end
         in_mirror = true
-        moved = parse_rsync_stats(out, length(sel.link))
-        created, skipped = create_links!(h, p, sel)
+        moved = parse_rsync_stats(out, length(resolved.link))
+        created, skipped = create_links!(h, p, resolved)
         config = write_local_config(p)
         isempty(plan) || remove_staged!(h, staging, [j.destination for j in plan])
         result = TransferResult(moved.bytes, moved.files, created, replaced, skipped,
@@ -598,7 +661,7 @@ function summary_text(r::TransferResult)
         push!(lines, "kept $(length(r.conflicts)) existing files instead of extracting (full copies or symlinks): " *
                      join(r.conflicts, ", "))
     isempty(r.not_in_run) ||
-        push!(lines, "not in run, left out of the extraction: " *
+        push!(lines, "not in run, left out: " *
                      format_not_in_run(r.not_in_run))
     isempty(r.warnings) || push!(lines, "rsync warnings:\n$(r.warnings)")
     push!(lines, "export LEGEND_DATA_CONFIG=$(r.config)")

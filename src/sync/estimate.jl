@@ -14,7 +14,8 @@ file rsync would actually send.
 would copy, in `extract_files` source files. `extract_exact` is `false` when the
 numbers come from the first file of each run only; the exact estimate inspects
 every file. `not_in_run` lists the `(run directory, detector)` pairs a period
-entry named that the run does not hold; they are left out of the extraction.
+entry named that the run does not hold; they are left out of the extraction or
+transfer.
 """
 struct Estimate
     bytes::Int

@@ -104,7 +104,7 @@
         code, text = headless(root; dry_run = false, yes = true)
         @test code == 0
         @test occursin("extracted 3 files, 5 groups", text)
-        @test occursin("not in run, left out of the extraction: aux in $(relative(p, r001))", text)
+        @test occursin("not in run, left out: aux in $(relative(p, r001))", text)
         local_file = to_local(Production(h, "tprod", TIER_DET_ROOT, root),
                               joinpath(r001, "l200-p18-r001-cal-20251108T101010Z-tier_jlpks.lh5"))
         @test h5open(f -> collect(keys(f["jlpks"])), local_file, "r") == ["B00000C"]

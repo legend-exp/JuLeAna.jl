@@ -95,7 +95,7 @@
         settle!(m)
         @test m.modal_kind == :message
         @test occursin("extracted 3 files, 5 groups", m.modal.message)
-        @test occursin("not in run, left out of the extraction: aux in $(relative(m.production, r001))", m.modal.message)
+        @test occursin("not in run, left out: aux in $(relative(m.production, r001))", m.modal.message)
         local_dir = joinpath(m.production.local_root, "tprod", "generated", "tier", "jlpks", "cal", "p18")
         @test length(readdir(joinpath(local_dir, "r000"))) == 2
         @test length(readdir(joinpath(local_dir, "r001"))) == 1

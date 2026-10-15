@@ -159,7 +159,7 @@
         end
         text = summary_text(result)
         @test occursin("extracted 3 files, 5 groups", text)
-        @test occursin("not in run, left out of the extraction: aux in $(relative(p, r001))", text)
+        @test occursin("not in run, left out: aux in $(relative(p, r001))", text)
         @test !isdir(joinpath(stage, "tprod"))
 
         apply!(h, p, selection(p, [period(p, ["V01234A"])]); helper)
