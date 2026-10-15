@@ -51,7 +51,7 @@ function inspect_file(path::String, groups::Union{Nothing,Vector{String}})::Tupl
     h5open(path, "r") do f
         layout = detector_parent(f)
         if layout === nothing
-            isempty(something(groups, String[])) || error("group ", first(groups), " not found in ", path)
+            isempty(something(groups, String[])) || error("group $(first(groups)) not found in $path")
             return (String[], Int[], "")
         end
         parent = layout == "" ? f : f[layout]

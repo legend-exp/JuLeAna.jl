@@ -65,7 +65,7 @@
         @test isempty(first(plan_extraction(h, p, above, staging)))
     end
 
-    @testset "plan_bytes inspects every source file" begin
+    @testset "plan_bytes sizes the groups of each job" begin
         root, _ = marked_tree()
         plan, _ = plan_extraction(h, p, Selection(p, "local", root), joinpath(tempdir(), "stage"))
         @test plan_bytes(h, helper, plan) == (400 + 1200) + (800 + 2400)
@@ -73,7 +73,7 @@
         bad = [ExtractJob(files[1], "/x", "x", ["Z99999Z"])]
         @test_throws "group Z99999Z not found in $(files[1])" plan_bytes(h, helper, bad)
         @test_throws "inspected 1 files for a plan of 2 jobs" plan_group_bytes(plan, [(["aux"], [1])])
-        @test_throws "1 sizes for the 2 groups of $(files[1])" plan_group_bytes(plan, [(["aux"], [1]), (["aux"], [1, 2])])
+        @test_throws "got 1 sizes for 2 groups of $(files[1])" plan_group_bytes(plan, [(["B00000C", "aux"], [1]), (["B00000C", "aux"], [1, 2])])
 
         # The totals equal those of sizing every group of every file.
         full = inspect_files(h, helper, [j.source for j in plan])
@@ -88,7 +88,18 @@
         @test job["job"] == [Dict("file" => files[1], "groups" => ["Z99999Z"])]
         sized = inspect_files(h, helper, [j.source for j in plan]; groups = [j.groups for j in plan])
         @test [bytes for (_, bytes, _) in sized] == [[400, 1200], [800, 2400]]
-        @test [names for (names, _, _) in sized] == [first(f) for f in full]
+        @test [names for (names, _, _) in sized] == [j.groups for j in plan]
+        @test_throws "sized groups [\"aux\"] for the groups [\"B00000C\", \"aux\"] of $(files[1])" plan_group_bytes(
+            plan, [(["aux"], [1]), (["B00000C", "aux"], [1, 2])])
+        @test_throws "listed more than once" inspect_files(h, helper, [files[1], files[1]]; groups = [["aux"], ["B00000C"]])
+        @test_throws "listed more than once" inspect_files(h, helper, [files[1], files[1]]; groups = [["aux"], ["aux"]])
+
+        # A helper that sizes other groups than requested is caught.
+        wrong = joinpath(mktempdir(), "julia")
+        write(wrong, "#!/bin/sh\nprintf 'r = {file = \"%s\", groups = [\"B00000C\", \"aux\"], sized = [\"B00000C\"], bytes = [1], layout = \"\"}\\n' \"$(files[1])\"\n")
+        chmod(wrong, 0o755)
+        @test_throws "not the requested" inspect_files(
+            h, HelperConfig(; staging = helper.staging, julia = wrong), files[1:1]; groups = [["B00000C", "aux"]])
         @test_throws "2 group lists for 1 files" inspect_files(h, helper, files[1:1]; groups = [["aux"], ["aux"]])
     end
 

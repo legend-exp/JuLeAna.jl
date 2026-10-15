@@ -295,7 +295,7 @@ end
 The summed stored size of the groups each job of `plan` takes, given the
 `inspect_files` result for the same files in the same order, requested with
 `groups = [j.groups for j in plan]`. A result of a different length, or one whose
-sizes do not match the groups of its job, is an error.
+group names or sizes do not match the groups of its job, is an error.
 """
 function plan_group_bytes(plan::Vector{ExtractJob}, inspected)
     length(inspected) == length(plan) || throw(ErrorException(
@@ -303,9 +303,11 @@ function plan_group_bytes(plan::Vector{ExtractJob}, inspected)
     total = 0
     for i in eachindex(plan, inspected)
         job = plan[i]
-        bytes = inspected[i][2]
+        names, bytes = inspected[i]
+        names == job.groups || throw(ErrorException(
+            "sized groups $names for the groups $(job.groups) of $(job.source)"))
         length(bytes) == length(job.groups) || throw(ErrorException(
-            "$(length(bytes)) sizes for the $(length(job.groups)) groups of $(job.source)"))
+            "got $(length(bytes)) sizes for $(length(job.groups)) groups of $(job.source)"))
         total += sum(bytes; init = 0)
     end
     total

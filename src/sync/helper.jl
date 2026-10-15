@@ -209,21 +209,32 @@ the layout. The layout is the name of the tier group that holds the detectors
 without a detector axis has no names.
 
 Without `groups`, the sizes are those of all names. `groups` holds one vector of
-group names per file; the sizes of that file are then those of its groups, in their
-order, and only those groups are read. A group a file lacks is an error.
+group names per file, and `files` must then be unique. The result for such a file
+carries the sized group names in place of all names, and its sizes are in their
+order; only those groups are read. A group a file lacks, or a record whose sized
+names differ from the request, is an error.
 """
 function inspect_files(h::RemoteHost, c::HelperConfig, files::AbstractVector{<:AbstractString};
                        groups::Union{Nothing,AbstractVector} = nothing, jobs::Integer = 0)
-    groups === nothing || length(groups) == length(files) || throw(DimensionMismatch(
-        "$(length(groups)) group lists for $(length(files)) files"))
+    if groups !== nothing
+        length(groups) == length(files) || throw(DimensionMismatch(
+            "$(length(groups)) group lists for $(length(files)) files"))
+        seen = Set{String}()
+        for file in files
+            file in seen && throw(ArgumentError("file $file is listed more than once with group lists"))
+            push!(seen, file)
+        end
+    end
     spec = groups === nothing ? Dict("files" => collect(String, files)) :
            Dict("job" => [Dict("file" => String(f), "groups" => collect(String, g))
                           for (f, g) in zip(files, groups)])
     records = run_helper(h, c, "inspect", spec; jobs)
-    found = Dict(r["file"] => (String.(r["groups"]), Int.(r["bytes"]), String(r["layout"]))
+    found = Dict(r["file"] => (String.(get(r, "sized", r["groups"])), Int.(r["bytes"]), String(r["layout"]))
                  for r in records)
-    map(files) do file
+    map(files, groups === nothing ? fill(nothing, length(files)) : groups) do file, requested
         haskey(found, file) || throw(ErrorException("the remote helper reported nothing for $file"))
+        requested === nothing || found[file][1] == requested || throw(ErrorException(
+            "the remote helper sized $(found[file][1]) for $file, not the requested $(collect(String, requested))"))
         found[file]
     end
 end
