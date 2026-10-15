@@ -581,6 +581,9 @@
             update!(m, click(area.x + 2, area.y + 25))                                       # below the rows
             @test (m.tree.selected, m.tree.offset) == before
             @test isempty(m.pending)
+            # A left press on a row with no dialog does select it, so the ignored events above are not vacuous.
+            update!(m, click(row_pos(m, 3)...))
+            @test m.tree.selected == 3
 
             # A dialog swallows the click: nothing is selected, answered or listed.
             open_message!(m, "Working", "a dialog the user is reading")
@@ -611,6 +614,11 @@
             @test m.screen == :pick
             update!(m, click(area.x + 200, area.y + 1))
             @test m.picker.selected == 2
+            # A click is ignored while a background task is active.
+            m.tasks.active[] += 1
+            update!(m, click(area.x + 1, area.y + 2))
+            @test m.picker.selected == 2 && m.screen == :pick
+            m.tasks.active[] -= 1
             update!(m, click(area.x + 1, area.y + 1))
             settle!(m)
             @test m.production.name == m.productions[2]

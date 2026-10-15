@@ -59,6 +59,27 @@
         @test_throws "holds no per-detector files" period_file_nodes(h, empty_period)
     end
 
+    @testset "two files of one detector in a run are an error" begin
+        root = make_per_detector_remote()
+        q = Production(h, "dprod", root, mktempdir())
+        dir = joinpath(root, "dprod", "generated", "tier", "jlqcs", "cal", "p16", "r001")
+        write(joinpath(dir, "l200-p16-r001-phy-B00000C-tier_jlqcs.lh5"), "y")
+        period = Node("p16", dirname(dir), :dir)
+        expand!(h, q, period; detectors = true)
+        @test_throws "r001 holds two files for detector B00000C: l200-p16-r001-cal-B00000C-tier_jlqcs.lh5 and l200-p16-r001-phy-B00000C-tier_jlqcs.lh5" period_file_nodes(h, period)
+    end
+
+    @testset "a directory with both kinds of tier file is an error" begin
+        root = make_per_detector_remote()
+        q = Production(h, "dprod", root, mktempdir())
+        run = joinpath(root, "dprod", "generated", "tier", "jlqcs", "cal", "p16", "r000")
+        write(joinpath(run, "l200-p16-r000-cal-20251107T191821Z-tier_jlqcs.lh5"), "z")
+        msg = "r000 holds filekey files and per-detector files, for example " *
+              "l200-p16-r000-cal-20251107T191821Z-tier_jlqcs.lh5 and l200-p16-r000-cal-B00000C-tier_jlqcs.lh5"
+        @test_throws msg expand!(h, q, Node("r000", run, :dir))
+        @test_throws msg expand!(h, q, Node("p16", dirname(run), :dir); detectors = true)
+    end
+
     @testset "run-level group rows are unchanged" begin
         period = listed_period()
         run = only(filter(c -> c.label == "r000", period.children))
@@ -110,7 +131,7 @@ end
         set_mode!(b, :none)
         @test b.mode == :none
         @test_throws "hold one detector each" set_mode!(b, :extract)
-        @test_throws "detector rows have no path" set_mode!(rows, :copy)
+        @test_throws "mark one of the detector rows below it :copy" set_mode!(rows, :copy)
         @test b.mode == :none
     end
 

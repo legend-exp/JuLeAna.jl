@@ -296,6 +296,13 @@ linked, and copying or linking a run, the period or a directory above is refused
 a detector mark covers it. A copy mark and a link mark for the same detector and
 period cannot both exist.
 
+A directory holds one kind of tier file. A run directory with both filekey files and
+per-detector files is an error that names the run and one file of each kind. In a
+period the first run directory with tier files decides which kind the `detectors` row
+lists; a run of the other kind contributes nothing to the row and is reported as "not
+in run" when the selection is planned. A run with two files for one detector is an
+error naming the run and both files.
+
 The selection stores the marks by intent, under the `detector_files` key of the YAML
 file (`dir` is the period directory relative to the remote root):
 

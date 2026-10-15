@@ -58,6 +58,16 @@
         @test absent == [(joinpath(p16_rel, "r002"), "B00000C")]
     end
 
+    @testset "two files of one detector in a run are an error" begin
+        root = make_per_detector_remote()
+        q = Production(h, "dprod", root, mktempdir())
+        write(joinpath(root, "dprod", "generated", "tier", "jlqcs", "cal", "p16", "r001",
+                       "l200-p16-r001-phy-B00000C-tier_jlqcs.lh5"), "y")
+        sel = Selection("local", "dprod", root, q.local_root, nothing, base, String[], now(),
+                        ExtractEntry[], [entry(["B00000C"], :copy)])
+        @test_throws "$(joinpath(p16_rel, "r001")) holds two files for detector B00000C: l200-p16-r001-cal-B00000C-tier_jlqcs.lh5 and l200-p16-r001-phy-B00000C-tier_jlqcs.lh5" plan_detector_files(h, q, sel)
+    end
+
     @testset "an entry without per-detector files is an error" begin
         empty_dir = relative(p, joinpath(tier, "jlqcs", "cal", "p17"))
         @test_throws "detector file entry $empty_dir: no run directory holds per-detector files" plan_detector_files(
@@ -88,6 +98,18 @@
         # A second run moves nothing and reports the same pair.
         again = apply!(h, q, sel; helper = broken)
         @test again.files == 0
+    end
+
+    @testset "only the extract part of a selection needs the helper" begin
+        q = Production(h, "dprod", PERDET_ROOT, mktempdir())
+        extract = ExtractEntry(relative(p, joinpath(tier, "jldsp", "cal", "p16", "r000")), ["B00000C"])
+        sel = Selection("local", "dprod", PERDET_ROOT, q.local_root, nothing, base, String[], now(),
+                        [extract], [entry(["B00000C"], :copy)])
+        @test_throws "/nonexistent/julia" apply!(h, q, sel; dry_run = true, helper = broken)
+        @test !ispath(joinpath(q.local_root, p16_rel))
+        # Without the extract entry the same detector files are planned and transferred.
+        apply!(h, q, selection(q, [entry(["B00000C"], :copy)]); helper = broken)
+        @test isfile(joinpath(q.local_root, qcs(p16_rel, "r000", "B00000C")))
     end
 
     @testset "a link entry creates symlinks under the mount root" begin
@@ -129,6 +151,27 @@
         @test est.not_in_run == [(joinpath(p16_rel, "r001"), "V01234A")]
         @test endswith(format_estimate(est), ", 1 not in run")
         @test !ispath(joinpath(q.local_root, p16_rel))
+    end
+
+    @testset "the dry run and the transfer act on the planned files" begin
+        q = Production(h, "dprod", PERDET_ROOT, mktempdir(); mount_root = "/")
+        sel = selection(q, [entry(["B00000C"], :copy), entry(["V01234A"], :link)])
+        copies, links, absent = plan_detector_files(h, q, sel)
+        est = apply!(h, q, sel; dry_run = true, helper = broken)
+        @test est.files == length(copies) + length(base)
+        @test est.links == length(links)
+        @test est.not_in_run == absent
+        result = apply!(h, q, sel; helper = broken)
+        @test result.files == est.files && result.links == est.links
+        @test result.not_in_run == est.not_in_run
+        mirrored = [relpath(joinpath(root, f), q.local_root)
+                    for (root, _, fs) in walkdir(joinpath(q.local_root, "dprod", "generated"))
+                    for f in fs if !islink(joinpath(root, f))]
+        linked = [relpath(joinpath(root, f), q.local_root)
+                  for (root, _, fs) in walkdir(joinpath(q.local_root, "dprod", "generated"))
+                  for f in fs if islink(joinpath(root, f))]
+        @test sort(mirrored) == copies
+        @test sort(linked) == links
     end
 
     @testset "a saved selection picks up a run added later" begin

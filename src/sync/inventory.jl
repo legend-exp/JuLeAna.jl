@@ -136,7 +136,9 @@ function expand!(h::RemoteHost, p::Production, node::Node; detectors::Bool = fal
     node.children === nothing || return node
     node.kind in (:section, :dir) || throw(ArgumentError(
         "a :$(node.kind) node cannot be expanded: $(node.label)"))
-    children = group_children(list_dir(h, node.remote_path), node.remote_path)
+    entries = list_dir(h, node.remote_path)
+    check_tier_kinds(node.remote_path, entries)
+    children = group_children(entries, node.remote_path)
     dirs = [c for c in children if c.kind == :dir]
     if sizes && !isempty(dirs)
         bytes = dir_sizes(h, [c.remote_path for c in dirs])
@@ -154,16 +156,29 @@ function expand!(h::RemoteHost, p::Production, node::Node; detectors::Bool = fal
         else
             # The first run directory with tier files decides which kind the period holds.
             for run in run_dirs(node)
-                ids = [tier_file_id(e.name) for e in list_dir(h, run.remote_path) if e.kind == :file]
-                kinds = [first(id) for id in ids if id !== nothing]
-                isempty(kinds) && continue
-                ensure_detectors!(node; whole_files = :detector in kinds && :filekey ∉ kinds)
+                entries = list_dir(h, run.remote_path)
+                check_tier_kinds(run.remote_path, entries)
+                i = findfirst(e -> e.kind == :file && tier_file_id(e.name) !== nothing, entries)
+                i === nothing && continue
+                ensure_detectors!(node; whole_files = first(tier_file_id(entries[i].name)) == :detector)
                 break
             end
         end
     end
     node.local_state = node_local_state(p, node)
     node
+end
+
+# A directory holds either filekey files or per-detector files, not both: a run that mixed
+# them would be grouped by one kind and the other would go unseen.
+function check_tier_kinds(dir::AbstractString, entries)
+    named = [(first(id), e.name) for e in entries if e.kind == :file
+             for id in (tier_file_id(e.name),) if id !== nothing]
+    a = findfirst(x -> first(x) == :filekey, named)
+    b = findfirst(x -> first(x) == :detector, named)
+    (a === nothing || b === nothing) && return nothing
+    throw(ArgumentError("$dir holds filekey files and per-detector files, for example " *
+                        "$(last(named[a])) and $(last(named[b]))"))
 end
 
 """
@@ -311,22 +326,30 @@ end
 
 Detached `:detector` rows for the listed period directory `period` of per-detector
 files: the union, sorted by name, of the detectors with a file in any of its run
-directories, one directory listing per run and no HDF5. A row's size is the sum of
+directories, one directory listing per run and no HDF5. Two files of one detector in
+one run are an error. A row's size is the sum of
 the sizes of the detector's files and its `holders` name the runs that have the
 file, each with 1. A period without a run directory that holds per-detector files
 is an error.
 """
 function period_file_nodes(h::RemoteHost, period::Node)
     rows = Dict{String,Node}()
-    for run in run_dirs(period), entry in list_dir(h, run.remote_path)
-        id = entry.kind == :file ? tier_file_id(entry.name) : nothing
-        (id === nothing || first(id) != :detector) && continue
-        row = get!(rows, last(id)) do
-            Node(last(id), joinpath(period.remote_path, "detectors", last(id)), :detector;
-                 size = 0, whole_files = true)
+    for run in run_dirs(period)
+        seen = Dict{String,String}()                     # detector => its file in this run
+        for entry in list_dir(h, run.remote_path)
+            id = entry.kind == :file ? tier_file_id(entry.name) : nothing
+            (id === nothing || first(id) != :detector) && continue
+            name = last(id)
+            haskey(seen, name) && throw(ArgumentError(
+                "$(run.label) holds two files for detector $name: $(seen[name]) and $(entry.name)"))
+            seen[name] = entry.name
+            row = get!(rows, name) do
+                Node(name, joinpath(period.remote_path, "detectors", name), :detector;
+                     size = 0, whole_files = true)
+            end
+            row.size += entry.size
+            push!(row.holders, run.remote_path => 1)
         end
-        row.size += entry.size
-        push!(row.holders, run.remote_path => 1)
     end
     isempty(rows) && throw(ArgumentError(
         "$(period.label) holds no per-detector files in any of its run directories"))

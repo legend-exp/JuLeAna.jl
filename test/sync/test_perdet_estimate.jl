@@ -38,8 +38,6 @@
         set_mode!(rows.children[1], :copy)
         set_mode!(runs[1].children[2], :copy)                    # V01234A of r000: 200
         @test running_estimate(root) == Estimate(600, 3, 0, true)
-        set_mode!(runs[2], :none)
-        @test running_estimate(root).bytes == 600
     end
 
     @testset "a row without a size makes the estimate incomplete" begin

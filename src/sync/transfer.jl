@@ -421,7 +421,7 @@ a listed detector, in the mode of the entry, sorted and without duplicates; a fi
 either list, and neither is a file to be linked that `sel.link` covers. `not_in_run`
 holds a `(run directory, detector)` pair for each run without a file of the detector,
 which includes a run directory without per-detector files. An entry whose period holds
-no per-detector file at all, and a detector that is in both a copy and a link entry
+no per-detector file at all, a run with two files for one detector, and a detector that is in both a copy and a link entry
 for the same period, are an `ArgumentError`.
 """
 function plan_detector_files(h::RemoteHost, p::Production, sel::Selection)
@@ -444,6 +444,9 @@ function plan_detector_files(h::RemoteHost, p::Production, sel::Selection)
             for e in list_dir(h, joinpath(dir, run))
                 id = e.kind == :file ? tier_file_id(e.name) : nothing
                 (id === nothing || first(id) != :detector) && continue
+                haskey(files, last(id)) && throw(ArgumentError(
+                    "$(joinpath(entry.dir, run)) holds two files for detector $(last(id)): " *
+                    "$(files[last(id)]) and $(e.name)"))
                 files[last(id)] = e.name
             end
             found += length(files)

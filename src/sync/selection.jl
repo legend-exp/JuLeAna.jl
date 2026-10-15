@@ -79,19 +79,19 @@ Selection(host, production, remote_root, local_root, mount_root, copy, link, cre
     Selection(host, production, remote_root, local_root, mount_root, copy, link, created,
               ExtractEntry[])
 
-# The row named `name` below the `detectors` node of a directory above `run` that satisfies
-# `marked`, or `nothing`.
-function covering_row(run::Node, name::AbstractString, marked)
+# The rows satisfying `marked` below the `detectors` nodes of the directories above `run`,
+# nearest first.
+function marked_rows(run::Node, marked)
+    rows = Node[]
     dir = run.parent
     while dir !== nothing
         i = dir.children === nothing ? nothing : findfirst(c -> c.kind == :detectors, dir.children)
         if i !== nothing && dir.children[i].children !== nothing
-            j = findfirst(c -> c.label == name && marked(c), dir.children[i].children)
-            j === nothing || return dir.children[i].children[j]
+            append!(rows, filter(marked, dir.children[i].children))
         end
         dir = dir.parent
     end
-    nothing
+    rows
 end
 
 """
@@ -105,7 +105,9 @@ function covering_extract(node::Node)
     (node.kind == :detector && node.parent !== nothing) || return nothing
     run = node.parent.parent
     period_level(run) && return nothing
-    covering_row(run, node.label, c -> c.mode == :extract)
+    rows = marked_rows(run, c -> c.mode == :extract)
+    j = findfirst(c -> c.label == node.label, rows)
+    j === nothing ? nothing : rows[j]
 end
 
 """
@@ -119,9 +121,13 @@ directory above the run, when that `whole_files` row is marked `:copy` or `:link
 function covering_detector(node::Node)
     group = node.kind == :file && node.parent !== nothing ? node.parent : node
     group.kind == :group && group.parent !== nothing || return nothing
+    # Most files have no marked row above them; the name is parsed only for those that do.
+    rows = marked_rows(group.parent, c -> c.whole_files && c.mode in (:copy, :link))
+    isempty(rows) && return nothing
     id = tier_file_id(basename(group.remote_path))
     (id === nothing || first(id) != :detector) && return nothing
-    covering_row(group.parent, last(id), c -> c.whole_files && c.mode in (:copy, :link))
+    j = findfirst(c -> c.label == last(id), rows)
+    j === nothing ? nothing : rows[j]
 end
 
 """
@@ -173,7 +179,10 @@ function set_mode!(node::Node, mode::Symbol)
     mode == :extract && whole && throw(ArgumentError(
         "cannot extract $(node.label): the files of $(node.parent.parent.label) hold one detector " *
         "each; mark the row :copy or :link instead"))
-    mode in (:copy, :link) && node.kind in (:detectors, :detector) && !whole && throw(ArgumentError(
+    mode in (:copy, :link) && node.kind == :detectors && node.whole_files && throw(ArgumentError(
+        "the $(node.label) row of $(node.parent.label) has no path on the host; " *
+        "mark one of the detector rows below it :$mode"))
+    mode in (:copy, :link) && node.kind in (:detectors, :detector) && !node.whole_files && throw(ArgumentError(
         "detector rows have no path on the host; use :extract, not :$mode, on $(node.label)"))
     if mode != :none
         row = covering_detector(node)
