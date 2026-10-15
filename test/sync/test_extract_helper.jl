@@ -37,6 +37,35 @@
         @test [rec["layout"] for rec in r.records] == ["", ""]
     end
 
+    @testset "inspect with a group list sizes only those groups" begin
+        flat = sources[1]
+        tiered = write_lh5_tier_det(joinpath(work, "src", "sized.lh5"))
+        for (file, layout) in ((flat, ""), (tiered, "jldsp"))
+            full = only(run_script("inspect", Dict("files" => [file])).records)
+            @test !haskey(full, "sized")
+            r = run_script("inspect", Dict("job" => [Dict("file" => file, "groups" => ["aux", "B00000C"])]))
+            @test r.code == 0
+            rec = only(r.records)
+            @test rec["groups"] == full["groups"] == ["B00000C", "V01234A", "aux"]
+            @test rec["layout"] == layout
+            @test rec["sized"] == ["aux", "B00000C"]
+            @test rec["bytes"] == [full["bytes"][3], full["bytes"][1]]
+            # Files without a list in the same job are sized in full.
+            mixed = run_script("inspect", Dict("files" => [file],
+                                               "job" => [Dict("file" => file, "groups" => ["V01234A"])]); jobs = 1)
+            @test mixed.records[1] == full
+            @test mixed.records[2]["bytes"] == [full["bytes"][2]]
+            @test mixed.records[2]["sized"] == ["V01234A"]
+            bad = run_script("inspect", Dict("job" => [Dict("file" => file, "groups" => ["B00000C", "Z99999Z"])]))
+            @test bad.code != 0
+            @test occursin("group Z99999Z not found in $file", bad.stderr)
+        end
+        plain = write_lh5(joinpath(work, "src", "sized-plain.lh5"); groups = ["x"])
+        r = run_script("inspect", Dict("job" => [Dict("file" => plain, "groups" => ["x"])]))
+        @test r.code != 0
+        @test occursin("group x not found in $plain", r.stderr)
+    end
+
     @testset "extract copies the chosen groups in the main process" begin
         dest = joinpath(work, "out-main")
         r = run_script("extract", extract_spec(dest))

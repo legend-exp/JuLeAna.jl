@@ -201,16 +201,25 @@ function run_helper(h::RemoteHost, c::HelperConfig, command::AbstractString,
 end
 
 """
-    inspect_files(h, c, files; jobs = 0)::Vector{Tuple{Vector{String},Vector{Int},String}}
+    inspect_files(h, c, files; groups = nothing, jobs = 0)::Vector{Tuple{Vector{String},Vector{Int},String}}
 
-For each file in `files`, in order: the detector names, the stored size in bytes of
-each, and the layout. The layout is the name of the tier group that holds the
-detectors (`jlpks` in `jlpks/B00000C`) or `""` when the detectors are top-level
-groups. A file without a detector axis has no names.
+For each file in `files`, in order: the detector names, the stored size in bytes, and
+the layout. The layout is the name of the tier group that holds the detectors
+(`jlpks` in `jlpks/B00000C`) or `""` when the detectors are top-level groups. A file
+without a detector axis has no names.
+
+Without `groups`, the sizes are those of all names. `groups` holds one vector of
+group names per file; the sizes of that file are then those of its groups, in their
+order, and only those groups are read. A group a file lacks is an error.
 """
 function inspect_files(h::RemoteHost, c::HelperConfig, files::AbstractVector{<:AbstractString};
-                       jobs::Integer = 0)
-    records = run_helper(h, c, "inspect", Dict("files" => collect(String, files)); jobs)
+                       groups::Union{Nothing,AbstractVector} = nothing, jobs::Integer = 0)
+    groups === nothing || length(groups) == length(files) || throw(DimensionMismatch(
+        "$(length(groups)) group lists for $(length(files)) files"))
+    spec = groups === nothing ? Dict("files" => collect(String, files)) :
+           Dict("job" => [Dict("file" => String(f), "groups" => collect(String, g))
+                          for (f, g) in zip(files, groups)])
+    records = run_helper(h, c, "inspect", spec; jobs)
     found = Dict(r["file"] => (String.(r["groups"]), Int.(r["bytes"]), String(r["layout"]))
                  for r in records)
     map(files) do file

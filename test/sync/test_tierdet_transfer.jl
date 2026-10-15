@@ -122,8 +122,8 @@
         plan, absent = plan_extraction(h, p, sel, stage; helper)
         @test isempty(absent)                                       # the first file of r002 holds it
         @test [j.source for j in plan] == r002_files
-        @test_throws "group V01234A is not in $(r002_files[2])" plan_bytes(h, helper, plan)
-        @test_throws "group V01234A is not in $(r002_files[2])" apply!(h, p, sel; helper)
+        @test_throws "group V01234A not found in $(r002_files[2])" plan_bytes(h, helper, plan)
+        @test_throws "group V01234A not found in $(r002_files[2])" apply!(h, p, sel; helper)
         @test !isfile(to_local(p, r002_files[1]))                   # nothing was written
     end
 

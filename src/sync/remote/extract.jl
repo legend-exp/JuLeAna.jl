@@ -44,14 +44,23 @@ function detector_parent(f)
 end
 
 # Detector names, their stored bytes and the enclosing group ("" for top-level
-# detectors). A file without a detector axis reports no detectors.
-function inspect_file(path::String)::Tuple{Vector{String},Vector{Int},String}
+# detectors). A file without a detector axis reports no detectors. With `groups`
+# (nothing sizes every group), only those groups are sized and the bytes are in the
+# order of `groups`; a requested group the file lacks is an error.
+function inspect_file(path::String, groups::Union{Nothing,Vector{String}})::Tuple{Vector{String},Vector{Int},String}
     h5open(path, "r") do f
         layout = detector_parent(f)
-        layout === nothing && return (String[], Int[], "")
+        if layout === nothing
+            isempty(something(groups, String[])) || error("group ", first(groups), " not found in ", path)
+            return (String[], Int[], "")
+        end
         parent = layout == "" ? f : f[layout]
         names = collect(String, keys(parent))
-        names, [storage_bytes(parent[name]) for name in names], layout
+        sized = something(groups, names)
+        for group in sized
+            haskey(parent, group) || error("group $group not found in $path")
+        end
+        names, [storage_bytes(parent[name]) for name in sized], layout
     end
 end
 
@@ -189,10 +198,20 @@ function main(args)
     try
         spec = TOML.parsefile(jobfile)
         if command == "inspect"
-            files = String.(spec["files"])
-            n = jobs > 0 ? min(jobs, length(files)) : default_workers(length(files))
-            run_items(inspect_file, [(f,) for f in files], n) do item, (names, sizes, layout)
-                emit(event = "inspect", file = item[1], groups = names, bytes = sizes, layout = layout)
+            # `files` lists files whose groups are all sized; each `job` entry names a
+            # file and, optionally, the only groups to size.
+            list = Tuple{String,Union{Nothing,Vector{String}}}[(String(f), nothing) for f in get(spec, "files", [])]
+            for j in get(spec, "job", [])
+                push!(list, (String(j["file"]), haskey(j, "groups") ? String.(j["groups"]) : nothing))
+            end
+            n = jobs > 0 ? min(jobs, length(list)) : default_workers(length(list))
+            run_items(inspect_file, list, n) do item, (names, sizes, layout)
+                if item[2] === nothing
+                    emit(event = "inspect", file = item[1], groups = names, bytes = sizes, layout = layout)
+                else
+                    emit(event = "inspect", file = item[1], groups = names, sized = item[2],
+                         bytes = sizes, layout = layout)
+                end
             end
         else
             list = [(String(j["source"]), String.(j["groups"]), String(j["destination"]))

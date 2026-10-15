@@ -279,21 +279,23 @@ end
 """
     plan_bytes(h::RemoteHost, helper::HelperConfig, plan::Vector{ExtractJob}; jobs = 0)::Int
 
-The summed stored size of the groups the jobs of `plan` take, from inspecting
-every source file with the remote helper. A group that is not in its file is an
-error.
+The summed stored size of the groups the jobs of `plan` take, from inspecting every
+source file with the remote helper, which reads only the groups of its job. A group
+that is not in its file is an error.
 """
 function plan_bytes(h::RemoteHost, helper::HelperConfig, plan::Vector{ExtractJob}; jobs::Integer = 0)
     isempty(plan) && return 0
-    plan_group_bytes(plan, inspect_files(h, helper, [j.source for j in plan]; jobs))
+    inspected = inspect_files(h, helper, [j.source for j in plan]; groups = [j.groups for j in plan], jobs)
+    plan_group_bytes(plan, inspected)
 end
 
 """
     plan_group_bytes(plan::Vector{ExtractJob}, inspected)::Int
 
 The summed stored size of the groups each job of `plan` takes, given the
-`inspect_files` result for the same files in the same order. A result of a different
-length, or a group that is not in its file, is an error.
+`inspect_files` result for the same files in the same order, requested with
+`groups = [j.groups for j in plan]`. A result of a different length, or one whose
+sizes do not match the groups of its job, is an error.
 """
 function plan_group_bytes(plan::Vector{ExtractJob}, inspected)
     length(inspected) == length(plan) || throw(ErrorException(
@@ -301,12 +303,10 @@ function plan_group_bytes(plan::Vector{ExtractJob}, inspected)
     total = 0
     for i in eachindex(plan, inspected)
         job = plan[i]
-        names, bytes = inspected[i]
-        for group in job.groups
-            k = findfirst(==(group), names)
-            k === nothing && throw(ErrorException("group $group is not in $(job.source)"))
-            total += bytes[k]
-        end
+        bytes = inspected[i][2]
+        length(bytes) == length(job.groups) || throw(ErrorException(
+            "$(length(bytes)) sizes for the $(length(job.groups)) groups of $(job.source)"))
+        total += sum(bytes; init = 0)
     end
     total
 end

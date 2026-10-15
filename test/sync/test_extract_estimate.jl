@@ -71,8 +71,25 @@
         @test plan_bytes(h, helper, plan) == (400 + 1200) + (800 + 2400)
         @test plan_bytes(h, helper, ExtractJob[]) == 0
         bad = [ExtractJob(files[1], "/x", "x", ["Z99999Z"])]
-        @test_throws "group Z99999Z is not in" plan_bytes(h, helper, bad)
+        @test_throws "group Z99999Z not found in $(files[1])" plan_bytes(h, helper, bad)
         @test_throws "inspected 1 files for a plan of 2 jobs" plan_group_bytes(plan, [(["aux"], [1])])
+        @test_throws "1 sizes for the 2 groups of $(files[1])" plan_group_bytes(plan, [(["aux"], [1]), (["aux"], [1, 2])])
+
+        # The totals equal those of sizing every group of every file.
+        full = inspect_files(h, helper, [j.source for j in plan])
+        expected = sum(zip(plan, full)) do (job, (names, bytes, _))
+            sum(g -> bytes[findfirst(==(g), names)], job.groups)
+        end
+        @test plan_bytes(h, helper, plan) == expected
+
+        # The helper job carries each file's groups. A failed run keeps its job file.
+        @test_throws "not found" plan_bytes(h, helper, bad)
+        job = TOML.parsefile(joinpath(helper.staging, "jobs", "inspect.toml"))
+        @test job["job"] == [Dict("file" => files[1], "groups" => ["Z99999Z"])]
+        sized = inspect_files(h, helper, [j.source for j in plan]; groups = [j.groups for j in plan])
+        @test [bytes for (_, bytes, _) in sized] == [[400, 1200], [800, 2400]]
+        @test [names for (names, _, _) in sized] == [first(f) for f in full]
+        @test_throws "2 group lists for 1 files" inspect_files(h, helper, files[1:1]; groups = [["aux"], ["aux"]])
     end
 
     @testset "apply! dry run adds the exact extract numbers" begin
