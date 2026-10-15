@@ -523,4 +523,98 @@
         settle!(m4)
         @test find_text(draw(m4), "temp/jl-dev") !== nothing
     end
+
+    @testset "mouse" begin
+        click(x, y) = MouseEvent(x, y, mouse_left, mouse_press, false, false, false)
+        wheel(x, y, button) = MouseEvent(x, y, button, mouse_press, false, false, false)
+        # Screen position of tree row k (1-based) at the current scroll offset.
+        row_pos(m, k) = (m.tree.last_area.x + 2, m.tree.last_area.y + k - 1 - m.tree.offset)
+
+        @testset "wheel scrolls the tree" begin
+            m = model()
+            draw(m; height = 8)
+            area = m.tree.last_area
+            @test tree_visible_count(m.tree) > area.height
+            @test m.tree.offset == 0
+            update!(m, wheel(area.x, area.y, mouse_scroll_down))
+            @test m.tree.offset == 1
+            @test m.tree.selected >= 2    # the selection stays in the window
+            draw(m; height = 8)
+            @test m.tree.offset == 1
+            update!(m, wheel(area.x, area.y, mouse_scroll_up))
+            @test m.tree.offset == 0
+            # The wheel outside the tree does nothing.
+            update!(m, wheel(area.x + 200, area.y, mouse_scroll_down))
+            @test m.tree.offset == 0
+        end
+
+        @testset "click selects, second click acts like enter" begin
+            m = model()
+            draw(m)
+            tier = 5    # root, config.json, metadata, par, tier
+            update!(m, click(row_pos(m, tier)...))
+            @test current_node(m).label == "tier"
+            @test m.tree.selected == tier
+            @test find_text(draw(m), "jlevt") === nothing
+
+            update!(m, click(row_pos(m, tier)...))
+            @test occursin("listing", row_text(draw(m), 30))
+            settle!(m)
+            @test find_text(draw(m), "jlevt") !== nothing
+
+            # A click on the open row collapses it, another reopens it.
+            update!(m, click(row_pos(m, tier)...))
+            @test find_text(draw(m), "jlevt") === nothing
+            update!(m, click(row_pos(m, tier)...))
+            @test find_text(draw(m), "jlevt") !== nothing
+        end
+
+        @testset "ignored events" begin
+            m = model()
+            draw(m)
+            area = m.tree.last_area
+            before = (m.tree.selected, m.tree.offset)
+            update!(m, click(area.x + 200, area.y))                                          # outside
+            update!(m, MouseEvent(row_pos(m, 3)..., mouse_right, mouse_press, false, false, false))
+            update!(m, MouseEvent(row_pos(m, 3)..., mouse_left, mouse_release, false, false, false))
+            update!(m, MouseEvent(row_pos(m, 3)..., mouse_left, mouse_drag, false, false, false))
+            update!(m, click(area.x + 2, area.y + 25))                                       # below the rows
+            @test (m.tree.selected, m.tree.offset) == before
+            @test isempty(m.pending)
+
+            # A dialog swallows the click: nothing is selected, answered or listed.
+            open_message!(m, "Working", "a dialog the user is reading")
+            kind = m.modal_kind
+            tree_before = m.tree.selected
+            update!(m, click(row_pos(m, 3)...))
+            update!(m, click(row_pos(m, 3)...))
+            @test m.modal_kind == kind
+            @test m.modal !== nothing
+            @test m.tree.selected == tree_before
+            @test isempty(m.pending)
+
+            m.modal = nothing
+            m.modal_kind = :busy
+            update!(m, click(row_pos(m, 3)...))
+            @test m.tree.selected == tree_before
+            @test m.modal_kind == :busy
+        end
+
+        @testset "picker" begin
+            options = Options("local", FIXTURE_ROOT, mktempdir(), nothing, "", "", nothing, false, false)
+            m = SyncModel(h, options)
+            settle!(m)
+            draw(m)
+            area = m.picker.last_area
+            update!(m, click(area.x + 1, area.y + 1))
+            @test m.picker.selected == 2
+            @test m.screen == :pick
+            update!(m, click(area.x + 200, area.y + 1))
+            @test m.picker.selected == 2
+            update!(m, click(area.x + 1, area.y + 1))
+            settle!(m)
+            @test m.production.name == m.productions[2]
+            @test find_text(draw(m), "Production: $(m.productions[2])") !== nothing
+        end
+    end
 end

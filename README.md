@@ -173,6 +173,8 @@ This opens a terminal interface:
 |-----|--------|
 | `↑` `↓` `home` `end` | Move the cursor |
 | `enter` | Expand or collapse; lists the directory the first time |
+| mouse wheel | Scroll the tree or the production picker |
+| left click | Select a row; a click on the selected row does what `enter` does |
 | `space` | Copy this row (`[x]`), or stop copying it |
 | `l` | Reach this row through the mount instead (`[~]`); needs `--mount-root` |
 | `n` | On a run directory: copy the first N filekeys |
@@ -185,6 +187,7 @@ This opens a terminal interface:
 
 A `[-]` marker means the row itself is not selected but something below it is.
 While a transfer is running, the interface accepts no key until it finishes.
+The mouse is ignored while a dialog is open or the interface is busy.
 A successful transfer's summary ends with any warnings rsync printed.
 
 ## Extracting detectors

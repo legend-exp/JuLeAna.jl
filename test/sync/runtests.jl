@@ -6,7 +6,9 @@ import YAML
 using HDF5
 using LegendDataManagement: LegendDataConfig, data_path
 import LegendDataManagement
-using Tachikoma: TestBackend, Frame, Rect, KeyEvent, TaskEvent, GraphicsRegion, PixelSnapshot,
+using Tachikoma: TestBackend, Frame, Rect, KeyEvent, MouseEvent, mouse_left, mouse_right,
+                 mouse_press, mouse_release, mouse_drag, mouse_scroll_up, mouse_scroll_down,
+                 tree_visible_count, TaskEvent, GraphicsRegion, PixelSnapshot,
                  reset!, row_text, find_text, drain_tasks!, render_widget!,
                  view, update!, should_quit
 

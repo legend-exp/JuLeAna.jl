@@ -507,7 +507,7 @@ function details(m::SyncModel)
                 "overlays: " * (isempty(overlays) ? "none" : join(overlays, ", ")))
     end
     append!(lines, ["space copy   l link   n first N   x extract",
-                    "enter expand/collapse   s save",
+                    "enter expand/collapse   s save   mouse: click, wheel",
                     "e estimate   t sync   q quit"])
     Paragraph(join(lines, "\n"); block = Block(title = "Details"), wrap = word_wrap)
 end
@@ -560,7 +560,7 @@ function render_pick(m::SyncModel, area::Rect, buf::Buffer)
     else
         render(m.picker, rows[1], buf)
     end
-    render(StatusBar(left = [Span(isempty(m.status) ? "↑/↓ move   enter open   r reload   q quit" : m.status)]),
+    render(StatusBar(left = [Span(isempty(m.status) ? "↑/↓ move   enter open   r reload   q quit   mouse: click, wheel" : m.status)]),
            rows[2], buf)
     m.modal === nothing || render(m.modal, area, buf)
     nothing
@@ -597,6 +597,19 @@ view(m::SyncModel, f::Frame) = render_sync(m, f.area, f.buffer)
 should_quit(m::SyncModel) = m.quit
 task_queue(m::SyncModel) = m.tasks
 
+# Builds the tree of the picked production in the background.
+function open_production!(m::SyncModel)
+    name = m.productions[m.picker.selected]
+    host = m.host
+    options = m.options
+    m.status = "opening $name…"
+    spawn_task!(m.tasks, :open) do
+        production = Production(host, name, options.remote_root, options.local_root;
+                                mount_root = options.mount_root)
+        (production, production_tree(host, production))
+    end
+end
+
 # Keys on the picker screen. Input is ignored while the production is being opened,
 # so that a second enter cannot start a second build.
 function update_pick!(m::SyncModel, e::KeyEvent)
@@ -607,15 +620,60 @@ function update_pick!(m::SyncModel, e::KeyEvent)
     if e.key in (:up, :down, :home, :end_key)
         handle_key!(m.picker, e)
     elseif e.key == :enter
-        name = m.productions[m.picker.selected]
-        host = m.host
-        options = m.options
-        m.status = "opening $name…"
-        spawn_task!(m.tasks, :open) do
-            production = Production(host, name, options.remote_root, options.local_root;
-                                    mount_root = options.mount_root)
-            (production, production_tree(host, production))
-        end
+        open_production!(m)
+    end
+    m
+end
+
+# Lists an unlisted directory, collapses an open row when `collapse` is set, and
+# otherwise reopens a collapsed one.
+function expand_or_collapse!(m::SyncModel, node::Node; collapse::Bool)
+    if node.children === nothing
+        node.kind == :detectors ? with_environment!(m, () -> request_detectors!(m, node)) :
+            request_expand!(m, node)
+    elseif collapse && !(node.remote_path in m.collapsed)
+        push!(m.collapsed, node.remote_path)
+        rebuild_tree!(m)
+    else
+        delete!(m.collapsed, node.remote_path)
+        rebuild_tree!(m)
+    end
+    m
+end
+
+# Applies a mouse event to a list-like widget of `n` rows (TreeView or
+# SelectableList) and returns true when it is a click on the row that was already
+# selected. A click elsewhere selects its row. The wheel scrolls one row and keeps
+# the selection inside the window, because rendering scrolls back to the selection.
+function mouse_list!(w, n::Int, e::MouseEvent)
+    Base.contains(w.last_area, e.x, e.y) || return false
+    hit = list_hit(e, w.last_area, w.offset, n)
+    if hit > 0
+        activate = hit == w.selected
+        w.selected = hit
+        return activate
+    end
+    height = w.last_area.height
+    offset = list_scroll(e, w.offset, n, height)
+    if offset != w.offset
+        w.offset = offset
+        w.selected = clamp(w.selected, offset + 1, offset + height)
+    end
+    false
+end
+
+# Mouse input is ignored while a dialog is up or work is pending, so a click can
+# never answer a dialog. Clicks on the tree go through the same code as enter.
+function update!(m::SyncModel, e::MouseEvent)
+    m.modal_kind == :none || return m
+    if m.screen == :pick
+        (m.tasks.active[] > 0 || m.picker === nothing) && return m
+        mouse_list!(m.picker, length(m.productions), e) && open_production!(m)
+        return m
+    end
+    if mouse_list!(m.tree, tree_visible_count(m.tree), e)
+        node = current_node(m)
+        node === nothing || expand_or_collapse!(m, node; collapse = true)
     end
     m
 end
@@ -681,17 +739,7 @@ function update!(m::SyncModel, e::KeyEvent)
 
     if e.key == :enter || e.key == :right
         node === nothing && return m
-        if node.children === nothing
-            node.kind == :detectors ? with_environment!(m, () -> request_detectors!(m, node)) :
-                request_expand!(m, node)
-        elseif e.key == :enter && !(node.remote_path in m.collapsed)
-            push!(m.collapsed, node.remote_path)
-            rebuild_tree!(m)
-        else
-            delete!(m.collapsed, node.remote_path)
-            rebuild_tree!(m)
-        end
-        return m
+        return expand_or_collapse!(m, node; collapse = e.key == :enter)
     end
 
     if e.key == :left

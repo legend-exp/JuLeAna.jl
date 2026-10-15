@@ -30,6 +30,9 @@ Do not paste per-detector numbers or plots: sizes, file counts and timings only.
 - [ ] The listed directories show `…` for their size first, and the sizes fill in
       a moment later while the tree stays usable; a section keeps `…`. While a
       selected directory has no size, the status bar total ends in `?`.
+- [ ] In a real terminal, the wheel scrolls the tree and the picker, a click selects a
+      row, and a second click on the selected row opens, lists or collapses it like
+      `enter`. Clicks do nothing while a dialog is open.
 - [ ] Expanding a second directory is visibly faster than the first: the ssh
       connection is being reused.
 - [ ] Expanding a period node of `tier/jldsp` lists its run directories at once and
