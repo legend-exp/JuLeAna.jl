@@ -62,7 +62,10 @@ contributes its size, the first-file size times the file count summed over the r
 that hold it, and counts every file of those runs. A run-level row that a period-level
 mark covers contributes nothing. Both are approximate, which `extract_exact` records.
 For a period row, files copied whole inside a covered run are not subtracted; the exact
-estimate (`apply!` with `dry_run`) is authoritative.
+estimate (`apply!` with `dry_run`) is authoritative. A period-level row of per-detector
+files marked `:copy` contributes its size and one file per run that holds the detector;
+marked `:link` it contributes one link per such run. The files it covers are not counted
+again.
 """
 function running_estimate(root::Node)
     bytes = 0
@@ -89,7 +92,18 @@ function running_estimate(root::Node)
             end
             continue
         end
+        if node.kind == :detector && node.whole_files && node.mode != :none
+            if node.mode == :copy
+                node.size === nothing ? (complete = false) : (bytes += node.size)
+                files += length(node.holders)
+            else
+                links += length(node.holders)
+            end
+            continue
+        end
         mode = effective_mode(node)
+        # A file that a period-level row covers is counted with that row.
+        node.kind == :group && mode != :none && covering_detector(node) !== nothing && continue
         parent_mode = node.parent === nothing ? :none : effective_mode(node.parent)
         if mode == :copy && parent_mode != :copy
             # A node's size already covers its subtree, so nothing below it is added.

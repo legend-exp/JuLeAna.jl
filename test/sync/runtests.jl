@@ -88,6 +88,7 @@ run_file(name) = (isempty(SELECTED_TEST_FILES) || name in SELECTED_TEST_FILES) &
     run_file("test_extract_transfer.jl")
     run_file("test_tierdet_transfer.jl")
     run_file("test_perdet_transfer.jl")
+    run_file("test_perdet_estimate.jl")
     run_file("test_tierdet_estimate.jl")
     run_file("test_estimate.jl")
     run_file("test_transfer.jl")
