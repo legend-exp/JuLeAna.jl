@@ -223,11 +223,14 @@ run_dirs(node::Node) = node.children === nothing ? Node[] :
 """
     filekey_files(h::RemoteHost, dir::AbstractString)::Vector{String}
 
-The absolute paths of the filekey tier files directly in `dir`, in name order.
+The absolute paths of the filekey tier files directly in `dir`, in name order. A
+directory that also holds per-detector files is an error.
 """
 function filekey_files(h::RemoteHost, dir::AbstractString)
     files = String[]
-    for entry in list_dir(h, dir)
+    entries = list_dir(h, dir)
+    check_tier_kinds(dir, entries)
+    for entry in entries
         id = tier_file_id(entry.name)
         entry.kind == :file && id !== nothing && first(id) == :filekey &&
             push!(files, joinpath(dir, entry.name))
@@ -336,7 +339,9 @@ function period_file_nodes(h::RemoteHost, period::Node)
     rows = Dict{String,Node}()
     for run in run_dirs(period)
         seen = Dict{String,String}()                     # detector => its file in this run
-        for entry in list_dir(h, run.remote_path)
+        entries = list_dir(h, run.remote_path)
+        check_tier_kinds(run.remote_path, entries)
+        for entry in entries
             id = entry.kind == :file ? tier_file_id(entry.name) : nothing
             (id === nothing || first(id) != :detector) && continue
             name = last(id)

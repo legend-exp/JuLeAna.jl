@@ -441,7 +441,9 @@ function plan_detector_files(h::RemoteHost, p::Production, sel::Selection)
         found = 0
         for run in runs
             files = Dict{String,String}()                # detector => file name
-            for e in list_dir(h, joinpath(dir, run))
+            listing = list_dir(h, joinpath(dir, run))
+            check_tier_kinds(joinpath(dir, run), listing)
+            for e in listing
                 id = e.kind == :file ? tier_file_id(e.name) : nothing
                 (id === nothing || first(id) != :detector) && continue
                 haskey(files, last(id)) && throw(ArgumentError(

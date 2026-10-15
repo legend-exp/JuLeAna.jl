@@ -68,6 +68,24 @@
         @test_throws "$(joinpath(p16_rel, "r001")) holds two files for detector B00000C: l200-p16-r001-cal-B00000C-tier_jlqcs.lh5 and l200-p16-r001-phy-B00000C-tier_jlqcs.lh5" plan_detector_files(h, q, sel)
     end
 
+    @testset "a run with both kinds of tier file is an error" begin
+        root = make_per_detector_remote()
+        q = Production(h, "dprod", root, mktempdir())
+        run = joinpath(root, "dprod", "generated", "tier", "jlqcs", "cal", "p16", "r000")
+        write(joinpath(run, "l200-p16-r000-cal-20251107T191821Z-tier_jlqcs.lh5"), "z")
+        sel = Selection("local", "dprod", root, q.local_root, nothing, base, String[], now(),
+                        ExtractEntry[], [entry(["B00000C"], :copy)])
+        msg = "$run holds filekey files and per-detector files, for example " *
+              "l200-p16-r000-cal-20251107T191821Z-tier_jlqcs.lh5 and l200-p16-r000-cal-B00000C-tier_jlqcs.lh5"
+        @test_throws msg plan_detector_files(h, q, sel)
+        @test_throws msg apply!(h, q, sel; dry_run = true, helper = broken)
+        @test_throws msg period_file_nodes(h, let n = Node("p16", dirname(run), :dir)
+            expand!(h, q, n); n end)
+        extract = ExtractEntry(relative(q, dirname(run)), ["B00000C"])
+        @test_throws msg plan_extraction(h, q, Selection("local", "dprod", root, q.local_root, nothing, base,
+                                                         String[], now(), [extract]), mktempdir(); helper = broken)
+    end
+
     @testset "an entry without per-detector files is an error" begin
         empty_dir = relative(p, joinpath(tier, "jlqcs", "cal", "p17"))
         @test_throws "detector file entry $empty_dir: no run directory holds per-detector files" plan_detector_files(
