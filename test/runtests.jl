@@ -13,6 +13,7 @@ withenv("LEGEND_DATA_CONFIG" => joinpath(mktempdir(), "config.json")) do
         include("test_processing_config.jl")
         include("test_processor_graph.jl")
         include("test_dataflow.jl")
+        include("test_pmts_calibration.jl")
         include("test_reports.jl")
         include("test_dataset_info.jl")
         include("test_history.jl")

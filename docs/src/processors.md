@@ -22,7 +22,8 @@ The processors are documented by topic:
   time, filter optimization and energy calibration;
 - [Pulse shape discrimination](processors_psd.md): A/E, LQ and PSD efficiencies;
 - [SiPMs, events and stability](processors_phy.md): SiPM optimization and calibration,
-  event building, skims and stability plots.
+  event building, skims and stability plots;
+- [Muon-veto PMTs](processors_pmts.md): calibration of the PMTs with the LED runs.
 
 ## Report status
 

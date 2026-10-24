@@ -284,12 +284,24 @@ processors:
     dependencies:
       - process_dsp_phy
 
+  process_pmts_calibration_cal:
+    enabled: false
+    category: cal
+    log_level: info
+    plot_level: info
+    detectors: "processable && usability == :on"
+    rank: 19
+    kwargs:
+      reprocess: false
+      timeout: 0
+    dependencies: []
+
   process_evt_phy:
     enabled: false
     category: phy
     log_level: info
     plot_level: info
-    rank: 19
+    rank: 20
     kwargs:
       reprocess: false
       timeout: 0
@@ -304,6 +316,7 @@ processors:
       - p_process_lq_calibration_cut_cal
       - p_process_sipm_calibration_phy
       - process_sipm_calibration_phy
+      - process_pmts_calibration_cal
 
   process_stability_plots_phy:
     enabled: false
@@ -311,7 +324,7 @@ processors:
     log_level: info
     plot_level: info
     detectors: "processable"
-    rank: 20
+    rank: 21
     kwargs:
       reprocess: false
       timeout: 0

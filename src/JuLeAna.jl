@@ -32,7 +32,7 @@ using LegendDataManagement: LegendDataManagement, DataCategory, DataPeriod, Data
                             ProcessStatus, bad_filekeys, channelinfo, data_path, dataprod_config, get_aux_cal_propfunc,
                             get_aux_evt_detsel_propfunc, get_exposure, get_ged_evt_kwargs, get_values, is_analysis_run, is_lrun,
                             ljl_propfunc, lreport, lreport!, lstring, partitioninfo, process_failed, process_succeeded, process_warning,
-                            read_ldata, readlprops, runinfo, start_filekey, writelprops, writelreport
+                            read_ldata, readlprops, runinfo, search_disk, start_filekey, writelprops, writelreport
 using LegendDataManagement.LDMUtils: LDMUtils, create_logtbl, create_metadatatbl, create_pars, create_validity, get_partitionvalidity,
                                      get_plottitle, get_preportfilename, get_rreportfilename, get_totalTimer, savelfig, writevalidity
 using LegendDataTypes: LegendDataTypes, decode_data, fast_flatten
@@ -43,7 +43,7 @@ using LegendEventAnalysis: LegendEventAnalysis, TimeEvolution, calibrate_all, ca
 using LegendHDF5IO: LegendHDF5IO, delete_entry!, lh5open
 import LegendMakie
 using LegendSpecFits: LegendSpecFits, autocal_energy, ctc_energy, cut_single_peak, fit_aoe_compton, fit_aoe_compton_combined,
-                      fit_aoe_corrections, fit_calibration, fit_enc_sigmas, fit_fwhm, fit_fwhm_ft, fit_peaks, fit_sf_wl,
+                      fit_aoe_corrections, fit_calibration, fit_enc_sigmas, fit_fwhm, fit_fwhm_ft, fit_peaks, fit_pmt_spe, fit_sf_wl,
                       fit_single_trunc_gauss, fit_sipm_spectrum, fit_sipm_threshold, fit_sipm_wl, generate_aoe_compton_bands,
                       get_continuum_survival_fraction, get_low_aoe_cut, get_peak_survival_fraction, get_peaks_survival_fractions,
                       lq_ctc_correction, lq_norm, peakhists_gamma, set_timelimit, simple_calibration, sipm_simple_calibration
@@ -54,7 +54,7 @@ using Serialization: serialize
 using LoggingExtras: ActiveFilteredLogger, FormatLogger, TeeLogger
 import Makie
 import Measures
-using Measurements: Measurements, value as mvalue
+using Measurements: Measurements, uncertainty as muncert, value as mvalue
 using ParallelProcessingTools: ParallelProcessingTools, @always_everywhere, CreateOrModify, CreateOrReplace, FlexWorkerPool, OnLocalhost,
                                OnSlurm, AutoThreadPinning, onworker, ppt_worker_pool!, ppt_worker_pool, runworkers, write_files,
                                write_worker_start_script
@@ -80,6 +80,7 @@ include("markdown_logging.jl")
 include("file_logging.jl")
 include("log_texts.jl")
 include("plots.jl")
+include("pmt_plots.jl")
 include("process_step.jl")
 include("progress.jl")
 include("parallel.jl")
@@ -144,6 +145,7 @@ include("processors/process_lq_calibration_cut_cal.jl")
 include("processors/peak_split.jl")
 include("processors/process_peak_split_cal.jl")
 include("processors/process_peak_split_phy.jl")
+include("processors/process_pmts_calibration_cal.jl")
 include("processors/process_psd_efficiencies_cal.jl")
 include("processors/process_qcs_cal.jl")
 include("processors/process_qcs_phy.jl")
