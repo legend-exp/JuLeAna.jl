@@ -1,13 +1,15 @@
 # Data sync tool
 
-`sync.jl` mirrors part of a remote LEGEND data production onto this machine so
+`juleana-sync` mirrors part of a remote LEGEND data production onto this machine so
 that the dataflow and the analysis scripts can be developed against real data
 without an open session on the cluster. The mirror keeps the remote layout, so
 `LegendDataManagement` opens it with the config the tool writes beside it.
 
 ``` bash
-julia --project=. sync.jl --production test
+juleana-sync --production test
 ```
+
+The app is installed with `Pkg.Apps.develop(path = "path/to/JuLeAna.jl")`, which creates `juleana` and `juleana-sync`; `julia --project=. -m JuLeAna.Sync` runs it from a checkout.
 
 `--production` is the production's path relative to the remote root, for example
 `test`, `temp/jl-v0.6.0dev5` or `juleana/tmp/jl-v0.7.0dev1`. Without it, the
@@ -248,7 +250,7 @@ that were applied.
 ## Re-applying a selection
 
 ``` bash
-julia --project=. sync.jl --from config/sync/test.yaml --yes
+juleana-sync --from config/sync/test.yaml --yes
 ```
 
 The saved selection lists only the rows that were chosen explicitly, so it stays

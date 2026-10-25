@@ -16,7 +16,7 @@ Do not paste per-detector numbers or plots: sizes, file counts and timings only.
 
 ## Interface
 
-- [ ] `julia --project=. sync.jl` opens the picker, titled `Productions on cslg4`,
+- [ ] `juleana-sync` opens the picker, titled `Productions on cslg4`,
       and lists `test`, `temp/...`, `ref/...` and `preprod/...` productions
       within a few seconds (it shows `listing…` meanwhile).
 - [ ] `enter` on a production that holds `jlevt` opens the two-pane layout,
@@ -88,7 +88,7 @@ Do not paste per-detector numbers or plots: sizes, file counts and timings only.
 
 - [ ] `s` in the interface writes `config/sync/<production>.yaml`, with `/` in
       the production path replaced by `-`.
-- [ ] `julia --project=. sync.jl --from config/sync/<production>.yaml --dry-run`
+- [ ] `juleana-sync --from config/sync/<production>.yaml --dry-run`
       prints an estimate of 0 bytes, because everything is already there; no
       `--production` is needed.
 - [ ] Delete one copied file and re-run without `--dry-run` and with `--yes`:
@@ -99,7 +99,7 @@ Do not paste per-detector numbers or plots: sizes, file counts and timings only.
 ## viper
 
 - [ ] `ssh viper true` succeeds without a password prompt.
-- [ ] `julia --project=. sync.jl --host viper` opens the picker, titled
+- [ ] `juleana-sync --host viper` opens the picker, titled
       `Productions on viper`, and lists productions below `juleana/`
       (`auto`, `preprod`, `ref`, `tmp`).
 - [ ] `enter` on `juleana/tmp/jl-v0.7.0dev1` opens the tree. The details pane of
@@ -172,7 +172,7 @@ top-level directory recursively.
       reports the failure and names the staging directory, and the rerun skips the
       finished files. Interrupt an rsync pull and confirm `.juleana-partial`
       directories remain in the mirror and the rerun completes.
-- [ ] Headless: `julia --project=. sync.jl --from config/sync/<production>.yaml --dry-run`
+- [ ] Headless: `juleana-sync --from config/sync/<production>.yaml --dry-run`
       prints the estimate with the extract part, then the staging directory and
       its free space. With the helper environment absent it stops with an error
       that names the `Pkg.add` command.
