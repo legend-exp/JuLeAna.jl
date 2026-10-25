@@ -1,3 +1,5 @@
+# This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
+
 """
     make_extract_remote()::String
 

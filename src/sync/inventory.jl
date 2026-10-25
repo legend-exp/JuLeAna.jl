@@ -1,3 +1,5 @@
+# This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
+
 """
     Node(label, remote_path, kind; size, children, mode, parent, local_state, holders)
 

@@ -1,3 +1,5 @@
+# This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
+
 @testset "per-detector tier: planning and apply!" begin
     h = LocalHost()
     tier = joinpath(PERDET_ROOT, "dprod", "generated", "tier")

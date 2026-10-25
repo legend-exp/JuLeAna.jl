@@ -1,3 +1,5 @@
+# This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
+
 @testset "helper.jl" begin
     h = LocalHost()
     ssh = SSHHost("cslg4", nothing)
@@ -120,7 +122,7 @@
         c = HelperConfig()
         @test (c.julia, c.julia_project, c.staging) == (nothing, nothing, nothing)
         @test remote_julia(h, c) == Base.julia_cmd()
-        @test julia_project(h, c) == DATAFLOW_PROJECT
+        @test julia_project(h, c) == dirname(Base.active_project())
         @test staging_dir(h, c) ==
               joinpath(tempdir(), "juleana-sync-" * get(ENV, "USER", "user"))
 
@@ -173,7 +175,7 @@
     @testset "environment check and bootstrap" begin
         ready = ensure_environment(h, HelperConfig())
         @test startswith(ready.julia, "julia version")
-        @test ready.project == DATAFLOW_PROJECT
+        @test ready.project == dirname(Base.active_project())
         @test ready.present && isempty(ready.lacking)
         @test environment_ready(ready)
 
@@ -213,7 +215,7 @@
         @test_throws "already exists; refusing to modify it" bootstrap_environment!(
             h, HelperConfig(; julia = stub, julia_project = joinpath(work, "partial")))
         @test !occursin("ParallelProcessingTools =", read(joinpath(work, "partial", "Project.toml"), String))
-        @test_throws "refusing to modify the dataflow project" bootstrap_environment!(h, HelperConfig())
+        @test_throws "refusing to modify the active project" bootstrap_environment!(h, HelperConfig())
         @test_throws "no such file or directory" ensure_environment(
             h, HelperConfig(; julia = joinpath(work, "no-julia")))
     end

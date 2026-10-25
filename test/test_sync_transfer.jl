@@ -1,3 +1,5 @@
+# This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
+
 @testset "transfer.jl" begin
     h = LocalHost()
 

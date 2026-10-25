@@ -1,5 +1,7 @@
+# This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
+
 @testset "remote/extract.jl" begin
-    script = joinpath(@__DIR__, "..", "..", "src", "sync", "remote", "extract.jl")
+    script = Sync.HELPER_SCRIPT
     project = dirname(Base.active_project())
     work = mktempdir()
     sources = [write_lh5(joinpath(work, "src", "a.lh5"); scale = 1),

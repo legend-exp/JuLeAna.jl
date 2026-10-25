@@ -1,3 +1,5 @@
+# This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
+
 @testset "extract: detectors in the tree and the selection" begin
     h = LocalHost()
     local_root = mktempdir()

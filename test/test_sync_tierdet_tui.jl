@@ -1,3 +1,5 @@
+# This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
+
 @testset "tier/detector layout: interface" begin
     h = LocalHost()
     tier = joinpath(TIER_DET_ROOT, "tprod", "generated", "tier")

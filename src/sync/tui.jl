@@ -1,3 +1,5 @@
+# This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
+
 """
     SyncModel(host, production, options)
     SyncModel(host, options)

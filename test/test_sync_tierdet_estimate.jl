@@ -1,3 +1,5 @@
+# This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
+
 @testset "tier/detector layout: estimate" begin
     h = LocalHost()
     helper = HelperConfig(; staging = mktempdir())

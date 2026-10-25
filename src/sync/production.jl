@@ -1,3 +1,5 @@
+# This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
+
 """
     Production(h::RemoteHost, name, remote_root, local_root; mount_root = nothing)
 

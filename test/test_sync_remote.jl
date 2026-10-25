@@ -1,3 +1,5 @@
+# This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
+
 @testset "remote.jl" begin
     h = LocalHost()
     hitdir = joinpath(FIXTURE_ROOT, "temp", "jl-dev", "generated", "tier",
@@ -96,23 +98,21 @@
             @test findfirst(==("-n"), parts) < alias
             @test findfirst(==("BatchMode=yes"), parts) < alias
             # rsync's transport is batch too, and keeps its standard input (no -n).
-            transport = JuleanaSync.rsync_transport(s)
+            transport = Sync.rsync_transport(s)
             @test transport[1] == "-e"
             words = split(transport[2])
             @test words[1] == "ssh" && "BatchMode=yes" in words && "-n" ∉ words
             @test ("ControlPath=/tmp/sock-%C" in words) == (control_path !== nothing)
         end
-        @test isempty(JuleanaSync.rsync_transport(h))
-        @test_throws "whitespace" JuleanaSync.rsync_transport(SSHHost("cslg4", "/tmp/a b/sock-%C"))
+        @test isempty(Sync.rsync_transport(h))
+        @test_throws "whitespace" Sync.rsync_transport(SSHHost("cslg4", "/tmp/a b/sock-%C"))
     end
 
     @testset "spawned processes do not inherit stdin" begin
         # The child's standard input is a pipe this process keeps open, so a command that
         # reads it blocks forever unless the tool gives it the null device.
-        dataflow = normpath(joinpath(@__DIR__, "..", ".."))
         script = """
-            include($(repr(joinpath(dataflow, "src", "sync", "JuleanaSync.jl"))))
-            using .JuleanaSync: LocalHost, run_remote, stream_remote, file_exists, dir_exists, push_file
+            using JuLeAna.Sync: LocalHost, run_remote, stream_remote, file_exists, dir_exists, push_file
             h = LocalHost()
             run_remote(h, `cat`) == "" || error("run_remote")
             stream_remote(h, `cat`, identity) == "" || error("stream_remote")
@@ -124,7 +124,7 @@
             println("done")
             """
         out = tempname()
-        cmd = `$(Base.julia_cmd()) --startup-file=no --project=$dataflow -e $script`
+        cmd = `$(Base.julia_cmd()) --startup-file=no --project=$(dirname(Base.active_project())) -e $script`
         proc = open(pipeline(cmd; stdout = out, stderr = stderr), "w")
         try
             exited = timedwait(() -> process_exited(proc), 120.0) == :ok

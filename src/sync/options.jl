@@ -1,3 +1,5 @@
+# This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
+
 # The mirror sits beside the dataflow checkout, so a production's relative
 # layout is the same here as on the remote.
 const DEFAULT_LOCAL_ROOT = normpath(joinpath(@__DIR__, "..", "..", "..", "data"))
@@ -77,10 +79,10 @@ directory and is a path on the host: absolute or starting with `~`.
 """
 function parse_options(args::AbstractVector{<:AbstractString}; hosts_file::AbstractString = DEFAULT_HOSTS_FILE)
     settings = ArgParseSettings(
-        prog = "juleana sync",
+        prog = "juleana-sync",
         description = "Mirror part of a remote LEGEND data production into a local " *
                       "directory that LegendDataManagement can open unchanged.")
-    @add_arg_table settings begin
+    @add_arg_table! settings begin
         "--host"
             help = "ssh alias of the machine holding the production"
             arg_type = String
@@ -161,13 +163,17 @@ end
     main(args::AbstractVector{<:AbstractString})::Int
     main(options::Options, host::RemoteHost = SSHHost(options.host))::Int
 
-Run the tool and return the process exit code. Every failure is thrown; a
-nonzero return means the tool declined the request, not that it hid an error.
+Entry point of the `juleana-sync` app and of `julia -m JuLeAna.Sync`; run the tool and return the
+process exit code. Every failure is thrown; a nonzero return means the tool declined the request, not
+that it hid an error.
 """
-main(args::AbstractVector{<:AbstractString}) = main(parse_options(args))
+function (@main)(args::AbstractVector{<:AbstractString})
+    return main(parse_options(args))
+end
 
-main(options::Options, host::RemoteHost = SSHHost(options.host)) =
-    options.from === nothing ? run_tui(options, host) : run_headless(options, host)
+function main(options::Options, host::RemoteHost = SSHHost(options.host))
+    return options.from === nothing ? run_tui(options, host) : run_headless(options, host)
+end
 
 """
     run_headless(options::Options, host::RemoteHost)::Int

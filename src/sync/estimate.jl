@@ -1,3 +1,5 @@
+# This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
+
 """
     Estimate(bytes, files, links, complete)
     Estimate(bytes, files, links, complete, extract_bytes, extract_files, extract_exact)

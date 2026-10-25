@@ -1,3 +1,5 @@
+# This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
+
 @testset "options.jl" begin
     @testset "defaults" begin
         o = parse_options(String[])

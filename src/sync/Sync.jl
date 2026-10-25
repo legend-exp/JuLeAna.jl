@@ -1,0 +1,49 @@
+# This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
+
+"""
+    JuLeAna.Sync
+
+Mirror part of a remote LEGEND data production onto this machine. The module holds the
+remote access (`SSHHost`, `LocalHost`), the production inventory and selection,
+the transfer with its estimate, the command line (`juleana-sync`, `julia -m JuLeAna.Sync`) and the
+terminal screen.
+
+The remote helper `remote/extract.jl` is a standalone script that is pushed to the host and run
+with the Julia found there; it is never loaded into this module.
+"""
+module Sync
+
+using ArgParse: @add_arg_table!, ArgParseSettings, parse_args
+using Dates: DateTime, now
+using PropDicts: PropDicts, PropDict, readprops
+
+# LegendDataManagement exports a wide surface and Tachikoma exports names such as `text`, `value`,
+# `right` and `Table` that would collide with it. Both are imported by name, so a collision shows
+# up here as a load error rather than at a call site. Loading LegendDataManagement is also what
+# brings in JSON, which PropDicts needs for the extension that reads the productions' config.json
+# files. YAML is imported for PropDicts' YAML reader and for writing the selections and local
+# configs, which are YAML files.
+import LegendDataManagement
+import YAML
+import TOML
+import HDF5
+using LegendDataManagement: DetectorId, Timestamp
+using Tachikoma: Tachikoma, Model, Frame, Buffer, Rect, Span, KeyEvent, MouseEvent, TaskEvent, TaskQueue, list_hit, list_scroll,
+                 spawn_task!, TreeView, TreeNode, selected_node, tree_visible_count, handle_key!, Block, StatusBar, Paragraph, Modal,
+                 TextInput, Gauge, SelectableList, Layout, Constraint, Vertical, Horizontal, Fill, Fixed, Percent, split_layout, render,
+                 tstyle, center, word_wrap, BOX_HEAVY, app
+import Tachikoma: view, update!, should_quit, task_queue
+
+include("remote.jl")
+include("helper.jl")
+include("production.jl")
+include("inventory.jl")
+include("selection.jl")
+include("estimate.jl")
+include("transfer.jl")
+include("options.jl")
+include("tui.jl")
+
+public main, Options, parse_options, run_headless, SyncModel, run_tui
+
+end # module

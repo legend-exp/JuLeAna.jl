@@ -1,3 +1,5 @@
+# This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
+
 @testset "estimate.jl" begin
     @testset "format_bytes" begin
         @test format_bytes(0) == "0 B"

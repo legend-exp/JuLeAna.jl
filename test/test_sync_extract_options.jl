@@ -1,3 +1,5 @@
+# This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
+
 @testset "extract: options and headless run" begin
     @testset "defaults and overrides" begin
         file = joinpath(mktempdir(), "hosts.json")

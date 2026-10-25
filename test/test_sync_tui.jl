@@ -1,3 +1,5 @@
+# This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
+
 @testset "tui.jl" begin
     h = LocalHost()
 
@@ -127,7 +129,7 @@
 
     @testset "a failing sizing is reported" begin
         root = joinpath(mktempdir(), "remote")
-        cp(joinpath(@__DIR__, "fixtures", "remote"), root)
+        cp(joinpath(SYNC_FIXTURES, "remote"), root)
         write(joinpath(root, "test", "config.json"),
               replace(read(joinpath(root, "test", "config.json.in"), String), "@REMOTE_ROOT@" => root))
         m = model(; root)
@@ -148,7 +150,7 @@
 
     @testset "a failing sizing leaves an open dialog alone" begin
         root = joinpath(mktempdir(), "remote")
-        cp(joinpath(@__DIR__, "fixtures", "remote"), root)
+        cp(joinpath(SYNC_FIXTURES, "remote"), root)
         write(joinpath(root, "test", "config.json"),
               replace(read(joinpath(root, "test", "config.json.in"), String), "@REMOTE_ROOT@" => root))
         m = model(; root)

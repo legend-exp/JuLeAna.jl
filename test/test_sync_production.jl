@@ -1,3 +1,5 @@
+# This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
+
 @testset "production.jl" begin
     h = LocalHost()
     p = Production(h, "test", FIXTURE_ROOT, LOCAL_ROOT)

@@ -1,3 +1,5 @@
+# This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
+
 @testset "extract: plan and estimate" begin
     h = LocalHost()
     local_root = mktempdir()

@@ -1,3 +1,5 @@
+# This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
+
 @testset "per-detector tier: inventory" begin
     h = LocalHost()
     p = Production(h, "dprod", PERDET_ROOT, mktempdir())

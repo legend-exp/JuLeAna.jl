@@ -1,8 +1,6 @@
-const HELPER_SCRIPT = joinpath(@__DIR__, "remote", "extract.jl")
+# This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
 
-# The dataflow project already depends on HDF5 and ParallelProcessingTools, so
-# `LocalHost` runs the helper in it and the tests need no second environment.
-const DATAFLOW_PROJECT = normpath(joinpath(@__DIR__, "..", ".."))
+const HELPER_SCRIPT = joinpath(@__DIR__, "remote", "extract.jl")
 
 # Versions the helper is written against; the remote environment is created with
 # these bounds.
@@ -45,11 +43,12 @@ remote_julia(::LocalHost, c::HelperConfig) =
 """
     julia_project(h::RemoteHost, c::HelperConfig)::String
 
-The environment the helper runs in. `LocalHost` uses the dataflow project.
+The environment the helper runs in. `LocalHost` uses the active project, which must hold HDF5 and
+ParallelProcessingTools; the package's test environment does.
 """
 julia_project(h::SSHHost, c::HelperConfig) =
     expand_home(h, something(c.julia_project, DEFAULT_REMOTE_PROJECT))
-julia_project(::LocalHost, c::HelperConfig) = something(c.julia_project, DATAFLOW_PROJECT)
+julia_project(::LocalHost, c::HelperConfig) = something(c.julia_project, dirname(Base.active_project()))
 
 """
     staging_dir(h::RemoteHost, c::HelperConfig)::String
@@ -124,11 +123,11 @@ environment_problem(s::EnvironmentStatus, h::RemoteHost, c::HelperConfig) =
 
 Run [`bootstrap_command`](@ref) and return the resulting status, which must be
 ready. Only an environment that does not exist yet is created: an existing one is
-never modified, and neither is the dataflow project that `LocalHost` uses by default.
+never modified, and neither is the active project that `LocalHost` uses by default.
 """
 function bootstrap_environment!(h::RemoteHost, c::HelperConfig)
     h isa LocalHost && c.julia_project === nothing && throw(ArgumentError(
-        "refusing to modify the dataflow project $DATAFLOW_PROJECT; name a helper environment with julia_project"))
+        "refusing to modify the active project $(dirname(Base.active_project())); name a helper environment with julia_project"))
     existing = ensure_environment(h, c)
     existing.present && throw(ErrorException(
         "the helper environment $(existing.project) already exists; refusing to modify it. " *

@@ -1,3 +1,5 @@
+# This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
+
 # Remote helper of the sync tool: lists and extracts the detector groups of LEGEND
 # HDF5 files, which store them either as top-level groups (`<detector>/<tier>`) or as
 # the children of a single top-level tier group (`<tier>/<detector>`). It needs only
