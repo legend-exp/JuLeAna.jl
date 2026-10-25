@@ -5,17 +5,17 @@
 Generate the A/E cuts from the combined `cal` data of every detector and partition that contains `period`.
 
 The `cal` data of all runs in a detector's partition are calibrated with the run-level parameters
-(`rpars`, category `aoe`) through `calibrate_ged_detector_data`. For each classifier in `aoe_classifiers`, the low A/E
-cut is searched on the DEP of the combined data, the high cut is set from `sigma_high_sided`, and survival fractions
-are computed for the configured peaks and the Qbb window with the low cut alone and with both cuts (`ds`). Detectors
-with `low_aoe_status` of `:valid` or `:present` are processed.
+(`rpars`, category `aoe`) through `calibrate_ged_detector_data`. For each A/E type in `aoe_funcs`, the low A/E cut of
+its classifier `<type>_classifier` is searched on the DEP of the combined data, the high cut is set from
+`sigma_high_sided`, and survival fractions are computed for the configured peaks and the Qbb window with the low cut
+alone and with both cuts (`ds`). Detectors with `low_aoe_status` of `:valid` or `:present` are processed.
 
 # Inputs
 - `jlqcs` tier (single pulse, non-pulser events) and `jldsp` tier of all `cal` runs in the partition, calibrated with
   the run-level A/E parameters `l200.par.rpars.aoe` (and the parameters `calibrate_ged_detector_data` reads for the
   energy).
 - `dataprod_config(l200).psd(filekey).aoe` of the first run of the partition, `p_default` merged with `p[det]`:
-  `e_type`, `aoe_classifiers`, `sigma_high_sided`, the DEP cut search settings (`dep`, `dep_window`,
+  `e_type`, `aoe_funcs` (only the keys), `sigma_high_sided`, the DEP cut search settings (`dep`, `dep_window`,
   `dep_cut_search_interval`, `dep_bin_width_window`, `dep_cut_search_rtol`, `dep_cut_search_maxiters`,
   `dep_cut_search_target_sf`, `dep_cut_search_fixed_position`, `dep_cut_search_fit_func`) and the survival fraction
   settings (`aoe_peaks`, `aoe_peaks_names`, `aoe_peaks_windows_left`, `aoe_peaks_windows_right`,
@@ -98,7 +98,7 @@ function p_process_aoe_cut_cal(processing_config, l200::LegendData, period::Data
         aoe_config_det = merge(aoe_config.p_default, get(aoe_config.p, det, PropDict()))
         @debug "Loaded aoe config: $(lstring(aoe_config_det))"
 
-        aoe_classifiers = Symbol.(aoe_config_det.aoe_classifiers)
+        aoe_classifiers = [Symbol("$(aoe_type)_classifier") for aoe_type in keys(aoe_config_det.aoe_funcs)]
         e_type = Symbol(aoe_config_det.e_type)
 
         # sigma_high_sided = ifelse(chinfo_det.high_aoe_status == :valid, aoe_config_det.sigma_high_sided, Inf)
@@ -146,7 +146,7 @@ function p_process_aoe_cut_cal(processing_config, l200::LegendData, period::Data
                                                                         aoe_cut_pars_cat = :aoe)
                                         end
                                         for pinfo in partinfo_det])
-                e_cal = getproperty(hit_cal, e_type)
+                e_cal = collect(getproperty(hit_cal, e_type))
                 e_unit = unit(first(e_cal))
                 e_cal, hit_cal, e_unit
             else

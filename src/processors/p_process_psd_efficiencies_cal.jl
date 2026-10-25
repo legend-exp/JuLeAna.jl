@@ -145,7 +145,7 @@ function p_process_psd_efficiencies_cal(processing_config, l200::LegendData, per
                                                                         hpge_kwargs...)
                                         end
                                         for pinfo in partinfo_det])
-                getproperty(hit_cal, e_type), hit_cal
+                collect(getproperty(hit_cal, e_type)), hit_cal
             else
                 nothing, nothing
             end

@@ -101,11 +101,10 @@ function p_process_aoe_calibration_cut_cal(processing_config, l200::LegendData, 
         compton_window = aoe_config_det.compton_window
         p_value_cut = aoe_config_det.p_value # what is this? p values threshold 
         e_type = Symbol(aoe_config_det.e_type)
-        aoe_types = collect(keys(aoe_config_det.aoe_funcs))
         aoe_funcs = aoe_config_det.aoe_funcs
+        aoe_types = collect(keys(aoe_funcs))
+        aoe_classifiers = [Symbol("$(aoe_type)_classifier") for aoe_type in aoe_types]
         qdrift_expression = aoe_config_det.qdrift_expression
-
-        aoe_classifiers = Symbol.(aoe_config_det.aoe_classifiers)
 
         # sigma_high_sided = ifelse(chinfo_det.high_aoe_status == :valid, aoe_config_det.sigma_high_sided, Inf)
         sigma_high_sided = aoe_config_det.sigma_high_sided
@@ -163,17 +162,27 @@ function p_process_aoe_calibration_cut_cal(processing_config, l200::LegendData, 
         e_cal, hit_cal, e_unit, ts = @process_step "hit data loading" begin
             if !all([haskey(processed_dict, aoe_type) for aoe_type in aoe_types]) ||
                !all([haskey(processed_dict, aoe_classifier) for aoe_classifier in aoe_classifiers])
-                hit_cal = fast_flatten([let e_type_cal=e_type, e_type=Symbol(first(split(string(e_type), "_cal")))
-
+                e_type_uncal = Symbol(first(split(string(e_type), "_cal")))
+                cal_funcs = [ljl_propfunc(l200.par.rpars.ecal[pinfo.period, pinfo.run][det][e_type_uncal].cal.func)
+                             for pinfo in partinfo_det]
+                # read only the jldsp columns that the energy calibration, the A/E expressions and
+                # the drift time expression use; the calibrated energy `e_type` is computed here
+                dsp_pfs = vcat(cal_funcs, [ljl_propfunc(f) for f in values(aoe_funcs)],
+                               aoe_config_det.apply_ctc ? [ljl_propfunc(qdrift_expression)] : [])
+                dsp_columns = Tuple(setdiff(unique(vcat(:timestamp,
+                                                        [first(typeof(path).parameters[1])
+                                                         for pf in dsp_pfs for path in PropertyFunctions.input_property_paths(pf)])),
+                                            (e_type,)))
+                @debug "Reading jldsp columns $(dsp_columns)"
+                hit_cal = fast_flatten([begin
                                             @debug "Reading from $(pinfo.period)-$(pinfo.run)"
-                                            cal_func = ljl_propfunc(l200.par.rpars.ecal[pinfo.period, pinfo.run][det][e_type].cal.func)
                                             qc_mask = read_ldata(@pf($is_single_pulse && !$is_pulser), l200, :jlqcs, pinfo.cal.startkey,
                                                                  det)
-                                            read_ldata(row -> merge(NamedTuple{(e_type_cal,)}((cal_func(row),)), row), l200, :jldsp, :cal,
-                                                       pinfo.period, pinfo.run, det)[qc_mask]
+                                            dsp = Table(read_ldata(dsp_columns, l200, :jldsp, :cal, pinfo.period, pinfo.run, det))[qc_mask]
+                                            Table(merge(columns(dsp), NamedTuple{(e_type,)}((cal_func.(dsp),))))
                                         end
-                                        for pinfo in partinfo_det])
-                e_cal = getproperty(hit_cal, e_type)
+                                        for (pinfo, cal_func) in zip(partinfo_det, cal_funcs)])
+                e_cal = collect(getproperty(hit_cal, e_type))
                 e_unit = unit(eltype(e_cal))
 
                 # get timestamps for stability plots
