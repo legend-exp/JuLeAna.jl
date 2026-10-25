@@ -20,8 +20,9 @@
     function model(; mount_root = "/")
         local_root = mktempdir()
         p = Production(h, "dprod", PERDET_ROOT, local_root; mount_root)
-        SyncModel(h, p, Options("local", PERDET_ROOT, local_root, mount_root, "dprod",
-                                joinpath(mktempdir(), "x.yaml"), nothing, false, false, 0, broken))
+        SyncModel(h, p,
+                  Options("local", PERDET_ROOT, local_root, mount_root, "dprod",
+                          joinpath(mktempdir(), "x.yaml"), nothing, false, false, 0, broken))
     end
     function open!(m::SyncModel, label)
         for _ in 1:40
@@ -103,7 +104,8 @@
         m = model()
         to_period!(m)
         open!(m, "detectors")
-        update!(m, KeyEvent(:down)); update!(m, KeyEvent(:down))     # V01234A
+        update!(m, KeyEvent(:down))
+        update!(m, KeyEvent(:down))     # V01234A
         tb = draw(m)
         @test find_text(tb, "V01234A") !== nothing
         @test find_text(tb, "held by r000") !== nothing
@@ -117,10 +119,13 @@
         m = model()
         to_period!(m)
         open!(m, "detectors")
-        update!(m, KeyEvent(:down)); update!(m, KeyEvent(' '))        # B00000C
+        update!(m, KeyEvent(:down))
+        update!(m, KeyEvent(' '))        # B00000C
         period = current_node(m).parent.parent
         r000 = run_dirs(period)[1]
-        goto!(m, r000); update!(m, KeyEvent(:enter)); settle!(m)
+        goto!(m, r000)
+        update!(m, KeyEvent(:enter))
+        settle!(m)
         row = r000.children[1]
         @test row.label == "B00000C"
         @test checkbox(row) == "[x]"
@@ -133,7 +138,8 @@
         update!(m, KeyEvent('l'))
         @test occursin("unmark the period's detector", m.status)
         # The other detector of the run can still be marked.
-        goto!(m, r000.children[2]); update!(m, KeyEvent(' '))
+        goto!(m, r000.children[2])
+        update!(m, KeyEvent(' '))
         @test r000.children[2].mode == :copy
 
         goto!(m, r000)
@@ -146,11 +152,16 @@
         m = model()
         to_period!(m)
         open!(m, "detectors")
-        update!(m, KeyEvent(:down)); update!(m, KeyEvent(' '))        # B00000C
-        update!(m, KeyEvent(:down)); update!(m, KeyEvent(' '))        # V01234A
-        update!(m, KeyEvent('t')); settle!(m)
+        update!(m, KeyEvent(:down))
+        update!(m, KeyEvent(' '))        # B00000C
+        update!(m, KeyEvent(:down))
+        update!(m, KeyEvent(' '))        # V01234A
+        update!(m, KeyEvent('t'))
+        settle!(m)
         @test m.modal_kind == :estimate
-        @test m.estimate.files == 5 && m.estimate.bytes == filesize(joinpath(PERDET_ROOT, "dprod", "config.json")) +
+        @test m.estimate.files == 5 &&
+              m.estimate.bytes ==
+              filesize(joinpath(PERDET_ROOT, "dprod", "config.json")) +
               filesize(joinpath(PERDET_ROOT, "dprod", "legend-metadata", "README.md")) + 100 + 200 + 300
         @test occursin("not in run: V01234A in", m.modal.message)
         update!(m, KeyEvent(:enter))
@@ -166,7 +177,8 @@
         m = model()
         to_period!(m)
         open!(m, "detectors")
-        update!(m, KeyEvent(:down)); update!(m, KeyEvent(' '))
+        update!(m, KeyEvent(:down))
+        update!(m, KeyEvent(' '))
         path = save!(m)
         sel = load_selection(path, m.production)
         @test [(e.detectors, e.mode) for e in sel.detector_files] == [(["B00000C"], :copy)]

@@ -74,8 +74,7 @@
     @testset "exclude! pushes each level's own mode onto that level's siblings" begin
         # A synthetic tree, unrelated to the fixture on disk: exclude! only ever
         # touches Node.mode and the paths Selection() collects from it.
-        node(label, rel; parent = nothing) =
-            Node(label, joinpath(FIXTURE_ROOT, "synthetic", rel), :dir; parent)
+        node(label, rel; parent = nothing) = Node(label, joinpath(FIXTURE_ROOT, "synthetic", rel), :dir; parent)
         mandatory = [joinpath("test", "config.json"), "config_fixture.json",
                      joinpath("test", "legend-metadata")]
 

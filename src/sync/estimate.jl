@@ -30,9 +30,10 @@ struct Estimate
     not_in_run::Vector{Tuple{String,String}}
 end
 
-Estimate(bytes, files, links, complete, extract_bytes, extract_files, extract_exact) =
-    Estimate(bytes, files, links, complete, extract_bytes, extract_files, extract_exact,
-             Tuple{String,String}[])
+function Estimate(bytes, files, links, complete, extract_bytes, extract_files, extract_exact)
+    return Estimate(bytes, files, links, complete, extract_bytes, extract_files, extract_exact,
+                    Tuple{String,String}[])
+end
 
 Estimate(bytes, files, links, complete) = Estimate(bytes, files, links, complete, 0, 0, true)
 
@@ -51,7 +52,7 @@ function format_bytes(n::Integer)
         value /= 1024
         value < 1024 && return string(round(value; digits = 1), " ", unit)
     end
-    string(round(value / 1024; digits = 1), " P")
+    return string(round(value / 1024; digits = 1), " P")
 end
 
 """
@@ -122,7 +123,7 @@ function running_estimate(root::Node)
         period_counts[run.remote_path] = n
     end
     extract_files = sum(values(period_counts); init = 0)
-    Estimate(bytes, files, links, complete, extract_bytes, extract_files, extract_files == 0)
+    return Estimate(bytes, files, links, complete, extract_bytes, extract_files, extract_files == 0)
 end
 
 """
@@ -140,13 +141,14 @@ The one-line form the status bar shows. The extract part appears only when
 something is extracted, with a `~` while it is approximate, followed by the number
 of pairs left out as not in run.
 """
-format_estimate(e::Estimate) = string(
-    "selected: ", format_bytes(e.bytes), e.complete ? "" : "?",
-    " copy (", e.files, " files), ", e.links, " links",
-    e.extract_files == 0 ? "" : string(
-        ", ", e.extract_exact ? "" : "~", format_bytes(e.extract_bytes),
-        " extract (", e.extract_files, " files)"),
-    isempty(e.not_in_run) ? "" : string(", ", length(e.not_in_run), " not in run"))
+function format_estimate(e::Estimate)
+    return string("selected: ", format_bytes(e.bytes), e.complete ? "" : "?",
+                  " copy (", e.files, " files), ", e.links, " links",
+                  e.extract_files == 0 ? "" :
+                  string(", ", e.extract_exact ? "" : "~", format_bytes(e.extract_bytes),
+                         " extract (", e.extract_files, " files)"),
+                  isempty(e.not_in_run) ? "" : string(", ", length(e.not_in_run), " not in run"))
+end
 
 """
     parse_rsync_stats(out::AbstractString, links::Integer)::Estimate
@@ -158,8 +160,8 @@ comma.
 function parse_rsync_stats(out::AbstractString, links::Integer)
     bytes = match(r"^Total transferred file size:\s+([0-9,]+)"m, out)
     files = match(r"^Number of regular files transferred:\s+([0-9,]+)"m, out)
-    (bytes === nothing || files === nothing) && throw(ErrorException(
-        "rsync --stats printed no transfer totals; GNU rsync >= 3.1 is required. Output was:\n$out"))
-    Estimate(parse(Int, replace(bytes[1], "," => "")),
-             parse(Int, replace(files[1], "," => "")), Int(links), true)
+    (bytes === nothing || files === nothing) &&
+        throw(ErrorException("rsync --stats printed no transfer totals; GNU rsync >= 3.1 is required. Output was:\n$out"))
+    return Estimate(parse(Int, replace(bytes[1], "," => "")),
+                    parse(Int, replace(files[1], "," => "")), Int(links), true)
 end

@@ -351,16 +351,21 @@
         for _ in 1:4
             update!(m, KeyEvent(:down))   # tier
         end
-        update!(m, KeyEvent(:enter)); settle!(m)
+        update!(m, KeyEvent(:enter))
+        settle!(m)
         update!(m, KeyEvent(:down))       # jlevt
-        update!(m, KeyEvent(:enter)); settle!(m)
+        update!(m, KeyEvent(:enter))
+        settle!(m)
         update!(m, KeyEvent(:down))       # phy
-        update!(m, KeyEvent(:enter)); settle!(m)
+        update!(m, KeyEvent(:enter))
+        settle!(m)
         update!(m, KeyEvent(:down))       # p18
-        update!(m, KeyEvent(:enter)); settle!(m)
+        update!(m, KeyEvent(:enter))
+        settle!(m)
         update!(m, KeyEvent(:down))       # detectors
         update!(m, KeyEvent(:down))       # r000
-        update!(m, KeyEvent(:enter)); settle!(m)
+        update!(m, KeyEvent(:enter))
+        settle!(m)
         run_node = current_node(m)
         @test run_node.label == "r000"
 
@@ -425,7 +430,8 @@
             update!(m, KeyEvent(:down))   # tier
         end
         update!(m, KeyEvent(' '))
-        update!(m, KeyEvent(:enter)); settle!(m)
+        update!(m, KeyEvent(:enter))
+        settle!(m)
         update!(m, KeyEvent(:down))       # jlevt, which inherits tier's :copy
         update!(m, KeyEvent(' '))
         tb = draw(m)
@@ -440,7 +446,8 @@
             update!(m, KeyEvent(:down))
         end
         section = current_node(m)
-        update!(m, KeyEvent(:enter)); settle!(m)
+        update!(m, KeyEvent(:enter))
+        settle!(m)
         update!(m, KeyEvent(:end_key))
         @test current_node(m) !== section
         attach_listing!(m, (section, Node[]))

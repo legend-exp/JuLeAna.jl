@@ -43,9 +43,10 @@ struct TransferResult
     not_in_run::Vector{Tuple{String,String}}
 end
 
-TransferResult(bytes, files, links, replaced_links, skipped, config, warnings) =
-    TransferResult(bytes, files, links, replaced_links, skipped, config, warnings,
-                   0, 0, 0, String[], Tuple{String,String}[])
+function TransferResult(bytes, files, links, replaced_links, skipped, config, warnings)
+    return TransferResult(bytes, files, links, replaced_links, skipped, config, warnings,
+                          0, 0, 0, String[], Tuple{String,String}[])
+end
 
 """
     check_rsync()::VersionNumber
@@ -57,15 +58,15 @@ can read, so it is rejected by name rather than being discovered mid-transfer.
 function check_rsync()
     out = read(pipeline(ignorestatus(`rsync --version`); stdin = devnull), String)
     line = String(first(eachsplit(out, '\n')))
-    occursin("openrsync", line) && throw(ErrorException(
-        "found Apple openrsync ($line), which has no --info=progress2 and no usable --stats. " *
-        "Install GNU rsync with `brew install rsync` and put it ahead of /usr/bin in PATH."))
+    occursin("openrsync", line) &&
+        throw(ErrorException("found Apple openrsync ($line), which has no --info=progress2 and no usable --stats. " *
+                             "Install GNU rsync with `brew install rsync` and put it ahead of /usr/bin in PATH."))
     m = match(r"rsync\s+version\s+([0-9]+(?:\.[0-9]+)+)", line)
     m === nothing && throw(ErrorException("cannot read an rsync version from: $line"))
     version = VersionNumber(m[1])
-    version >= v"3.1" || throw(ErrorException(
-        "rsync $version is too old; this tool needs 3.1 or newer. Install one with `brew install rsync`."))
-    version
+    version >= v"3.1" ||
+        throw(ErrorException("rsync $version is too old; this tool needs 3.1 or newer. Install one with `brew install rsync`."))
+    return version
 end
 
 """
@@ -80,16 +81,13 @@ unrelated mounted path happens to contain it as a prefix, so the check instead
 compares device numbers.
 """
 function check_mount(p::Production)
-    p.mount_root === nothing && throw(ArgumentError(
-        "no mount root configured; pass --mount-root to use link mode"))
-    isdir(p.mount_root) || throw(ArgumentError(
-        "mount root $(p.mount_root) does not exist"))
+    p.mount_root === nothing && throw(ArgumentError("no mount root configured; pass --mount-root to use link mode"))
+    isdir(p.mount_root) || throw(ArgumentError("mount root $(p.mount_root) does not exist"))
     readdir(p.mount_root)  # throws on its own if the directory is not readable
     mounted = p.mount_root == "/" ||
               stat(p.mount_root).device != stat(dirname(p.mount_root)).device
-    mounted || throw(ArgumentError(
-        "mount root $(p.mount_root) is not a mount point; mount the remote filesystem there first"))
-    p.mount_root
+    mounted || throw(ArgumentError("mount root $(p.mount_root) is not a mount point; mount the remote filesystem there first"))
+    return p.mount_root
 end
 
 """
@@ -109,18 +107,19 @@ function rsync_command(h::RemoteHost, source_root::AbstractString, local_root::A
     push!(args, dry_run ? "--dry-run" : "--info=progress2")
     push!(args, rsync_source(h, source_root), rstrip(local_root, '/') * "/")
     # LC_ALL fixes the digit grouping in --stats, which parse_rsync_stats strips.
-    addenv(`rsync $args`, "LC_ALL" => "C")
+    return addenv(`rsync $args`, "LC_ALL" => "C")
 end
 
-rsync_command(h::RemoteHost, p::Production, files_from::AbstractString; dry_run::Bool) =
-    rsync_command(h, p.remote_root, p.local_root, files_from; dry_run)
+function rsync_command(h::RemoteHost, p::Production, files_from::AbstractString; dry_run::Bool)
+    return rsync_command(h, p.remote_root, p.local_root, files_from; dry_run)
+end
 
 # Run `command(list_file)` where `list_file` holds the relative paths `rels`.
 function rsync_listed(command, rels::AbstractVector{<:AbstractString}, progress)
     mktempdir() do dir
         path = joinpath(dir, "files.txt")
         write(path, join(rels, "\n") * "\n")
-        run_rsync(command(path), progress)
+        return run_rsync(command(path), progress)
     end
 end
 
@@ -134,8 +133,8 @@ One `--info=progress2` reading, or `nothing` for a line that is not one.
 function parse_progress(chunk::AbstractString)
     m = match(_progress_expr, chunk)
     m === nothing && return nothing
-    Progress(parse(Int, replace(m[1], "," => "")), parse(Int, m[2]) / 100,
-             String(m[3]), String(m[4]))
+    return Progress(parse(Int, replace(m[1], "," => "")), parse(Int, m[2]) / 100,
+                    String(m[3]), String(m[4]))
 end
 
 # Run rsync, feed every progress reading to `progress`, and return
@@ -168,9 +167,8 @@ function run_rsync(cmd::Cmd, progress)
     wait(proc)
     stderr_text = read(errfile, String)
     rm(errfile; force = true)
-    success(proc) || throw(ErrorException(
-        "rsync failed with exit code $(proc.exitcode): $cmd\n$stderr_text"))
-    String(take!(transcript)), stderr_text
+    success(proc) || throw(ErrorException("rsync failed with exit code $(proc.exitcode): $cmd\n$stderr_text"))
+    return String(take!(transcript)), stderr_text
 end
 
 """
@@ -194,8 +192,7 @@ end
 The directory of the staging tree that mirrors the remote root for `p`; rsync with
 this directory as its source recreates the mirror layout.
 """
-staging_production_dir(staging::AbstractString, p::Production) =
-    joinpath(staging, replace(p.name, '/' => '-'))
+staging_production_dir(staging::AbstractString, p::Production) = joinpath(staging, replace(p.name, '/' => '-'))
 
 """
     plan_extraction(h, p, sel, staging; helper = HelperConfig(), jobs = 0)
@@ -238,8 +235,7 @@ function plan_extraction(h::RemoteHost, p::Production, sel::Selection, staging::
             files_of[joinpath(entry.dir, e.name)] = run_files
             push!(runs, joinpath(entry.dir, e.name))
         end
-        isempty(runs) && throw(ErrorException(
-            "extract entry $(entry.dir) holds no filekey files and no run directory with filekey files"))
+        isempty(runs) && throw(ErrorException("extract entry $(entry.dir) holds no filekey files and no run directory with filekey files"))
         push!(periods, (entry, runs, empty_runs))
     end
     firsts = unique([first(files_of[run]) for (_, runs, _) in periods for run in runs])
@@ -247,8 +243,8 @@ function plan_extraction(h::RemoteHost, p::Production, sel::Selection, staging::
                 inspect_files(h, helper, firsts; jobs)
     present_in = Dict(file => first(found) for (file, found) in zip(firsts, inspected))
     for (entry, runs, _) in periods
-        all(run -> isempty(present_in[first(files_of[run])]), runs) && throw(ArgumentError(
-            "extract entry $(entry.dir): the tier has no per-detector groups"))
+        all(run -> isempty(present_in[first(files_of[run])]), runs) &&
+            throw(ArgumentError("extract entry $(entry.dir): the tier has no per-detector groups"))
     end
     not_in_run = Tuple{String,String}[]
     for (entry, _, empty_runs) in periods, run in empty_runs, group in entry.groups
@@ -270,12 +266,12 @@ function plan_extraction(h::RemoteHost, p::Production, sel::Selection, staging::
         for file in files_of[run]
             rel = joinpath(run, basename(file))
             destination = joinpath(stage, rel)
-            startswith(destination, stage * "/") || throw(ErrorException(
-                "extraction destination $destination is not below the staging directory $stage"))
+            startswith(destination, stage * "/") ||
+                throw(ErrorException("extraction destination $destination is not below the staging directory $stage"))
             covered(rel) || push!(plan, ExtractJob(file, destination, rel, groups))
         end
     end
-    plan, sort!(unique!(not_in_run))
+    return plan, sort!(unique!(not_in_run))
 end
 
 """
@@ -288,7 +284,7 @@ that is not in its file is an error.
 function plan_bytes(h::RemoteHost, helper::HelperConfig, plan::Vector{ExtractJob}; jobs::Integer = 0)
     isempty(plan) && return 0
     inspected = inspect_files(h, helper, [j.source for j in plan]; groups = [j.groups for j in plan], jobs)
-    plan_group_bytes(plan, inspected)
+    return plan_group_bytes(plan, inspected)
 end
 
 """
@@ -300,19 +296,17 @@ The summed stored size of the groups each job of `plan` takes, given the
 group names or sizes do not match the groups of its job, is an error.
 """
 function plan_group_bytes(plan::Vector{ExtractJob}, inspected)
-    length(inspected) == length(plan) || throw(ErrorException(
-        "inspected $(length(inspected)) files for a plan of $(length(plan)) jobs"))
+    length(inspected) == length(plan) || throw(ErrorException("inspected $(length(inspected)) files for a plan of $(length(plan)) jobs"))
     total = 0
     for i in eachindex(plan, inspected)
         job = plan[i]
         names, bytes = inspected[i]
-        names == job.groups || throw(ErrorException(
-            "sized groups $names for the groups $(job.groups) of $(job.source)"))
-        length(bytes) == length(job.groups) || throw(ErrorException(
-            "got $(length(bytes)) sizes for $(length(job.groups)) groups of $(job.source)"))
+        names == job.groups || throw(ErrorException("sized groups $names for the groups $(job.groups) of $(job.source)"))
+        length(bytes) == length(job.groups) ||
+            throw(ErrorException("got $(length(bytes)) sizes for $(length(job.groups)) groups of $(job.source)"))
         total += sum(bytes; init = 0)
     end
-    total
+    return total
 end
 
 """
@@ -328,7 +322,7 @@ function prepare_extraction(h::RemoteHost, p::Production, sel::Selection, helper
     environment_ready(status) || throw(ErrorException(environment_problem(status, h, helper)))
     staging = staging_dir(h, helper)
     plan, not_in_run = plan_extraction(h, p, sel, staging; helper, jobs)
-    staging, plan, not_in_run
+    return staging, plan, not_in_run
 end
 
 """
@@ -354,9 +348,8 @@ fit into `free` bytes.
 """
 function check_staging_space(staging::AbstractString, free::Integer, needed::Integer)
     ceil(Int, STAGING_MARGIN * needed) <= free && return nothing
-    throw(ErrorException(
-        "staging directory $staging has $(format_bytes(free)) free but the extraction needs about " *
-        "$(format_bytes(needed)); set \"staging\" for this host in config/sync/hosts.yaml or pass --staging"))
+    return throw(ErrorException("staging directory $staging has $(format_bytes(free)) free but the extraction needs about " *
+                                "$(format_bytes(needed)); set \"staging\" for this host in config/sync/hosts.yaml or pass --staging"))
 end
 
 """
@@ -369,7 +362,7 @@ function reduced_groups(path::AbstractString)
     try
         HDF5.h5open(path, "r") do f
             a = HDF5.attrs(f)
-            haskey(a, "juleana_sync_groups") ? String.(a["juleana_sync_groups"]) : nothing
+            return haskey(a, "juleana_sync_groups") ? String.(a["juleana_sync_groups"]) : nothing
         end
     catch err
         err isa InterruptException && rethrow()
@@ -411,7 +404,7 @@ function reconcile_local(p::Production, plan::Vector{ExtractJob})
                                        sort!(union(job.groups, held))))
         end
     end
-    runnable, conflicts
+    return runnable, conflicts
 end
 
 """
@@ -431,8 +424,8 @@ for the same period, are an `ArgumentError`.
 function plan_detector_files(h::RemoteHost, p::Production, sel::Selection)
     modes = Dict{Tuple{String,String},Symbol}()
     for entry in sel.detector_files, name in entry.detectors
-        get!(modes, (entry.dir, name), entry.mode) == entry.mode || throw(ArgumentError(
-            "detector $name of $(entry.dir) is in a copy and a link entry"))
+        get!(modes, (entry.dir, name), entry.mode) == entry.mode ||
+            throw(ArgumentError("detector $name of $(entry.dir) is in a copy and a link entry"))
     end
     covered(rel, paths) = any(c -> rel == c || startswith(rel, c * "/"), paths)
     copies = String[]
@@ -450,9 +443,8 @@ function plan_detector_files(h::RemoteHost, p::Production, sel::Selection)
             for e in listing
                 id = e.kind == :file ? tier_file_id(e.name) : nothing
                 (id === nothing || first(id) != :detector) && continue
-                haskey(files, last(id)) && throw(ArgumentError(
-                    "$(joinpath(entry.dir, run)) holds two files for detector $(last(id)): " *
-                    "$(files[last(id)]) and $(e.name)"))
+                haskey(files, last(id)) && throw(ArgumentError("$(joinpath(entry.dir, run)) holds two files for detector $(last(id)): " *
+                                                               "$(files[last(id)]) and $(e.name)"))
                 files[last(id)] = e.name
             end
             found += length(files)
@@ -469,10 +461,9 @@ function plan_detector_files(h::RemoteHost, p::Production, sel::Selection)
                 end
             end
         end
-        found == 0 && throw(ArgumentError(
-            "detector file entry $(entry.dir): no run directory holds per-detector files"))
+        found == 0 && throw(ArgumentError("detector file entry $(entry.dir): no run directory holds per-detector files"))
     end
-    sort!(unique!(copies)), sort!(unique!(links)), sort!(unique!(not_in_run))
+    return sort!(unique!(copies)), sort!(unique!(links)), sort!(unique!(not_in_run))
 end
 
 """
@@ -482,7 +473,7 @@ What the transfer would actually move, given what is already in the mirror.
 """
 function rsync_dry_run(h::RemoteHost, p::Production, sel::Selection)
     out, _ = rsync_listed(path -> rsync_command(h, p, path; dry_run = true), sel.copy, nothing)
-    parse_rsync_stats(out, length(sel.link))
+    return parse_rsync_stats(out, length(sel.link))
 end
 
 """
@@ -505,7 +496,7 @@ function remove_stale_links!(p::Production, sel::Selection)
             end
         end
     end
-    removed
+    return removed
 end
 
 function link_path!(h::RemoteHost, p::Production, rel::AbstractString,
@@ -534,7 +525,7 @@ function link_path!(h::RemoteHost, p::Production, rel::AbstractString,
     for entry in list_dir(h, remote)
         created += link_path!(h, p, joinpath(rel, entry.name), copies, skipped)
     end
-    created
+    return created
 end
 
 """
@@ -550,7 +541,7 @@ function create_links!(h::RemoteHost, p::Production, sel::Selection)
     for rel in sel.link
         created += link_path!(h, p, rel, copies, skipped)
     end
-    created, skipped
+    return created, skipped
 end
 
 """
@@ -587,7 +578,7 @@ function apply!(h::RemoteHost, p::Production, sel::Selection;
                          sel.created, sel.extract, sel.detector_files)
     isempty(resolved.link) || check_mount(p)
     staging, plan, extract_absent = isempty(sel.extract) ?
-        ("", ExtractJob[], Tuple{String,String}[]) : prepare_extraction(h, p, sel, helper; jobs)
+                                    ("", ExtractJob[], Tuple{String,String}[]) : prepare_extraction(h, p, sel, helper; jobs)
     not_in_run = sort!(unique!(vcat(extract_absent, detector_absent)))
     if dry_run
         estimate = rsync_dry_run(h, p, resolved)
@@ -614,8 +605,8 @@ function apply!(h::RemoteHost, p::Production, sel::Selection;
                            record["event"] == "file" || return
                            done += 1
                            staged_bytes += record["bytes"]
-                           extract_progress === nothing ||
-                               extract_progress(ExtractProgress(done, length(plan), staged_bytes))
+                           return extract_progress === nothing ||
+                                  extract_progress(ExtractProgress(done, length(plan), staged_bytes))
                        end)
         end
         replaced = remove_stale_links!(p, resolved)
@@ -627,10 +618,9 @@ function apply!(h::RemoteHost, p::Production, sel::Selection;
             again, changed = reconcile_local(p, plan)
             isempty(changed) || error("the local mirror changed during the extraction; ",
                                       "full copy or symlink now at: ", join(changed, ", "))
-            pull_out, pull_warnings = rsync_listed(
-                path -> rsync_command(h, staging_production_dir(staging, p), p.local_root, path;
-                                      dry_run = false),
-                [j.relative for j in again], progress)
+            pull_out, pull_warnings = rsync_listed(path -> rsync_command(h, staging_production_dir(staging, p), p.local_root, path;
+                                                                         dry_run = false),
+                                                   [j.relative for j in again], progress)
             pulled = parse_rsync_stats(pull_out, 0)
             push!(warnings, pull_warnings)
         end
@@ -646,10 +636,10 @@ function apply!(h::RemoteHost, p::Production, sel::Selection;
     catch err
         (isempty(plan) || err isa InterruptException) && rethrow()
         throw(ErrorException(sprint(showerror, err) * (in_mirror ?
-            "\nthe reduced files are already in the local mirror; the staged copies were kept in $staging" :
-            "\nreduced files already staged were kept in $staging; running the same selection again resumes from them")))
+                                                       "\nthe reduced files are already in the local mirror; the staged copies were kept in $staging" :
+                                                       "\nreduced files already staged were kept in $staging; running the same selection again resumes from them")))
     end
-    result
+    return result
 end
 
 """
@@ -664,15 +654,17 @@ function summary_text(r::TransferResult)
         push!(lines, "kept existing data at $(length(r.skipped)) link targets: " *
                      join(r.skipped, ", "))
     r.extracted_files == 0 ||
-        push!(lines, "extracted $(r.extracted_files) files, $(r.extracted_groups) groups " *
-                     "($(format_bytes(r.extracted_bytes)) transferred)")
+        push!(lines,
+              "extracted $(r.extracted_files) files, $(r.extracted_groups) groups " *
+              "($(format_bytes(r.extracted_bytes)) transferred)")
     isempty(r.conflicts) ||
-        push!(lines, "kept $(length(r.conflicts)) existing files instead of extracting (full copies or symlinks): " *
-                     join(r.conflicts, ", "))
+        push!(lines,
+              "kept $(length(r.conflicts)) existing files instead of extracting (full copies or symlinks): " *
+              join(r.conflicts, ", "))
     isempty(r.not_in_run) ||
         push!(lines, "not in run, left out: " *
                      format_not_in_run(r.not_in_run))
     isempty(r.warnings) || push!(lines, "rsync warnings:\n$(r.warnings)")
     push!(lines, "export LEGEND_DATA_CONFIG=$(r.config)")
-    join(lines, "\n")
+    return join(lines, "\n")
 end

@@ -12,8 +12,8 @@
         @test o2.helper.staging == "/ptmp/u/stage"
         @test_throws "--jobs must not be negative" parse_options(["--host", "alpha", "--jobs=-1"]; hosts_file = file)
         @test_throws "--jobs must be an integer" parse_options(["--host", "alpha", "--jobs", "two"]; hosts_file = file)
-        @test_throws "--staging must be an absolute path or start with ~, got rel/stage" parse_options(
-            ["--host", "alpha", "--staging", "rel/stage"]; hosts_file = file)
+        @test_throws "--staging must be an absolute path or start with ~, got rel/stage" parse_options(["--host", "alpha", "--staging",
+                                                                                                        "rel/stage"]; hosts_file = file)
         @test parse_options(["--host", "alpha", "--staging", "~/x"]; hosts_file = file).helper.staging == "~/x"
     end
 

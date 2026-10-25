@@ -81,8 +81,7 @@
 
         direct = period_detector_nodes(h, helper, listed_period())
         @test [(c.label, c.size) for c in direct] == [(c.label, c.size) for c in detectors.children]
-        @test_throws "has no run directory with filekey files" period_detector_nodes(
-            h, helper, listed_period(p19))
+        @test_throws "has no run directory with filekey files" period_detector_nodes(h, helper, listed_period(p19))
     end
 
     @testset "a period without a detector axis has an empty row" begin
@@ -166,23 +165,28 @@ end
 
     @testset "a selection file with the former run_dir key still loads" begin
         old = joinpath(mktempdir(), "old.json")
-        writeprops(old, PropDict(
-            :host => "local", :production => "tprod", :remote_root => TIER_DET_ROOT,
-            :local_root => local_root, :mount_root => "", :copy => String[], :link => String[],
-            :extract => [PropDict(:run_dir => "tprod/x/r000", :groups => ["B00000C"])],
-            :created => string(now())))
+        writeprops(old,
+                   PropDict(:host => "local", :production => "tprod", :remote_root => TIER_DET_ROOT,
+                            :local_root => local_root, :mount_root => "", :copy => String[], :link => String[],
+                            :extract => [PropDict(:run_dir => "tprod/x/r000", :groups => ["B00000C"])],
+                            :created => string(now())))
         @test load_selection(old, p).extract == [ExtractEntry("tprod/x/r000", ["B00000C"])]
     end
 
     @testset "apply_selection! names the entry that does not match" begin
         bad_period = Selection("local", "tprod", TIER_DET_ROOT, local_root, nothing, String[], String[], now(),
                                [ExtractEntry(relative(p, p18), ["Z99999Z"])])
-        @test_throws "detector group Z99999Z of $(relative(p, p18)) is not in any run of the period" apply_selection!(
-            h, p, production_tree(h, p), bad_period; helper)
+        @test_throws "detector group Z99999Z of $(relative(p, p18)) is not in any run of the period" apply_selection!(h, p,
+                                                                                                                      production_tree(h, p),
+                                                                                                                      bad_period; helper)
         bad_run = Selection("local", "tprod", TIER_DET_ROOT, local_root, nothing, String[], String[], now(),
                             [ExtractEntry(relative(p, joinpath(p18, "r001")), ["aux"])])
-        @test_throws "detector group aux of $(relative(p, joinpath(p18, "r001"))) is not in the first file of the run" apply_selection!(
-            h, p, production_tree(h, p), bad_run; helper)
+        @test_throws "detector group aux of $(relative(p, joinpath(p18, "r001"))) is not in the first file of the run" apply_selection!(h,
+                                                                                                                                        p,
+                                                                                                                                        production_tree(h,
+                                                                                                                                                        p),
+                                                                                                                                        bad_run;
+                                                                                                                                        helper)
     end
 
     @testset "extract marks block copy and link marks" begin
@@ -241,8 +245,10 @@ end
         run_rows = expand_detectors!(h, helper, ensure_detectors!(r000))
         for mode in (:copy, :link)
             set_mode!(r000, mode)
-            @test_throws "cannot extract B00000C from p18: r000 is already transferred whole (:$mode on r000)" set_mode!(rows.children[1], :extract)
-            @test_throws "cannot extract B00000C from r000: r000 is already transferred whole (:$mode on r000)" set_mode!(run_rows.children[1], :extract)
+            @test_throws "cannot extract B00000C from p18: r000 is already transferred whole (:$mode on r000)" set_mode!(rows.children[1],
+                                                                                                                         :extract)
+            @test_throws "cannot extract B00000C from r000: r000 is already transferred whole (:$mode on r000)" set_mode!(run_rows.children[1],
+                                                                                                                          :extract)
             @test rows.children[1].mode == :none && run_rows.children[1].mode == :none
             set_mode!(r000, :none)
             set_mode!(period, mode)
@@ -273,12 +279,10 @@ end
         bad = Selection("local", "tprod", TIER_DET_ROOT, local_root, nothing,
                         [relative(p, r000_path)], String[], now(),
                         [ExtractEntry(relative(p, p18), ["B00000C"])])
-        @test_throws "r000 is already transferred whole (:copy on r000)" apply_selection!(
-            h, p, production_tree(h, p), bad; helper)
+        @test_throws "r000 is already transferred whole (:copy on r000)" apply_selection!(h, p, production_tree(h, p), bad; helper)
         linked = Selection("local", "tprod", TIER_DET_ROOT, local_root, nothing,
                            String[], [relative(p, p18)], now(),
                            [ExtractEntry(relative(p, r000_path), ["B00000C"])])
-        @test_throws "already transferred whole (:link on p18)" apply_selection!(
-            h, p, production_tree(h, p), linked; helper)
+        @test_throws "already transferred whole (:link on p18)" apply_selection!(h, p, production_tree(h, p), linked; helper)
     end
 end

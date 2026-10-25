@@ -92,7 +92,7 @@
         @test result.links == 0
         @test isempty(result.skipped)
         @test isfile(joinpath(p.local_root, evt,
-                             "l200-p18-r000-phy-20251107T191821Z-tier_jlevt.lh5"))
+                              "l200-p18-r000-phy-20251107T191821Z-tier_jlevt.lh5"))
         @test filesize(joinpath(p.local_root, evt,
                                 "l200-p18-r000-phy-20251107T192416Z-tier_jlevt.lh5")) == 8192
         @test isfile(joinpath(p.local_root, "test", "legend-metadata", "README.md"))
@@ -176,8 +176,7 @@
         p3 = Production(h, "test", FIXTURE_ROOT, mktempdir(); mount_root = "/")
         mkpath(joinpath(p3.local_root, jlhit))
         write(joinpath(p3.local_root, jlhit, "already-here.lh5"), "x")
-        created3, skipped3 = create_links!(h, p3, Selection(
-            "local", "test", FIXTURE_ROOT, p3.local_root, "/", String[], [jlhit], now()))
+        created3, skipped3 = create_links!(h, p3, Selection("local", "test", FIXTURE_ROOT, p3.local_root, "/", String[], [jlhit], now()))
         @test created3 == 0
         @test skipped3 == [jlhit]
         @test isfile(joinpath(p3.local_root, jlhit, "already-here.lh5"))

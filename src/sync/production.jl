@@ -42,26 +42,25 @@ function overlay_files(h::RemoteHost, remote_root::AbstractString, name::Abstrac
     root = normdir(remote_root)
     parts = splitpath(name)
     found = String[]
-    for depth in 0:length(parts) - 1
+    for depth in 0:(length(parts) - 1)
         rel = join(parts[1:depth], "/")
         for entry in sort!(list_dir(h, normdir(joinpath(root, rel))); by = e -> e.name)
             entry.kind == :file && occursin(r"^config_[^/]+\.(json|ya?ml)$", entry.name) &&
                 push!(found, joinpath(rel, entry.name))
         end
     end
-    found
+    return found
 end
 
 function Production(h::RemoteHost, name::AbstractString,
                     remote_root::AbstractString, local_root::AbstractString;
                     mount_root::Union{Nothing,AbstractString} = nothing)
     root = normdir(remote_root)
-    (isabspath(name) || ".." in splitpath(name)) && throw(ArgumentError(
-        "production name must be a relative path below the remote root, got \"$name\""))
+    (isabspath(name) || ".." in splitpath(name)) &&
+        throw(ArgumentError("production name must be a relative path below the remote root, got \"$name\""))
     name = rstrip(normpath(name), '/')
     dir = normdir(joinpath(root, name))
-    startswith(dir, root * "/") || throw(ArgumentError(
-        "production name must be a relative path below the remote root, got \"$name\""))
+    startswith(dir, root * "/") || throw(ArgumentError("production name must be a relative path below the remote root, got \"$name\""))
     files = [joinpath(name, "config.json"); overlay_files(h, root, name)]
     config = nothing
     for file in files
@@ -71,8 +70,8 @@ function Production(h::RemoteHost, name::AbstractString,
         config === nothing ? (config = part) : merge!(config, part)
     end
     mount = mount_root === nothing ? nothing : normdir(mount_root)
-    Production(String(name), root, normdir(local_root), mount, config,
-               production_roots(config, root), files[2:end])
+    return Production(String(name), root, normdir(local_root), mount, config,
+                      production_roots(config, root), files[2:end])
 end
 
 """
@@ -90,12 +89,12 @@ function parse_production_config(text::AbstractString, config_dir::AbstractStrin
         # The YAML reader returns nothing for a `.yml` file; `.yaml` reads the same format.
         path = joinpath(dir, extension == ".json" ? "config.json" : "config.yaml")
         write(path, text)
-        readprops(path; subst_pathvar = false, subst_env = false, trim_null = false)
+        return readprops(path; subst_pathvar = false, subst_env = false, trim_null = false)
     end
     PropDicts.substitute_vars!(PropDicts._dict(config),
                                Dict("_" => String(config_dir));
                                use_env = false, ignore_missing = false, recursive = true)
-    config
+    return config
 end
 
 """
@@ -105,18 +104,17 @@ The configured path keys and their absolute remote directories, sorted by key.
 """
 function production_roots(config::PropDict, remote_root::AbstractString)
     setups = config.setups
-    length(setups) == 1 || throw(ArgumentError(
-        "a production config must contain exactly one setup, found $(length(setups)): " *
-        join(string.(keys(setups)), ", ")))
+    length(setups) == 1 || throw(ArgumentError("a production config must contain exactly one setup, found $(length(setups)): " *
+                                               join(string.(keys(setups)), ", ")))
     root = normdir(remote_root)
     roots = Pair{String,String}[]
     for (key, value) in PropDicts._dict(only(values(setups)).paths)
         dir = normdir(value)
-        dir == root || startswith(dir, root * "/") || throw(ArgumentError(
-            "path key $key resolves to $dir, which is outside the remote root $root and cannot be mirrored"))
+        dir == root || startswith(dir, root * "/") ||
+            throw(ArgumentError("path key $key resolves to $dir, which is outside the remote root $root and cannot be mirrored"))
         push!(roots, String(key) => dir)
     end
-    sort!(roots; by = first)
+    return sort!(roots; by = first)
 end
 
 """
@@ -129,9 +127,8 @@ function relative(p::Production, remote_path::AbstractString)
     path = normdir(remote_path)
     root = normdir(p.remote_root)
     path == root && return ""
-    startswith(path, root * "/") || throw(ArgumentError(
-        "$path is not inside the remote root $root"))
-    relpath(path, root)
+    startswith(path, root * "/") || throw(ArgumentError("$path is not inside the remote root $root"))
+    return relpath(path, root)
 end
 
 """
@@ -139,8 +136,7 @@ end
 
 Where `remote_path` lives in the local mirror.
 """
-to_local(p::Production, remote_path::AbstractString) =
-    normdir(joinpath(p.local_root, relative(p, remote_path)))
+to_local(p::Production, remote_path::AbstractString) = normdir(joinpath(p.local_root, relative(p, remote_path)))
 
 """
     to_mount(p::Production, remote_path)::String
@@ -149,9 +145,8 @@ Where `remote_path` appears under the mounted remote filesystem. Link mode needs
 a mount root; without one there is nothing for a symlink to point at.
 """
 function to_mount(p::Production, remote_path::AbstractString)
-    p.mount_root === nothing && throw(ArgumentError(
-        "no mount root configured; pass --mount-root to use link mode"))
-    normdir(joinpath(p.mount_root, relative(p, remote_path)))
+    p.mount_root === nothing && throw(ArgumentError("no mount root configured; pass --mount-root to use link mode"))
+    return normdir(joinpath(p.mount_root, relative(p, remote_path)))
 end
 
 """
@@ -167,7 +162,7 @@ function local_config(p::Production)
     for (key, value) in collect(paths)
         paths[key] = to_local(p, value)
     end
-    config
+    return config
 end
 
 """
@@ -181,5 +176,5 @@ function write_local_config(p::Production)
     path = joinpath(p.local_root, p.name, "config_local.yaml")
     mkpath(dirname(path))
     YAML.write_file(path, local_config(p))
-    path
+    return path
 end

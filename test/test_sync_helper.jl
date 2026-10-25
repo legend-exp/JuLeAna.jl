@@ -102,8 +102,7 @@
         outside = joinpath(work, "outside.txt")
         write(outside, "3")
         @test_throws "not below the staging directory" remove_staged!(h, staging, [outside])
-        @test_throws "not below the staging directory" remove_staged!(
-            h, staging, [joinpath(staging, "..", "outside.txt")])
+        @test_throws "not below the staging directory" remove_staged!(h, staging, [joinpath(staging, "..", "outside.txt")])
         @test_throws "not below the staging directory" remove_staged!(h, staging, ["relative.txt"])
         @test isfile(outside)
 
@@ -245,12 +244,12 @@
         @test partial.lacking == ["ParallelProcessingTools"]
         @test occursin("lacks ParallelProcessingTools", environment_problem(partial, h, c))
 
-        @test_throws "already exists; refusing to modify it" bootstrap_environment!(
-            h, HelperConfig(; julia = stub, julia_project = joinpath(work, "partial")))
+        @test_throws "already exists; refusing to modify it" bootstrap_environment!(h,
+                                                                                    HelperConfig(; julia = stub,
+                                                                                                 julia_project = joinpath(work, "partial")))
         @test !occursin("ParallelProcessingTools =", read(joinpath(work, "partial", "Project.toml"), String))
         @test_throws "refusing to modify the active project" bootstrap_environment!(h, HelperConfig())
-        @test_throws "no such file or directory" ensure_environment(
-            h, HelperConfig(; julia = joinpath(work, "no-julia")))
+        @test_throws "no such file or directory" ensure_environment(h, HelperConfig(; julia = joinpath(work, "no-julia")))
     end
 
     @testset "run_helper and inspect_files drive the script" begin
@@ -272,8 +271,9 @@
 
         # The helper process starts with one BLAS thread already requested.
         probe = joinpath(work, "probe-julia")
-        write(probe, "#!/bin/sh\necho \"\$OPENBLAS_NUM_THREADS\" > '$(joinpath(work, "blas-env"))'\n" *
-                     "exec '$(joinpath(Sys.BINDIR, "julia"))' \"\$@\"\n")
+        write(probe,
+              "#!/bin/sh\necho \"\$OPENBLAS_NUM_THREADS\" > '$(joinpath(work, "blas-env"))'\n" *
+              "exec '$(joinpath(Sys.BINDIR, "julia"))' \"\$@\"\n")
         chmod(probe, 0o755)
         withenv("OPENBLAS_NUM_THREADS" => nothing) do
             run_helper(h, HelperConfig(; staging, julia = probe), "inspect", Dict("files" => files))
@@ -281,8 +281,9 @@
         @test strip(read(joinpath(work, "blas-env"), String)) == "1"
 
         # The prefix survives the ssh quoting.
-        remote = remote_command(ssh, helper_command(ssh, HelperConfig(; julia = "/opt/julia/bin/julia", julia_project = "/opt/proj"),
-                                                    "/stage/extract.jl", "inspect", "/stage/job.toml", 2))
+        remote = remote_command(ssh,
+                                helper_command(ssh, HelperConfig(; julia = "/opt/julia/bin/julia", julia_project = "/opt/proj"),
+                                               "/stage/extract.jl", "inspect", "/stage/job.toml", 2))
         @test occursin("env OPENBLAS_NUM_THREADS=1 /opt/julia/bin/julia ", last(remote.exec))
 
         bad = Dict("job" => [Dict("source" => files[1], "groups" => ["nope"],

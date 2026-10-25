@@ -18,8 +18,9 @@
                    mount_root = nothing)
         local_root = mktempdir()
         p = Production(h, "xprod", EXTRACT_ROOT, local_root; mount_root)
-        SyncModel(h, p, Options("local", EXTRACT_ROOT, local_root, mount_root, "xprod",
-                                joinpath(mktempdir(), "x.yaml"), nothing, false, false, 0, helper))
+        SyncModel(h, p,
+                  Options("local", EXTRACT_ROOT, local_root, mount_root, "xprod",
+                          joinpath(mktempdir(), "x.yaml"), nothing, false, false, 0, helper))
     end
     # Move the cursor onto the row labeled `label` and expand it.
     function open!(m::SyncModel, label)
@@ -62,7 +63,8 @@
         @test current_node(m).mode == :none
         update!(m, KeyEvent('x'))
 
-        update!(m, KeyEvent('e')); settle!(m)   # the environment is already known
+        update!(m, KeyEvent('e'))
+        settle!(m)   # the environment is already known
         @test m.modal_kind == :estimate
         @test m.estimate.extract_files == 2 && m.estimate.extract_exact
         @test m.estimate.extract_bytes == 400 + 800
@@ -89,7 +91,8 @@
         open!(m, "detectors")
         update!(m, KeyEvent(:down))
         update!(m, KeyEvent('x'))
-        update!(m, KeyEvent('t')); settle!(m)
+        update!(m, KeyEvent('t'))
+        settle!(m)
         @test m.modal.selected == :confirm
         update!(m, KeyEvent(:enter))
         @test m.modal_kind == :transfer
@@ -192,9 +195,11 @@
         m = model()
         to_run!(m, "jldsp", "cal")
         open!(m, "detectors")
-        update!(m, KeyEvent(:down)); update!(m, KeyEvent('x'))
+        update!(m, KeyEvent(:down))
+        update!(m, KeyEvent('x'))
         staging = m.options.helper.staging
-        update!(m, KeyEvent('e')); settle!(m)
+        update!(m, KeyEvent('e'))
+        settle!(m)
         @test m.modal_kind == :estimate
         @test occursin("free", m.modal.message)
         # Inspecting the files pushes the helper into the staging root; the estimate adds nothing.
@@ -205,7 +210,8 @@
         m = model()
         to_run!(m, "jldsp", "cal")
         open!(m, "detectors")
-        update!(m, KeyEvent(:down)); update!(m, KeyEvent('x'))
+        update!(m, KeyEvent(:down))
+        update!(m, KeyEvent('x'))
         o = m.options
         env = joinpath(mktempdir(), "env")
         stub = write_stub_julia(joinpath(mktempdir(), "stub-julia"))
@@ -214,14 +220,16 @@
                             HelperConfig(; julia = stub, julia_project = env, staging = o.helper.staging))
         m.environment = nothing
 
-        update!(m, KeyEvent('e')); settle!(m)
+        update!(m, KeyEvent('e'))
+        settle!(m)
         @test m.modal_kind == :bootstrap
         @test occursin("Pkg.add", m.modal.message)
         update!(m, KeyEvent(:escape))                # declined: nothing is created or estimated
         @test m.modal_kind == :none && m.continuation === nothing && !isdir(env)
 
         continued = Ref(false)
-        with_environment!(m, () -> continued[] = true); settle!(m)
+        with_environment!(m, () -> continued[] = true)
+        settle!(m)
         @test m.modal_kind == :bootstrap && m.modal.selected == :confirm
         update!(m, KeyEvent(:enter))                 # create
         @test m.modal_kind == :busy

@@ -11,8 +11,8 @@
         Production(h, "xprod", EXTRACT_ROOT, mktempdir()), HelperConfig(; staging = stage), stage
     end
     selection(p, groups) = Selection("local", "xprod", EXTRACT_ROOT, p.local_root, nothing,
-        ["xprod/config.json", "xprod/legend-metadata"], String[], now(),
-        [ExtractEntry(relative(p, dsp), groups)])
+                                     ["xprod/config.json", "xprod/legend-metadata"], String[], now(),
+                                     [ExtractEntry(relative(p, dsp), groups)])
     groups_of(path) = h5open(f -> collect(keys(f)), path, "r")
 
     @testset "extracts, pulls, and cleans the staging directory" begin

@@ -56,7 +56,7 @@ function SyncModel(host::RemoteHost, production::Production, options::Options)
                   :tree, nothing, nothing, nothing, nothing, nothing)
     rebuild_tree!(m)
     m.tree.selected = 1
-    m
+    return m
 end
 
 function SyncModel(host::RemoteHost, options::Options)
@@ -66,7 +66,7 @@ function SyncModel(host::RemoteHost, options::Options)
                   false, false, "", nothing,
                   nothing, :none, nothing, nothing, nothing,
                   :pick, nothing, nothing, nothing, nothing, nothing)
-    request_productions!(m)
+    return request_productions!(m)
 end
 
 """
@@ -81,7 +81,7 @@ function request_productions!(m::SyncModel)
     m.productions = nothing
     m.picker = nothing
     spawn_task!(() -> list_productions(host, remote_root), m.tasks, :productions)
-    m
+    return m
 end
 
 """
@@ -95,12 +95,12 @@ function checkbox(node::Node)
     mode == :copy && return "[x]"
     mode == :link && return "[~]"
     mode == :extract && return "[e]"
-    marked_below(node) ? "[-]" : "[ ]"
+    return marked_below(node) ? "[-]" : "[ ]"
 end
 
 function marked_below(node::Node)
     node.children === nothing && return false
-    any(child -> child.mode != :none || marked_below(child), node.children)
+    return any(child -> child.mode != :none || marked_below(child), node.children)
 end
 
 """
@@ -126,9 +126,9 @@ function build_tree(m::SyncModel, node::Node = m.root)
     else
         TreeNode[]
     end
-    TreeNode(node_label(node); children,
-             expanded = node.children !== nothing && !(node.remote_path in m.collapsed),
-             content = node)
+    return TreeNode(node_label(node); children,
+                    expanded = node.children !== nothing && !(node.remote_path in m.collapsed),
+                    content = node)
 end
 
 """
@@ -144,7 +144,7 @@ function rebuild_tree!(m::SyncModel)
     m.tree = TreeView(build_tree(m); selected, offset, focused = true,
                       block = Block(title = "Production: $(m.production.name) @ $(m.options.host)"))
     m.tree.selected = min(selected, tree_visible_count(m.tree))
-    m
+    return m
 end
 
 """
@@ -155,7 +155,7 @@ The inventory node under the cursor, or `nothing` on a placeholder row.
 function current_node(m::SyncModel)
     row = selected_node(m.tree)
     row === nothing && return nothing
-    row.content isa Node ? row.content : nothing
+    return row.content isa Node ? row.content : nothing
 end
 
 """
@@ -182,10 +182,10 @@ function request_expand!(m::SyncModel, node::Node)
     spawn_task!(m.tasks, Symbol("listing:", node.remote_path)) do
         scratch = Node(node.label, node.remote_path, node.kind)
         expand!(host, production, scratch; detectors = true, sizes = false)
-        (node, scratch.children)
+        return (node, scratch.children)
     end
     m.status = "listing $(node.label)…"
-    rebuild_tree!(m)
+    return rebuild_tree!(m)
 end
 
 """
@@ -201,7 +201,7 @@ function attach_listing!(m::SyncModel, listing::Tuple{Node,Vector{Node}})
     delete!(m.pending, node.remote_path)
     delete!(m.collapsed, node.remote_path)
     m.status = ""
-    rebuild_tree!(m)
+    return rebuild_tree!(m)
 end
 
 """
@@ -223,7 +223,7 @@ function with_environment!(m::SyncModel, continue_with)
     m.modal_kind = :checking
     m.status = "checking the helper environment on $(m.options.host)…"
     spawn_task!(() -> ensure_environment(host, helper), m.tasks, :environment)
-    m
+    return m
 end
 
 """
@@ -239,7 +239,7 @@ function environment_ready!(m::SyncModel, status::EnvironmentStatus)
     continue_with = m.continuation
     m.continuation = nothing
     continue_with === nothing || continue_with()
-    m
+    return m
 end
 
 """
@@ -256,7 +256,7 @@ function start_bootstrap!(m::SyncModel)
                     confirm_label = "", cancel_label = "")
     m.modal_kind = :busy
     spawn_task!(() -> bootstrap_environment!(host, helper), m.tasks, :bootstrap)
-    m
+    return m
 end
 
 """
@@ -276,11 +276,11 @@ function request_detectors!(m::SyncModel, node::Node)
     jobs = m.options.jobs
     run = node.parent
     spawn_task!(m.tasks, Symbol("detectors:", node.remote_path)) do
-        (node, detector_nodes(host, helper, run; jobs))
+        return (node, detector_nodes(host, helper, run; jobs))
     end
     m.status = node.whole_files ? "listing the detector files of $(run.label)…" :
-                                  "inspecting the files of $(run.label)…"
-    rebuild_tree!(m)
+               "inspecting the files of $(run.label)…"
+    return rebuild_tree!(m)
 end
 
 """
@@ -300,7 +300,7 @@ function toggle_extract!(m::SyncModel, node::Node)
     end
     m.dirty = true
     m.status = ""
-    rebuild_tree!(m)
+    return rebuild_tree!(m)
 end
 
 """
@@ -314,8 +314,8 @@ function open_estimate!(m::SyncModel; confirm::Bool)
     selection = Selection(m.production, m.options.host, m.root)
     m.modal_kind = :estimating
     m.status = "estimating…"
-    isempty(selection.extract) ? run_estimate!(m, selection, confirm) :
-        with_environment!(m, () -> run_estimate!(m, selection, confirm))
+    return isempty(selection.extract) ? run_estimate!(m, selection, confirm) :
+           with_environment!(m, () -> run_estimate!(m, selection, confirm))
 end
 
 """
@@ -344,9 +344,9 @@ function run_estimate!(m::SyncModel, selection::Selection, confirm::Bool)
             end
             free = free_bytes(host, existing)
         end
-        (estimate, confirm, staging, free)
+        return (estimate, confirm, staging, free)
     end
-    m
+    return m
 end
 
 """
@@ -368,11 +368,11 @@ function start_transfer!(m::SyncModel)
     m.progress = Progress(0, 0.0, "", "")
     m.extracting = isempty(selection.extract) ? nothing : ExtractProgress(0, 0, 0)
     spawn_task!(queue, :transfer) do
-        apply!(host, production, selection; helper, jobs,
-               progress = reading -> put!(queue.channel, TaskEvent(:progress, reading)),
-               extract_progress = reading -> put!(queue.channel, TaskEvent(:extract_progress, reading)))
+        return apply!(host, production, selection; helper, jobs,
+                      progress = reading -> put!(queue.channel, TaskEvent(:progress, reading)),
+                      extract_progress = reading -> put!(queue.channel, TaskEvent(:extract_progress, reading)))
     end
-    m
+    return m
 end
 
 """
@@ -381,12 +381,12 @@ end
 Open the "first N filekeys" prompt for a listed run directory.
 """
 function open_prompt!(m::SyncModel, node::Node)
-    isempty(filekey_groups(node)) && return show_error!(m, ArgumentError(
-        "$(node.label) has no filekey groups; expand a run directory first"))
+    isempty(filekey_groups(node)) &&
+        return show_error!(m, ArgumentError("$(node.label) has no filekey groups; expand a run directory first"))
     m.input = TextInput(label = "N: ", text = "")
     m.modal_kind = :firstn
     m.status = ""
-    m
+    return m
 end
 
 """
@@ -398,7 +398,7 @@ function open_message!(m::SyncModel, title::AbstractString, message::AbstractStr
     m.modal = Modal(; title, message, confirm_label = "", cancel_label = "Close")
     m.modal_kind = :message
     m.status = ""
-    m
+    return m
 end
 
 """
@@ -406,8 +406,7 @@ end
 
 Report a failure and leave the tool usable.
 """
-show_error!(m::SyncModel, err) =
-    (open_message!(m, "Error", sprint(showerror, err)); m.modal_kind = :error; m)
+show_error!(m::SyncModel, err) = (open_message!(m, "Error", sprint(showerror, err)); m.modal_kind = :error; m)
 
 """
     apply_prompt!(m::SyncModel)::SyncModel
@@ -428,7 +427,7 @@ function apply_prompt!(m::SyncModel)
     m.modal_kind = :none
     m.dirty = true
     m.status = ""
-    rebuild_tree!(m)
+    return rebuild_tree!(m)
 end
 
 """
@@ -444,7 +443,7 @@ function refresh_local_state!(m::SyncModel, node::Node = m.root)
         end
     end
     node.local_state = node_local_state(m.production, node)
-    m
+    return m
 end
 
 """
@@ -457,7 +456,7 @@ function save!(m::SyncModel)
     m.saved = path
     m.dirty = false
     m.status = ""
-    path
+    return path
 end
 
 """
@@ -480,7 +479,7 @@ function toggle_mode!(m::SyncModel, node::Node, mode::Symbol)
     end
     m.dirty = true
     m.status = ""
-    rebuild_tree!(m)
+    return rebuild_tree!(m)
 end
 
 """
@@ -491,37 +490,42 @@ The right-hand pane: what the cursor is on, and the keys.
 function details(m::SyncModel)
     node = current_node(m)
     lines = node === nothing ? String[] :
-        node.kind == :detector && node.whole_files ? [node.label,
-            "files of this detector in the runs of $(node.parent.parent.label)",
-            "held by " * join(basename.(first.(node.holders)), ", "),
-            "size: " * (node.size === nothing ? "…" : format_bytes(node.size)),
-            "mark: " * (node.mode == :none ? "no" : String(node.mode)), ""] :
-        node.kind == :detector ? [node.label,
-            period_level(node.parent.parent) ?
-                "detector of the runs of $(node.parent.parent.label) ($(length(node.holders)) hold it)" :
-                "HDF5 group of the files in $(node.parent.parent.label)",
-            (period_level(node.parent.parent) ? "approximate size in the period: " : "size in the first file: ") *
-                (node.size === nothing ? "…" : format_bytes(node.size)),
-            "extract: " * (node.mode == :extract ? "yes" :
-                           effective_mode(node) == :extract ? "yes (whole period)" : "no"), ""] :
-        node.kind == :detectors && node.whole_files ? [node.label,
-            "enter lists the detector files of every run in $(node.parent.label)", ""] :
-        node.kind == :detectors ? [node.label,
-            period_level(node.parent) ?
-                "enter lists the detectors of the first file of every run in $(node.parent.label)" :
-                "enter lists the top-level groups of the first file in $(node.parent.label)", ""] :
-        [node.label, node.remote_path, "local: $(node.local_state)",
-         "size: " * (node.size === nothing ? "…" : format_bytes(node.size)), ""]
+            node.kind == :detector && node.whole_files ?
+            [node.label,
+             "files of this detector in the runs of $(node.parent.parent.label)",
+             "held by " * join(basename.(first.(node.holders)), ", "),
+             "size: " * (node.size === nothing ? "…" : format_bytes(node.size)),
+             "mark: " * (node.mode == :none ? "no" : String(node.mode)), ""] :
+            node.kind == :detector ?
+            [node.label,
+             period_level(node.parent.parent) ?
+             "detector of the runs of $(node.parent.parent.label) ($(length(node.holders)) hold it)" :
+             "HDF5 group of the files in $(node.parent.parent.label)",
+             (period_level(node.parent.parent) ? "approximate size in the period: " : "size in the first file: ") *
+             (node.size === nothing ? "…" : format_bytes(node.size)),
+             "extract: " * (node.mode == :extract ? "yes" :
+                            effective_mode(node) == :extract ? "yes (whole period)" : "no"), ""] :
+            node.kind == :detectors && node.whole_files ?
+            [node.label,
+             "enter lists the detector files of every run in $(node.parent.label)", ""] :
+            node.kind == :detectors ?
+            [node.label,
+             period_level(node.parent) ?
+             "enter lists the detectors of the first file of every run in $(node.parent.label)" :
+             "enter lists the top-level groups of the first file in $(node.parent.label)", ""] :
+            [node.label, node.remote_path, "local: $(node.local_state)",
+             "size: " * (node.size === nothing ? "…" : format_bytes(node.size)), ""]
     if node !== nothing && node.kind == :production
         overlays = m.production.overlays
         insert!(lines, lastindex(lines),
                 "overlays: " * (isempty(overlays) ? "none" : join(overlays, ", ")))
     end
-    append!(lines, ["space copy   l link   n first N   x extract",
-                    "per-detector tiers: space/l mark a detector's files",
-                    "enter expand/collapse   s save   mouse: click, wheel",
-                    "e estimate   t sync   q quit"])
-    Paragraph(join(lines, "\n"); block = Block(title = "Details"), wrap = word_wrap)
+    append!(lines,
+            ["space copy   l link   n first N   x extract",
+             "per-detector tiers: space/l mark a detector's files",
+             "enter expand/collapse   s save   mouse: click, wheel",
+             "e estimate   t sync   q quit"])
+    return Paragraph(join(lines, "\n"); block = Block(title = "Details"), wrap = word_wrap)
 end
 
 """
@@ -536,10 +540,9 @@ function status_bar(m::SyncModel)
     out = m.options.out
     name = startswith(out, DEFAULT_SELECTION_DIR * "/") ?
            relpath(out, DEFAULT_SELECTION_DIR) : basename(out)
-    StatusBar(
-        left = [Span(format_estimate(running_estimate(m.root)), tstyle(:text_bright)),
-                Span(isempty(m.status) ? "" : "   " * m.status)],
-        right = [Span((m.saved === nothing ? "unsaved: " : "saved: ") * name)])
+    return StatusBar(left = [Span(format_estimate(running_estimate(m.root)), tstyle(:text_bright)),
+                             Span(isempty(m.status) ? "" : "   " * m.status)],
+                     right = [Span((m.saved === nothing ? "unsaved: " : "saved: ") * name)])
 end
 
 """
@@ -554,7 +557,7 @@ function render_prompt(m::SyncModel, area::Rect, buf::Buffer)
                          border_style = tstyle(:accent, bold = true),
                          box = BOX_HEAVY), rect, buf)
     render(m.input, inner, buf)
-    nothing
+    return nothing
 end
 
 """
@@ -575,7 +578,7 @@ function render_pick(m::SyncModel, area::Rect, buf::Buffer)
     render(StatusBar(left = [Span(isempty(m.status) ? "↑/↓ move   enter open   r reload   q quit   mouse: click, wheel" : m.status)]),
            rows[2], buf)
     m.modal === nothing || render(m.modal, area, buf)
-    nothing
+    return nothing
 end
 
 """
@@ -596,13 +599,13 @@ function render_sync(m::SyncModel, area::Rect, buf::Buffer)
         x = m.extracting
         render(Gauge(x === nothing ? m.progress.fraction : (x.total == 0 ? 0.0 : x.done / x.total);
                      label = x === nothing ?
-                         string(format_bytes(m.progress.bytes), "  ", m.progress.rate, "  ETA ", m.progress.eta) :
-                         string("extracting ", x.done, "/", x.total, " files  ", format_bytes(x.bytes))),
+                             string(format_bytes(m.progress.bytes), "  ", m.progress.rate, "  ETA ", m.progress.eta) :
+                             string("extracting ", x.done, "/", x.total, " files  ", format_bytes(x.bytes))),
                rows[2], buf)
     end
     m.modal_kind == :firstn && return render_prompt(m, area, buf)
     m.modal === nothing || render(m.modal, area, buf)
-    nothing
+    return nothing
 end
 
 view(m::SyncModel, f::Frame) = render_sync(m, f.area, f.buffer)
@@ -618,7 +621,7 @@ function open_production!(m::SyncModel)
     spawn_task!(m.tasks, :open) do
         production = Production(host, name, options.remote_root, options.local_root;
                                 mount_root = options.mount_root)
-        (production, production_tree(host, production))
+        return (production, production_tree(host, production))
     end
 end
 
@@ -634,7 +637,7 @@ function update_pick!(m::SyncModel, e::KeyEvent)
     elseif e.key == :enter
         open_production!(m)
     end
-    m
+    return m
 end
 
 # Lists an unlisted directory, collapses an open row when `collapse` is set, and
@@ -642,8 +645,8 @@ end
 function expand_or_collapse!(m::SyncModel, node::Node; collapse::Bool)
     if node.children === nothing
         node.kind != :detectors ? request_expand!(m, node) :
-            node.whole_files ? request_detectors!(m, node) :
-            with_environment!(m, () -> request_detectors!(m, node))
+        node.whole_files ? request_detectors!(m, node) :
+        with_environment!(m, () -> request_detectors!(m, node))
     elseif collapse && !(node.remote_path in m.collapsed)
         push!(m.collapsed, node.remote_path)
         rebuild_tree!(m)
@@ -651,16 +654,16 @@ function expand_or_collapse!(m::SyncModel, node::Node; collapse::Bool)
         delete!(m.collapsed, node.remote_path)
         rebuild_tree!(m)
     end
-    m
+    return m
 end
 
 # Why space and l do nothing on `node`, or `nothing` when they act on it: a `detectors`
 # row has no path of its own, and the rows of HDF5 groups can only be extracted.
 function detector_hint(node::Node)
     node.kind == :detectors && return node.whole_files ?
-        "space and l mark a detector below this row" : "use x on detector rows"
+                                      "space and l mark a detector below this row" : "use x on detector rows"
     node.kind == :detector && !node.whole_files && return "use x on detector rows"
-    nothing
+    return nothing
 end
 
 # Applies a mouse event to a list-like widget of `n` rows (TreeView or
@@ -681,7 +684,7 @@ function mouse_list!(w, n::Int, e::MouseEvent)
         w.offset = offset
         w.selected = clamp(w.selected, offset + 1, offset + height)
     end
-    false
+    return false
 end
 
 # Mouse input is ignored while a dialog is up or work is pending, so a click can
@@ -697,7 +700,7 @@ function update!(m::SyncModel, e::MouseEvent)
         node = current_node(m)
         node === nothing || expand_or_collapse!(m, node; collapse = true)
     end
-    m
+    return m
 end
 
 function update!(m::SyncModel, e::KeyEvent)
@@ -822,7 +825,7 @@ function update!(m::SyncModel, e::KeyEvent)
             m.quit = true
         end
     end
-    m
+    return m
 end
 
 function update!(m::SyncModel, e::TaskEvent)
@@ -839,7 +842,7 @@ function update!(m::SyncModel, e::TaskEvent)
         if !isempty(dirs)
             host = m.host
             spawn_task!(m.tasks, Symbol("sizes:", node.remote_path)) do
-                (node, Dict(zip(dirs, dir_sizes(host, dirs))))
+                return (node, Dict(zip(dirs, dir_sizes(host, dirs))))
             end
         end
         return m
@@ -890,7 +893,7 @@ function update!(m::SyncModel, e::TaskEvent)
     if e.id == :productions
         m.productions = e.value
         isempty(e.value) || (m.picker = SelectableList(e.value; focused = true,
-                                  block = Block(title = "Productions on $(m.options.host)")))
+                                                       block = Block(title = "Productions on $(m.options.host)")))
         return m
     elseif e.id == :open
         m.production, m.root = e.value
@@ -929,9 +932,9 @@ function update!(m::SyncModel, e::TaskEvent)
                                          "from ", m.options.host, ":", m.production.remote_root, "\n",
                                          "into ", m.production.local_root,
                                          staging === nothing ? "" :
-                                             string("\nstaging ", staging, ": ", format_bytes(free), " free"),
+                                         string("\nstaging ", staging, ": ", format_bytes(free), " free"),
                                          isempty(estimate.not_in_run) ? "" :
-                                             string("\nnot in run: ", format_not_in_run(estimate.not_in_run))),
+                                         string("\nnot in run: ", format_not_in_run(estimate.not_in_run))),
                         confirm_label = "Sync", cancel_label = "Close",
                         selected = confirm ? :confirm : :cancel)
         m.modal_kind = :estimate
@@ -951,8 +954,8 @@ function update!(m::SyncModel, e::TaskEvent)
         rebuild_tree!(m)
         return open_message!(m, "Transfer complete", summary_text(e.value))
     end
-    error("unexpected background result :$(e.id); every task this model spawns " *
-          "must be handled here")
+    return error("unexpected background result :$(e.id); every task this model spawns " *
+                 "must be handled here")
 end
 
 """
@@ -969,5 +972,5 @@ function run_tui(options::Options, host::RemoteHost)
                                 options.local_root; mount_root = options.mount_root)
         app(SyncModel(host, production, options))
     end
-    0
+    return 0
 end

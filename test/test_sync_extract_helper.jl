@@ -17,17 +17,15 @@
         extra = jobs === nothing ? String[] : ["--jobs", string(jobs)]
         out = IOBuffer()
         err = IOBuffer()
-        proc = run(pipeline(ignorestatus(
-            `$(Base.julia_cmd()) --project=$project $script $command $jobfile $extra`);
-            stdout = out, stderr = err))
+        proc = run(pipeline(ignorestatus(`$(Base.julia_cmd()) --project=$project $script $command $jobfile $extra`);
+                            stdout = out, stderr = err))
         lines = filter(!isempty, split(String(take!(out)), '\n'))
         (; code = proc.termsignal != 0 ? -proc.termsignal : proc.exitcode, records = [TOML.parse(l)["r"] for l in lines],
-           stderr = String(take!(err)))
+         stderr = String(take!(err)))
     end
 
-    extract_spec(dest) = Dict("job" => [
-        Dict("source" => sources[i], "groups" => ["B00000C", "aux"],
-             "destination" => joinpath(dest, "o$i.lh5")) for i in 1:2])
+    extract_spec(dest) = Dict("job" => [Dict("source" => sources[i], "groups" => ["B00000C", "aux"],
+                                             "destination" => joinpath(dest, "o$i.lh5")) for i in 1:2])
 
     @testset "inspect reports each group's stored bytes" begin
         r = run_script("inspect", Dict("files" => sources))
@@ -360,9 +358,8 @@
 
         # The other layouts still extract, and the two-worker path handles both.
         old = write_lh5(joinpath(work, "src", "old.lh5"))
-        both = Dict("job" => [
-            Dict("source" => src, "groups" => ["V01234A"], "destination" => joinpath(dest, "w1.lh5")),
-            Dict("source" => old, "groups" => ["V01234A"], "destination" => joinpath(dest, "w2.lh5"))])
+        both = Dict("job" => [Dict("source" => src, "groups" => ["V01234A"], "destination" => joinpath(dest, "w1.lh5")),
+                              Dict("source" => old, "groups" => ["V01234A"], "destination" => joinpath(dest, "w2.lh5"))])
         r2 = run_script("extract", both; jobs = 2)
         @test r2.code == 0
         @test h5open(f -> collect(keys(f["jldsp"])), joinpath(dest, "w1.lh5"), "r") == ["V01234A"]

@@ -35,11 +35,12 @@ mutable struct Node
     whole_files::Bool
 end
 
-Node(label::AbstractString, remote_path::AbstractString, kind::Symbol;
-     size = nothing, children = nothing, mode::Symbol = :none,
-     parent = nothing, local_state::Symbol = :missing,
-     holders = Pair{String,Int}[], whole_files::Bool = false) =
-    Node(label, remote_path, kind, size, children, mode, parent, local_state, holders, whole_files)
+function Node(label::AbstractString, remote_path::AbstractString, kind::Symbol;
+              size = nothing, children = nothing, mode::Symbol = :none,
+              parent = nothing, local_state::Symbol = :missing,
+              holders = Pair{String,Int}[], whole_files::Bool = false)
+    return Node(label, remote_path, kind, size, children, mode, parent, local_state, holders, whole_files)
+end
 
 # A LEGEND tier file name: setup, period, run, category, an id, and the tier.
 # The id is either a timestamp (one file per filekey) or a detector name (one
@@ -59,7 +60,7 @@ function tier_file_id(name::AbstractString)
     id = String(m[1])
     LegendDataManagement._can_convert_to(Timestamp, id) && return (:filekey, id)
     LegendDataManagement._can_convert_to(DetectorId, id) && return (:detector, id)
-    nothing
+    return nothing
 end
 
 """
@@ -96,7 +97,7 @@ function group_children(entries::AbstractVector{DirEntry}, dir::AbstractString)
     sort!(filekeys; by = n -> Timestamp(n.label).unixtime)
     sort!(detectors; by = n -> n.label)
     sort!(plain; by = n -> n.label)
-    vcat(dirs, filekeys, detectors, plain)
+    return vcat(dirs, filekeys, detectors, plain)
 end
 
 """
@@ -121,7 +122,7 @@ function production_tree(h::RemoteHost, p::Production)
     end
     root.children = children
     root.local_state = node_local_state(p, root)
-    root
+    return root
 end
 
 """
@@ -136,8 +137,7 @@ run directory with tier files holds filekey files or per-detector files, also ge
 function expand!(h::RemoteHost, p::Production, node::Node; detectors::Bool = false,
                  sizes::Bool = true)
     node.children === nothing || return node
-    node.kind in (:section, :dir) || throw(ArgumentError(
-        "a :$(node.kind) node cannot be expanded: $(node.label)"))
+    node.kind in (:section, :dir) || throw(ArgumentError("a :$(node.kind) node cannot be expanded: $(node.label)"))
     entries = list_dir(h, node.remote_path)
     check_tier_kinds(node.remote_path, entries)
     children = group_children(entries, node.remote_path)
@@ -168,7 +168,7 @@ function expand!(h::RemoteHost, p::Production, node::Node; detectors::Bool = fal
         end
     end
     node.local_state = node_local_state(p, node)
-    node
+    return node
 end
 
 # A directory holds either filekey files or per-detector files, not both: a run that mixed
@@ -179,8 +179,8 @@ function check_tier_kinds(dir::AbstractString, entries)
     a = findfirst(x -> first(x) == :filekey, named)
     b = findfirst(x -> first(x) == :detector, named)
     (a === nothing || b === nothing) && return nothing
-    throw(ArgumentError("$dir holds filekey files and per-detector files, for example " *
-                        "$(last(named[a])) and $(last(named[b]))"))
+    return throw(ArgumentError("$dir holds filekey files and per-detector files, for example " *
+                               "$(last(named[a])) and $(last(named[b]))"))
 end
 
 """
@@ -199,7 +199,7 @@ function node_local_state(p::Production, node::Node)
     # Detector rows have no path on the host, so they carry no local state.
     states = [node_local_state(p, c) for c in node.children if c.kind ∉ (:detectors, :detector)]
     all(==(:missing), states) && return :missing
-    all(s -> s in (:present, :linked), states) ? :present : :partial
+    return all(s -> s in (:present, :linked), states) ? :present : :partial
 end
 
 """
@@ -208,9 +208,11 @@ end
 The filekey groups among `node`'s children, in timestamp order. Empty when the
 directory has not been listed or holds no filekey-named files.
 """
-filekey_groups(node::Node) = node.children === nothing ? Node[] :
-    [c for c in node.children
-     if c.kind == :group && LegendDataManagement._can_convert_to(Timestamp, c.label)]
+function filekey_groups(node::Node)
+    return node.children === nothing ? Node[] :
+           [c for c in node.children
+            if c.kind == :group && LegendDataManagement._can_convert_to(Timestamp, c.label)]
+end
 
 const RUN_DIR_EXPR = r"^r[0-9]{3}$"
 
@@ -220,7 +222,7 @@ const RUN_DIR_EXPR = r"^r[0-9]{3}$"
 The listed children of `node` that are directories named like a run (`r000`).
 """
 run_dirs(node::Node) = node.children === nothing ? Node[] :
-    [c for c in node.children if c.kind == :dir && occursin(RUN_DIR_EXPR, c.label)]
+                       [c for c in node.children if c.kind == :dir && occursin(RUN_DIR_EXPR, c.label)]
 
 """
     filekey_files(h::RemoteHost, dir::AbstractString)::Vector{String}
@@ -237,7 +239,7 @@ function filekey_files(h::RemoteHost, dir::AbstractString)
         entry.kind == :file && id !== nothing && first(id) == :filekey &&
             push!(files, joinpath(dir, entry.name))
     end
-    sort!(files)
+    return sort!(files)
 end
 
 """
@@ -258,16 +260,15 @@ directory (it holds filekey files) or a period directory (it holds run directori
 `remote_path` of the node does not exist on the host; it only identifies the node.
 """
 function ensure_detectors!(dir::Node; whole_files::Bool = false)
-    dir.children === nothing && throw(ArgumentError(
-        "$(dir.label) has not been listed yet; expand it before asking for detectors"))
+    dir.children === nothing && throw(ArgumentError("$(dir.label) has not been listed yet; expand it before asking for detectors"))
     i = findfirst(c -> c.kind == :detectors, dir.children)
     i === nothing || return dir.children[i]
-    isempty(filekey_groups(dir)) && isempty(run_dirs(dir)) && throw(ArgumentError(
-        "$(dir.label) holds no filekey files and no run directories, so it has no detectors"))
+    isempty(filekey_groups(dir)) && isempty(run_dirs(dir)) &&
+        throw(ArgumentError("$(dir.label) holds no filekey files and no run directories, so it has no detectors"))
     node = Node("detectors", joinpath(dir.remote_path, "detectors"), :detectors;
                 parent = dir, whole_files)
     pushfirst!(dir.children, node)
-    node
+    return node
 end
 
 """
@@ -289,8 +290,8 @@ function detector_nodes(h::RemoteHost, helper::HelperConfig, dir::Node; jobs::In
     end
     file = only(first(filekey_groups(dir)).children)
     names, bytes = only(inspect_files(h, helper, [file.remote_path]; jobs))
-    [Node(names[i], joinpath(dir.remote_path, "detectors", names[i]), :detector; size = bytes[i])
-     for i in eachindex(names, bytes)]
+    return [Node(names[i], joinpath(dir.remote_path, "detectors", names[i]), :detector; size = bytes[i])
+            for i in eachindex(names, bytes)]
 end
 
 """
@@ -310,20 +311,19 @@ function period_detector_nodes(h::RemoteHost, helper::HelperConfig, period::Node
         files = filekey_files(h, run.remote_path)
         isempty(files) || push!(held, (run, files))
     end
-    isempty(held) && throw(ArgumentError(
-        "$(period.label) has no run directory with filekey files to inspect"))
+    isempty(held) && throw(ArgumentError("$(period.label) has no run directory with filekey files to inspect"))
     inspected = inspect_files(h, helper, [first(files) for (_, files) in held]; jobs)
     rows = Dict{String,Node}()
     for ((run, files), (names, bytes, _)) in zip(held, inspected)
         for i in eachindex(names, bytes)
             row = get!(rows, names[i]) do
-                Node(names[i], joinpath(period.remote_path, "detectors", names[i]), :detector; size = 0)
+                return Node(names[i], joinpath(period.remote_path, "detectors", names[i]), :detector; size = 0)
             end
             row.size += bytes[i] * length(files)
             push!(row.holders, run.remote_path => length(files))
         end
     end
-    [rows[name] for name in sort!(collect(keys(rows)))]
+    return [rows[name] for name in sort!(collect(keys(rows)))]
 end
 
 """
@@ -347,20 +347,18 @@ function period_file_nodes(h::RemoteHost, period::Node)
             id = entry.kind == :file ? tier_file_id(entry.name) : nothing
             (id === nothing || first(id) != :detector) && continue
             name = last(id)
-            haskey(seen, name) && throw(ArgumentError(
-                "$(run.label) holds two files for detector $name: $(seen[name]) and $(entry.name)"))
+            haskey(seen, name) && throw(ArgumentError("$(run.label) holds two files for detector $name: $(seen[name]) and $(entry.name)"))
             seen[name] = entry.name
             row = get!(rows, name) do
-                Node(name, joinpath(period.remote_path, "detectors", name), :detector;
-                     size = 0, whole_files = true)
+                return Node(name, joinpath(period.remote_path, "detectors", name), :detector;
+                            size = 0, whole_files = true)
             end
             row.size += entry.size
             push!(row.holders, run.remote_path => 1)
         end
     end
-    isempty(rows) && throw(ArgumentError(
-        "$(period.label) holds no per-detector files in any of its run directories"))
-    [rows[name] for name in sort!(collect(keys(rows)))]
+    isempty(rows) && throw(ArgumentError("$(period.label) holds no per-detector files in any of its run directories"))
+    return [rows[name] for name in sort!(collect(keys(rows)))]
 end
 
 """
@@ -374,7 +372,7 @@ function attach_detectors!(node::Node, children::Vector{Node})
     end
     node.children = children
     node.size = sum(c -> something(c.size, 0), children; init = 0)
-    node
+    return node
 end
 
 """
@@ -385,7 +383,7 @@ List the detectors of the run that `node` belongs to, once. Returns `node`.
 function expand_detectors!(h::RemoteHost, helper::HelperConfig, node::Node; jobs::Integer = 0)
     node.kind == :detectors || throw(ArgumentError("not a detectors node: $(node.label)"))
     node.children === nothing || return node
-    attach_detectors!(node, detector_nodes(h, helper, node.parent; jobs))
+    return attach_detectors!(node, detector_nodes(h, helper, node.parent; jobs))
 end
 
 """

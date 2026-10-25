@@ -35,19 +35,19 @@ struct SSHHost <: RemoteHost
     control_path::Union{Nothing,String}
 end
 
-SSHHost(alias::AbstractString, control_path::Union{Nothing,AbstractString}) =
-    SSHHost(String(alias), control_path === nothing ? nothing : String(control_path))
+function SSHHost(alias::AbstractString, control_path::Union{Nothing,AbstractString})
+    return SSHHost(String(alias), control_path === nothing ? nothing : String(control_path))
+end
 
 function SSHHost(alias::AbstractString)
     out = IOBuffer()
     err = IOBuffer()
     proc = run(pipeline(ignorestatus(`ssh -G $alias`); stdin = devnull, stdout = out, stderr = err))
-    success(proc) || throw(ErrorException(
-        "ssh -G $alias failed with exit code $(proc.exitcode)\n$(String(take!(err)))"))
+    success(proc) || throw(ErrorException("ssh -G $alias failed with exit code $(proc.exitcode)\n$(String(take!(err)))"))
     has_control_master(String(take!(out))) && return SSHHost(alias, nothing)
     sshdir = joinpath(homedir(), ".ssh")
     isdir(sshdir) || throw(ArgumentError("SSH control directory does not exist: $sshdir"))
-    SSHHost(alias, joinpath(sshdir, "juleana-sync-%C"))
+    return SSHHost(alias, joinpath(sshdir, "juleana-sync-%C"))
 end
 
 """
@@ -58,7 +58,7 @@ or `false`). A missing line counts as disabled.
 """
 function has_control_master(ssh_g_output::AbstractString)
     m = match(r"^controlmaster[ \t]+(\S+)"mi, ssh_g_output)
-    m !== nothing && lowercase(m.captures[1]) ∉ ("no", "false")
+    return m !== nothing && lowercase(m.captures[1]) ∉ ("no", "false")
 end
 
 """
@@ -91,8 +91,7 @@ ssh from reading standard input, and `BatchMode=yes` keeps it from prompting on 
 terminal, which the interface holds in raw mode: a connection that needs a password,
 passphrase or host-key confirmation fails at once with ssh's error.
 """
-ssh_command(h::SSHHost, remote::AbstractString) =
-    `ssh -n -o BatchMode=yes $(ssh_options(h)) $(h.alias) $remote`
+ssh_command(h::SSHHost, remote::AbstractString) = `ssh -n -o BatchMode=yes $(ssh_options(h)) $(h.alias) $remote`
 
 """
     ssh_options(h::SSHHost)::Vector{String}
@@ -100,8 +99,10 @@ ssh_command(h::SSHHost, remote::AbstractString) =
 The connection-sharing options of `h`: none when the ssh configuration has its own
 ControlMaster, the tool's control socket otherwise.
 """
-ssh_options(h::SSHHost) = h.control_path === nothing ? String[] :
-    ["-o", "ControlMaster=auto", "-o", "ControlPath=$(h.control_path)", "-o", "ControlPersist=60s"]
+function ssh_options(h::SSHHost)
+    return h.control_path === nothing ? String[] :
+           ["-o", "ControlMaster=auto", "-o", "ControlPath=$(h.control_path)", "-o", "ControlPersist=60s"]
+end
 
 """
     rsync_transport(h::RemoteHost)::Vector{String}
@@ -112,9 +113,9 @@ standard input, which is rsync's channel to the remote side, so it gets no `-n`.
 """
 function rsync_transport(h::SSHHost)
     words = ["ssh", "-o", "BatchMode=yes", ssh_options(h)...]
-    any(w -> any(isspace, w), words) && throw(ArgumentError(
-        "an ssh option contains whitespace, which rsync -e cannot carry: $(join(words, ' '))"))
-    ["-e", join(words, ' ')]
+    any(w -> any(isspace, w), words) &&
+        throw(ArgumentError("an ssh option contains whitespace, which rsync -e cannot carry: $(join(words, ' '))"))
+    return ["-e", join(words, ' ')]
 end
 rsync_transport(::LocalHost) = String[]
 
@@ -138,9 +139,8 @@ function run_remote(h::RemoteHost, cmd::Cmd)
     out = IOBuffer()
     err = IOBuffer()
     proc = run(pipeline(ignorestatus(full); stdin = devnull, stdout = out, stderr = err))
-    success(proc) || throw(ErrorException(
-        "remote command failed with exit code $(proc.exitcode): $full\n$(String(take!(err)))"))
-    String(take!(out))
+    success(proc) || throw(ErrorException("remote command failed with exit code $(proc.exitcode): $full\n$(String(take!(err)))"))
+    return String(take!(out))
 end
 
 """
@@ -153,8 +153,8 @@ function parse_dir_listing(text::AbstractString)
     for line in eachsplit(chomp(text), '\n')
         isempty(line) && continue
         fields = split(line, '\t')
-        length(fields) == 3 || throw(ArgumentError(
-            "cannot parse directory listing line (expected type, size and name separated by tabs): $(repr(line))"))
+        length(fields) == 3 ||
+            throw(ArgumentError("cannot parse directory listing line (expected type, size and name separated by tabs): $(repr(line))"))
         type_char, size_str, name = fields
         kind = type_char == "f" ? :file :
                type_char == "d" ? :dir :
@@ -162,7 +162,7 @@ function parse_dir_listing(text::AbstractString)
         push!(entries, DirEntry(String(name), kind,
                                 kind == :file ? parse(Int, size_str) : nothing))
     end
-    entries
+    return entries
 end
 
 """
@@ -171,8 +171,7 @@ end
 List the immediate children of `dir`. The listing never descends: the tool must
 not walk a shared filesystem recursively.
 """
-list_dir(h::SSHHost, dir::AbstractString) = parse_dir_listing(
-    run_remote(h, `find $dir -mindepth 1 -maxdepth 1 -printf '%y\t%s\t%f\n'`))
+list_dir(h::SSHHost, dir::AbstractString) = parse_dir_listing(run_remote(h, `find $dir -mindepth 1 -maxdepth 1 -printf '%y\t%s\t%f\n'`))
 
 function list_dir(::LocalHost, dir::AbstractString)
     isdir(dir) || throw(ArgumentError("not a directory: $dir"))
@@ -180,7 +179,7 @@ function list_dir(::LocalHost, dir::AbstractString)
         path = joinpath(dir, name)
         st = lstat(path)
         kind = islink(st) ? :link : isfile(st) ? :file : isdir(st) ? :dir : :other
-        DirEntry(name, kind, kind == :file ? Int(filesize(st)) : nothing)
+        return DirEntry(name, kind, kind == :file ? Int(filesize(st)) : nothing)
     end
 end
 
@@ -193,7 +192,7 @@ no other part of the tree is searched.
 """
 function list_productions(h::SSHHost, remote_root::AbstractString)
     text = run_remote(h, `find $remote_root -mindepth 2 -maxdepth 4 -name config.json -type f -printf '%h\n'`)
-    sort!([relpath(line, remote_root) for line in eachsplit(chomp(text), '\n') if !isempty(line)])
+    return sort!([relpath(line, remote_root) for line in eachsplit(chomp(text), '\n') if !isempty(line)])
 end
 
 function list_productions(::LocalHost, remote_root::AbstractString)
@@ -205,7 +204,7 @@ function list_productions(::LocalHost, remote_root::AbstractString)
             push!(found, relpath(dir, remote_root))
         depth >= 3 && empty!(dirs)
     end
-    sort!(found)
+    return sort!(found)
 end
 
 """
@@ -222,9 +221,8 @@ function dir_sizes(h::SSHHost, dirs::AbstractVector{<:AbstractString})
         isempty(line) && continue
         push!(sizes, parse(Int, first(split(line, '\t'))))
     end
-    length(sizes) == length(dirs) || throw(ErrorException(
-        "du reported $(length(sizes)) sizes for $(length(dirs)) directories"))
-    sizes
+    length(sizes) == length(dirs) || throw(ErrorException("du reported $(length(sizes)) sizes for $(length(dirs)) directories"))
+    return sizes
 end
 
 # Sums the apparent size of every non-directory entry below `dir`: regular
@@ -240,7 +238,7 @@ function dir_sizes(::LocalHost, dirs::AbstractVector{<:AbstractString})
         for (root, _, files) in walkdir(dir; follow_symlinks = false), f in files
             total += Int(lstat(joinpath(root, f)).size)
         end
-        total
+        return total
     end
 end
 
@@ -251,12 +249,12 @@ Read a small text file: the tool uses this for a production's `config.json`.
 """
 function read_file(h::SSHHost, path::AbstractString)
     run_remote(h, `test -f $path`)
-    run_remote(h, `cat $path`)
+    return run_remote(h, `cat $path`)
 end
 
 function read_file(::LocalHost, path::AbstractString)
     isfile(path) || throw(ArgumentError("not a file: $path"))
-    read(path, String)
+    return read(path, String)
 end
 
 """
@@ -299,9 +297,8 @@ function stream_remote(h::RemoteHost, cmd::Cmd, on_line)
     finally
         rm(errfile; force = true)
     end
-    success(proc) || throw(ErrorException(
-        "remote command failed with exit code $(proc.exitcode): $full\n$text"))
-    text
+    success(proc) || throw(ErrorException("remote command failed with exit code $(proc.exitcode): $full\n$text"))
+    return text
 end
 
 """
@@ -324,13 +321,11 @@ takes a host asks it for its home directory only when `path` starts with a tilde
 function expand_home(path::AbstractString, home::AbstractString)
     path == "~" && return String(home)
     startswith(path, "~/") && return joinpath(home, path[3:end])
-    startswith(path, "~") && throw(ArgumentError(
-        "only ~ and ~/... are supported in remote paths, got \"$path\""))
-    String(path)
+    startswith(path, "~") && throw(ArgumentError("only ~ and ~/... are supported in remote paths, got \"$path\""))
+    return String(path)
 end
 
-expand_home(h::RemoteHost, path::AbstractString) =
-    startswith(path, "~") ? expand_home(path, remote_home(h)) : String(path)
+expand_home(h::RemoteHost, path::AbstractString) = startswith(path, "~") ? expand_home(path, remote_home(h)) : String(path)
 
 """
     file_exists(h::RemoteHost, path::AbstractString)::Bool
@@ -342,9 +337,9 @@ as "absent".
 function file_exists(h::SSHHost, path::AbstractString)
     err = IOBuffer()
     proc = run(pipeline(ignorestatus(remote_command(h, `test -f $path`)); stdin = devnull, stderr = err))
-    proc.exitcode in (0, 1) || throw(ErrorException(
-        "test -f $path on $(h.alias) failed with exit code $(proc.exitcode)\n$(String(take!(err)))"))
-    proc.exitcode == 0
+    proc.exitcode in (0, 1) ||
+        throw(ErrorException("test -f $path on $(h.alias) failed with exit code $(proc.exitcode)\n$(String(take!(err)))"))
+    return proc.exitcode == 0
 end
 file_exists(::LocalHost, path::AbstractString) = isfile(path)
 
@@ -357,9 +352,9 @@ Whether the directory `path` exists on `h`, with the same error handling as
 function dir_exists(h::SSHHost, path::AbstractString)
     err = IOBuffer()
     proc = run(pipeline(ignorestatus(remote_command(h, `test -d $path`)); stdin = devnull, stderr = err))
-    proc.exitcode in (0, 1) || throw(ErrorException(
-        "test -d $path on $(h.alias) failed with exit code $(proc.exitcode)\n$(String(take!(err)))"))
-    proc.exitcode == 0
+    proc.exitcode in (0, 1) ||
+        throw(ErrorException("test -d $path on $(h.alias) failed with exit code $(proc.exitcode)\n$(String(take!(err)))"))
+    return proc.exitcode == 0
 end
 dir_exists(::LocalHost, path::AbstractString) = isdir(path)
 
@@ -383,9 +378,8 @@ function parse_df(text::AbstractString)
     fields = split(last(lines))
     # Counted from the capacity column, so a file system name with spaces does not shift the columns.
     capacity = findlast(f -> endswith(f, "%"), fields)
-    (capacity !== nothing && capacity >= 4) || throw(ArgumentError(
-        "cannot parse df output: $(repr(text))"))
-    parse(Int, fields[capacity - 1]) * 1024
+    (capacity !== nothing && capacity >= 4) || throw(ArgumentError("cannot parse df output: $(repr(text))"))
+    return parse(Int, fields[capacity - 1]) * 1024
 end
 
 """
@@ -404,8 +398,9 @@ modification time, so an unchanged file is not sent again. With `checksum`, rsyn
 compares content instead of size and time, which a file that is rewritten with the
 same size within one second needs.
 """
-push_command(h::SSHHost, file::AbstractString, remote_dir::AbstractString; checksum::Bool = false) =
-    `rsync -t $(rsync_transport(h)) $(checksum ? ["--checksum"] : String[]) -- $file $(h.alias):$(rstrip(remote_dir, '/'))/`
+function push_command(h::SSHHost, file::AbstractString, remote_dir::AbstractString; checksum::Bool = false)
+    return `rsync -t $(rsync_transport(h)) $(checksum ? ["--checksum"] : String[]) -- $file $(h.alias):$(rstrip(remote_dir, '/'))/`
+end
 
 """
     push_file(h::RemoteHost, file, remote_dir; checksum = false)::String
@@ -421,9 +416,8 @@ function push_file(h::SSHHost, file::AbstractString, remote_dir::AbstractString;
     err = IOBuffer()
     cmd = push_command(h, file, remote_dir; checksum)
     proc = run(pipeline(ignorestatus(cmd); stdin = devnull, stdout = out, stderr = err))
-    success(proc) || throw(ErrorException(
-        "rsync failed with exit code $(proc.exitcode): $cmd\n$(String(take!(err)))"))
-    joinpath(remote_dir, basename(file))
+    success(proc) || throw(ErrorException("rsync failed with exit code $(proc.exitcode): $cmd\n$(String(take!(err)))"))
+    return joinpath(remote_dir, basename(file))
 end
 
 function push_file(::LocalHost, file::AbstractString, remote_dir::AbstractString;
@@ -431,7 +425,7 @@ function push_file(::LocalHost, file::AbstractString, remote_dir::AbstractString
     mkpath(remote_dir)
     dest = joinpath(remote_dir, basename(file))
     cp(file, dest; force = true)
-    dest
+    return dest
 end
 
 """
@@ -456,15 +450,15 @@ function remove_staged!(h::RemoteHost, staging::AbstractString,
             throw(ArgumentError("refusing to remove $path: it is not below the staging directory $root"))
     end
     link = find_symlink(h, root)
-    link === nothing || throw(ArgumentError(
-        "staging directory $root contains a symlink ($link); refusing to remove anything"))
+    link === nothing || throw(ArgumentError("staging directory $root contains a symlink ($link); refusing to remove anything"))
     remove_paths!(h, root, paths)
-    length(paths)
+    return length(paths)
 end
 
 # The first symlink at or below `root`, or `nothing`.
-find_symlink(h::SSHHost, root::String) =
-    (out = strip(run_remote(h, `find $root -type l -print -quit`)); isempty(out) ? nothing : String(out))
+function find_symlink(h::SSHHost, root::String)
+    return (out = strip(run_remote(h, `find $root -type l -print -quit`)); isempty(out) ? nothing : String(out))
+end
 
 function find_symlink(::LocalHost, root::String)
     islink(root) && return root
@@ -486,7 +480,7 @@ function staged_ancestors(root::String, paths)
             dir = dirname(dir)
         end
     end
-    sort!(collect(dirs); by = dir -> -length(dir))
+    return sort!(collect(dirs); by = dir -> -length(dir))
 end
 
 function remove_paths!(h::SSHHost, root::String, paths)

@@ -14,8 +14,8 @@
         stage = joinpath(mktempdir(), "stage")
         Production(h, "tprod", TIER_DET_ROOT, mktempdir()), HelperConfig(; staging = stage), stage
     end
-    selection(p, entries; copy = ["tprod/config.json", "tprod/legend-metadata"]) =
-        Selection("local", "tprod", TIER_DET_ROOT, p.local_root, nothing, copy, String[], now(), entries)
+    selection(p, entries; copy = ["tprod/config.json", "tprod/legend-metadata"]) = Selection("local", "tprod", TIER_DET_ROOT, p.local_root,
+                                                                                             nothing, copy, String[], now(), entries)
     period(p, groups) = ExtractEntry(relative(p, p18), groups)
     groups_of(path) = h5open(f -> collect(keys(f["jlpks"])), path, "r")
 
@@ -42,9 +42,10 @@
 
     @testset "run and period entries merge per run" begin
         p, helper, stage = setup()
-        sel = selection(p, [period(p, ["B00000C", "aux"]),
-                            ExtractEntry(relative(p, r001), ["V01234A"]),
-                            ExtractEntry(relative(p, r000), ["B00000C"])])
+        sel = selection(p,
+                        [period(p, ["B00000C", "aux"]),
+                         ExtractEntry(relative(p, r001), ["V01234A"]),
+                         ExtractEntry(relative(p, r000), ["B00000C"])])
         plan, absent = plan_extraction(h, p, sel, stage; helper)
         @test [j.source for j in plan] == files                     # each file once
         @test [j.groups for j in plan] == [["B00000C", "aux"], ["B00000C", "aux"], ["B00000C", "V01234A"]]
@@ -67,8 +68,8 @@
     @testset "an entry without filekey files is an error" begin
         p, helper, stage = setup()
         empty_period = ExtractEntry(relative(p, joinpath(tier, "jlpks", "cal", "p19")), ["B00000C"])
-        @test_throws "holds no filekey files and no run directory with filekey files" plan_extraction(
-            h, p, selection(p, [empty_period]), stage; helper)
+        @test_throws "holds no filekey files and no run directory with filekey files" plan_extraction(h, p, selection(p, [empty_period]),
+                                                                                                      stage; helper)
     end
 
     @testset "run directories without tier files and without a detector axis are reported" begin
@@ -140,8 +141,8 @@
     @testset "a period without a detector axis is an error" begin
         p, helper, stage = setup()
         evt = ExtractEntry(relative(p, joinpath(tier, "jlevt", "phy", "p18")), ["B00000C"])
-        @test_throws "extract entry $(evt.dir): the tier has no per-detector groups" plan_extraction(
-            h, p, selection(p, [evt]), stage; helper)
+        @test_throws "extract entry $(evt.dir): the tier has no per-detector groups" plan_extraction(h, p, selection(p, [evt]), stage;
+                                                                                                     helper)
     end
 
     @testset "apply! extracts a period and rebuilds with the union" begin

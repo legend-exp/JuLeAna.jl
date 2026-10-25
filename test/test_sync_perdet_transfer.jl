@@ -9,12 +9,12 @@
     base = ["dprod/config.json"]
 
     qcs(period_rel, run, detector) = joinpath(period_rel, run,
-        "l200-$(basename(period_rel))-$run-cal-$detector-tier_jlqcs.lh5")
+                                              "l200-$(basename(period_rel))-$run-cal-$detector-tier_jlqcs.lh5")
     p = Production(h, "dprod", PERDET_ROOT, mktempdir())
     p16_rel = relative(p, p16)
-    selection(p, entries; copy = base, link = String[]) =
-        Selection("local", "dprod", PERDET_ROOT, p.local_root, p.mount_root, copy, link, now(),
-                  ExtractEntry[], entries)
+    selection(p, entries; copy = base, link = String[]) = Selection("local", "dprod", PERDET_ROOT, p.local_root, p.mount_root, copy, link,
+                                                                    now(),
+                                                                    ExtractEntry[], entries)
     entry(detectors, mode; dir = p16_rel) = DetectorEntry(dir, detectors, mode)
 
     @testset "an entry resolves to the files of the named detectors" begin
@@ -67,7 +67,9 @@
                        "l200-p16-r001-phy-B00000C-tier_jlqcs.lh5"), "y")
         sel = Selection("local", "dprod", root, q.local_root, nothing, base, String[], now(),
                         ExtractEntry[], [entry(["B00000C"], :copy)])
-        @test_throws "$(joinpath(p16_rel, "r001")) holds two files for detector B00000C: l200-p16-r001-cal-B00000C-tier_jlqcs.lh5 and l200-p16-r001-phy-B00000C-tier_jlqcs.lh5" plan_detector_files(h, q, sel)
+        @test_throws "$(joinpath(p16_rel, "r001")) holds two files for detector B00000C: l200-p16-r001-cal-B00000C-tier_jlqcs.lh5 and l200-p16-r001-phy-B00000C-tier_jlqcs.lh5" plan_detector_files(h,
+                                                                                                                                                                                                    q,
+                                                                                                                                                                                                    sel)
     end
 
     @testset "a run with both kinds of tier file is an error" begin
@@ -82,7 +84,9 @@
         @test_throws msg plan_detector_files(h, q, sel)
         @test_throws msg apply!(h, q, sel; dry_run = true, helper = broken)
         @test_throws msg period_file_nodes(h, let n = Node("p16", dirname(run), :dir)
-            expand!(h, q, n); n end)
+                                               expand!(h, q, n)
+                                               n
+                                           end)
         extract = ExtractEntry(relative(q, dirname(run)), ["B00000C"])
         @test_throws msg plan_extraction(h, q, Selection("local", "dprod", root, q.local_root, nothing, base,
                                                          String[], now(), [extract]), mktempdir(); helper = broken)
@@ -90,11 +94,17 @@
 
     @testset "an entry without per-detector files is an error" begin
         empty_dir = relative(p, joinpath(tier, "jlqcs", "cal", "p17"))
-        @test_throws "detector file entry $empty_dir: no run directory holds per-detector files" plan_detector_files(
-            h, p, selection(p, [entry(["B00000C"], :copy; dir = empty_dir)]))
+        @test_throws "detector file entry $empty_dir: no run directory holds per-detector files" plan_detector_files(h, p,
+                                                                                                                     selection(p,
+                                                                                                                               [entry(["B00000C"],
+                                                                                                                                      :copy;
+                                                                                                                                      dir = empty_dir)]))
         no_runs = relative(p, joinpath(tier, "jlqcs", "cal"))
-        @test_throws "detector file entry $no_runs: no run directory holds per-detector files" plan_detector_files(
-            h, p, selection(p, [entry(["B00000C"], :copy; dir = no_runs)]))
+        @test_throws "detector file entry $no_runs: no run directory holds per-detector files" plan_detector_files(h, p,
+                                                                                                                   selection(p,
+                                                                                                                             [entry(["B00000C"],
+                                                                                                                                    :copy;
+                                                                                                                                    dir = no_runs)]))
         both = selection(p, [entry(["B00000C"], :copy), entry(["B00000C", "V01234A"], :link)])
         @test_throws "detector B00000C of $p16_rel is in a copy and a link entry" plan_detector_files(h, p, both)
     end

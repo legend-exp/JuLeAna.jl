@@ -68,7 +68,8 @@
         write(joinpath(dir, "l200-p16-r001-phy-B00000C-tier_jlqcs.lh5"), "y")
         period = Node("p16", dirname(dir), :dir)
         expand!(h, q, period; detectors = true)
-        @test_throws "r001 holds two files for detector B00000C: l200-p16-r001-cal-B00000C-tier_jlqcs.lh5 and l200-p16-r001-phy-B00000C-tier_jlqcs.lh5" period_file_nodes(h, period)
+        @test_throws "r001 holds two files for detector B00000C: l200-p16-r001-cal-B00000C-tier_jlqcs.lh5 and l200-p16-r001-phy-B00000C-tier_jlqcs.lh5" period_file_nodes(h,
+                                                                                                                                                                          period)
     end
 
     @testset "a directory with both kinds of tier file is an error" begin
@@ -197,7 +198,8 @@ end
         set_mode!(b, :link)
         for node in (period, runs[1], runs[2], period.parent)
             for mode in (:copy, :link)
-                @test_throws "cannot mark $(node.label) :$mode: detector B00000C of p16 is marked :link; unmark the detector first" set_mode!(node, mode)
+                @test_throws "cannot mark $(node.label) :$mode: detector B00000C of p16 is marked :link; unmark the detector first" set_mode!(node,
+                                                                                                                                              mode)
             end
             @test node.mode == :none
         end
@@ -257,34 +259,37 @@ end
 
     @testset "a selection file without the key still loads" begin
         old = joinpath(mktempdir(), "old.json")
-        writeprops(old, PropDict(
-            :host => "local", :production => "dprod", :remote_root => PERDET_ROOT,
-            :local_root => local_root, :mount_root => "", :copy => String[], :link => String[],
-            :created => string(now())))
+        writeprops(old,
+                   PropDict(:host => "local", :production => "dprod", :remote_root => PERDET_ROOT,
+                            :local_root => local_root, :mount_root => "", :copy => String[], :link => String[],
+                            :created => string(now())))
         @test load_selection(old, p).detector_files == DetectorEntry[]
         @test Selection("local", "dprod", PERDET_ROOT, local_root, nothing, String[], String[], now(),
                         ExtractEntry[]).detector_files == DetectorEntry[]
         bad = joinpath(mktempdir(), "bad.json")
-        writeprops(bad, PropDict(
-            :host => "local", :production => "dprod", :remote_root => PERDET_ROOT,
-            :local_root => local_root, :mount_root => "", :copy => String[], :link => String[],
-            :detector_files => [PropDict(:detectors => ["B00000C"], :mode => "copy")],
-            :created => string(now())))
+        writeprops(bad,
+                   PropDict(:host => "local", :production => "dprod", :remote_root => PERDET_ROOT,
+                            :local_root => local_root, :mount_root => "", :copy => String[], :link => String[],
+                            :detector_files => [PropDict(:detectors => ["B00000C"], :mode => "copy")],
+                            :created => string(now())))
         @test_throws "detector_files entry without a \"dir\" key" load_selection(bad, p)
     end
 
     @testset "apply_selection! names the entry that does not match" begin
         sel(entries; copy = String[]) = Selection("local", "dprod", PERDET_ROOT, local_root, nothing,
                                                   copy, String[], now(), ExtractEntry[], entries)
-        @test_throws "detector Z99999Z of $p16_rel: no run of the period holds a file for it" apply_selection!(
-            h, p, production_tree(h, p), sel([entry(["Z99999Z"], :copy)]); helper = broken)
+        @test_throws "detector Z99999Z of $p16_rel: no run of the period holds a file for it" apply_selection!(h, p, production_tree(h, p),
+                                                                                                               sel([entry(["Z99999Z"],
+                                                                                                                          :copy)]);
+                                                                                                               helper = broken)
         empty_dir = relative(p, joinpath(PERDET_ROOT, "dprod", "generated", "tier", "jlqcs", "cal", "p17"))
-        @test_throws "holds no per-detector files" apply_selection!(
-            h, p, production_tree(h, p), sel([entry(["B00000C"], :copy; dir = empty_dir)]); helper = broken)
-        @test_throws "p16 is already transferred whole (:copy on p16)" apply_selection!(
-            h, p, production_tree(h, p), sel([entry(["B00000C"], :link)]; copy = [p16_rel]); helper = broken)
+        @test_throws "holds no per-detector files" apply_selection!(h, p, production_tree(h, p),
+                                                                    sel([entry(["B00000C"], :copy; dir = empty_dir)]); helper = broken)
+        @test_throws "p16 is already transferred whole (:copy on p16)" apply_selection!(h, p, production_tree(h, p),
+                                                                                        sel([entry(["B00000C"], :link)]; copy = [p16_rel]);
+                                                                                        helper = broken)
         both = sel([entry(["B00000C"], :copy), entry(["B00000C"], :link)])
-        @test_throws "detector B00000C of $p16_rel is marked both :copy and :link" apply_selection!(
-            h, p, production_tree(h, p), both; helper = broken)
+        @test_throws "detector B00000C of $p16_rel is marked both :copy and :link" apply_selection!(h, p, production_tree(h, p), both;
+                                                                                                    helper = broken)
     end
 end

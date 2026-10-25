@@ -42,7 +42,7 @@ function detector_parent(f)
     if length(tops) == 1 && f[only(tops)] isa HDF5.Group
         any(name -> occursin(DETECTOR_ID, name) || occursin(CHANNEL_ID, name), keys(f[only(tops)])) && return only(tops)
     end
-    nothing
+    return nothing
 end
 
 # Detector names, their stored bytes and the enclosing group ("" for top-level
@@ -62,7 +62,7 @@ function inspect_file(path::String, groups::Union{Nothing,Vector{String}})::Tupl
         for group in sized
             haskey(parent, group) || error("group $group not found in $path")
         end
-        names, [storage_bytes(parent[name]) for name in sized], layout
+        return names, [storage_bytes(parent[name]) for name in sized], layout
     end
 end
 
@@ -78,7 +78,7 @@ function extract_file(source::String, groups::Vector{String}, destination::Strin
     if isfile(destination)
         held = try
             h5open(destination, "r") do f
-                haskey(attrs(f), "juleana_sync_groups") ? String.(attrs(f)["juleana_sync_groups"]) : nothing
+                return haskey(attrs(f), "juleana_sync_groups") ? String.(attrs(f)["juleana_sync_groups"]) : nothing
             end
         catch err
             error(source, ": cannot read existing destination ", destination, ": ", sprint(showerror, err))
@@ -111,7 +111,7 @@ function extract_file(source::String, groups::Vector{String}, destination::Strin
                     HDF5.copy_object(parent, group, target, group)
                 end
                 attrs(dst)["juleana_sync_groups"] = groups
-                attrs(dst)["juleana_sync_source"] = source
+                return attrs(dst)["juleana_sync_source"] = source
             end
         end
         mv(partial, destination; force = true)
@@ -120,7 +120,7 @@ function extract_file(source::String, groups::Vector{String}, destination::Strin
         # The message leads with the source so a failure on a worker names its file.
         error(source, ": ", sprint(showerror, err))
     end
-    (:extracted, Int(filesize(destination)), myid())
+    return (:extracted, Int(filesize(destination)), myid())
 end
 
 # TOML's own encoder formats the values, so strings are escaped correctly.
@@ -128,7 +128,7 @@ toml_value(x) = chopprefix(strip(sprint(TOML.print, Dict("v" => x))), "v = ")
 
 function emit(; fields...)
     println("r = {", join(("$k = $(toml_value(v))" for (k, v) in fields), ", "), "}")
-    flush(stdout)
+    return flush(stdout)
 end
 
 default_workers(nitems) = nitems < 4 ? 1 : min(8, nitems, Sys.CPU_THREADS ÷ 2)
@@ -142,8 +142,8 @@ function start_workers(n::Integer)
         include($SCRIPT)
     end
     runworkers(OnLocalhost(n = n))
-    timedwait(() -> nprocs() > n, 300.0) == :ok ||
-        error("only $(nprocs() - 1) of $n workers started within 300 s")
+    return timedwait(() -> nprocs() > n, 300.0) == :ok ||
+           error("only $(nprocs() - 1) of $n workers started within 300 s")
 end
 
 # Call `done(item, f(item...))` for every item, in the main process for `n <= 1`
@@ -164,16 +164,16 @@ function run_items(done, f, items::Vector, n::Integer)
         close(queue)
         failed = Threads.Atomic{Bool}(false)
         consumers = [Threads.@spawn(begin
-                         for item in queue
-                             failed[] && break
-                             try
-                                 done(item, onworker(f, item...))
-                             catch
-                                 failed[] = true
-                                 rethrow()
-                             end
-                         end
-                     end) for _ in 1:n]
+                                        for item in queue
+                                            failed[] && break
+                                            try
+                                                done(item, onworker(f, item...))
+                                            catch
+                                                failed[] = true
+                                                rethrow()
+                                            end
+                                        end
+                                    end) for _ in 1:n]
         errors = Exception[]
         for task in consumers
             try
@@ -186,7 +186,7 @@ function run_items(done, f, items::Vector, n::Integer)
     finally
         stopworkers()
     end
-    nothing
+    return nothing
 end
 
 function main(args)
@@ -237,7 +237,7 @@ function main(args)
         println(stderr, "extract.jl: ", sprint(showerror, err))
         return 1
     end
-    0
+    return 0
 end
 
 !@isdefined(LOADED_AS_LIBRARY) && abspath(PROGRAM_FILE) == SCRIPT && exit(main(ARGS))

@@ -213,10 +213,10 @@
 
         # A selection file written before extraction existed still loads.
         old_path = joinpath(mktempdir(), "old.json")
-        writeprops(old_path, PropDict(
-            :host => sel.host, :production => sel.production, :remote_root => sel.remote_root,
-            :local_root => sel.local_root, :mount_root => "", :copy => sel.copy,
-            :link => sel.link, :created => string(sel.created)))
+        writeprops(old_path,
+                   PropDict(:host => sel.host, :production => sel.production, :remote_root => sel.remote_root,
+                            :local_root => sel.local_root, :mount_root => "", :copy => sel.copy,
+                            :link => sel.link, :created => string(sel.created)))
         @test load_selection(old_path, p).extract == ExtractEntry[]
 
         # The eight-argument constructor means "nothing to extract".

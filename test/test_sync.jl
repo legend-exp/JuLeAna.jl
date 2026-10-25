@@ -14,7 +14,8 @@ using LegendDataManagement: LegendDataConfig, data_path
 import LegendDataManagement
 using JuLeAna: Sync
 using Tachikoma: TestBackend, Frame, Rect, KeyEvent, MouseEvent, mouse_left, mouse_right, mouse_press, mouse_release, mouse_drag,
-                 mouse_scroll_up, mouse_scroll_down, tree_visible_count, TaskEvent, TaskQueue, GraphicsRegion, PixelSnapshot, reset!, row_text,
+                 mouse_scroll_up, mouse_scroll_down, tree_visible_count, TaskEvent, TaskQueue, GraphicsRegion, PixelSnapshot, reset!,
+                 row_text,
                  find_text, drain_tasks!, render_widget!, view, update!, should_quit
 
 include(joinpath(@__DIR__, "sync", "fixture_lh5.jl"))
@@ -26,10 +27,12 @@ using JuLeAna.Sync: main, RemoteHost, SSHHost, LocalHost, DirEntry,
                     run_remote, list_dir, dir_sizes, read_file, rsync_source,
                     ssh_command, parse_dir_listing, has_control_master,
                     Production, parse_production_config, production_roots,
-                    overlay_files, list_productions, host_remote_root, relative, to_local, to_mount, local_config, write_local_config, normdir,
+                    overlay_files, list_productions, host_remote_root, relative, to_local, to_mount, local_config, write_local_config,
+                    normdir,
                     Node, tier_file_id, group_children, production_tree, expand!,
                     node_local_state, filekey_groups,
-                    Selection, effective_mode, set_mode!, filekey_files, run_dirs, period_detector_nodes, covering_extract, exclude!, first_n_filekeys!, find_node!,
+                    Selection, effective_mode, set_mode!, filekey_files, run_dirs, period_detector_nodes, covering_extract, exclude!,
+                    first_n_filekeys!, find_node!,
                     selection_propdict, save_selection, load_selection, mandatory_copies, apply_selection!,
                     Estimate, format_bytes, running_estimate, format_estimate, format_not_in_run, parse_rsync_stats,
                     Progress, TransferResult, check_rsync, check_mount, rsync_command,
@@ -50,7 +53,8 @@ using JuLeAna.Sync: main, RemoteHost, SSHHost, LocalHost, DirEntry,
                     DEFAULT_REMOTE_PROJECT, REMOTE_STAGING_SCRIPT,
                     ExtractEntry, DetectorEntry, covering_detector, ensure_detectors!, detector_nodes, period_file_nodes, attach_detectors!,
                     expand_detectors!, has_detectors,
-                    ExtractJob, staging_production_dir, plan_extraction, plan_detector_files, plan_bytes, plan_group_bytes, prepare_extraction,
+                    ExtractJob, staging_production_dir, plan_extraction, plan_detector_files, plan_bytes, plan_group_bytes,
+                    prepare_extraction,
                     ExtractProgress, STAGING_MARGIN, check_staging_space, reduced_groups, reconcile_local, rsync_listed,
                     with_environment!, start_bootstrap!, environment_ready!, request_detectors!, run_estimate!, toggle_extract!
 
@@ -85,31 +89,31 @@ run_file(name) = (isempty(SELECTED_TEST_FILES) || name in SELECTED_TEST_FILES) &
                  include(joinpath(@__DIR__, name))
 
 withenv("XDG_CONFIG_HOME" => TEST_CONFIG_HOME) do
-@testset "Sync" begin
-    run_file("test_sync_extract_helper.jl")
-    run_file("test_sync_remote.jl")
-    run_file("test_sync_helper.jl")
-    run_file("test_sync_production.jl")
-    run_file("test_sync_inventory.jl")
-    run_file("test_sync_selection.jl")
-    run_file("test_sync_extract_tree.jl")
-    run_file("test_sync_tierdet_tree.jl")
-    run_file("test_sync_perdet_tree.jl")
-    run_file("test_sync_extract_estimate.jl")
-    run_file("test_sync_extract_transfer.jl")
-    run_file("test_sync_tierdet_transfer.jl")
-    run_file("test_sync_perdet_transfer.jl")
-    run_file("test_sync_perdet_estimate.jl")
-    run_file("test_sync_tierdet_estimate.jl")
-    run_file("test_sync_estimate.jl")
-    run_file("test_sync_transfer.jl")
-    run_file("test_sync_options.jl")
-    run_file("test_sync_extract_options.jl")
-    run_file("test_sync_tui.jl")
-    run_file("test_sync_extract_tui.jl")
-    run_file("test_sync_tierdet_tui.jl")
-    run_file("test_sync_perdet_tui.jl")
-end
+    @testset "Sync" begin
+        run_file("test_sync_extract_helper.jl")
+        run_file("test_sync_remote.jl")
+        run_file("test_sync_helper.jl")
+        run_file("test_sync_production.jl")
+        run_file("test_sync_inventory.jl")
+        run_file("test_sync_selection.jl")
+        run_file("test_sync_extract_tree.jl")
+        run_file("test_sync_tierdet_tree.jl")
+        run_file("test_sync_perdet_tree.jl")
+        run_file("test_sync_extract_estimate.jl")
+        run_file("test_sync_extract_transfer.jl")
+        run_file("test_sync_tierdet_transfer.jl")
+        run_file("test_sync_perdet_transfer.jl")
+        run_file("test_sync_perdet_estimate.jl")
+        run_file("test_sync_tierdet_estimate.jl")
+        run_file("test_sync_estimate.jl")
+        run_file("test_sync_transfer.jl")
+        run_file("test_sync_options.jl")
+        run_file("test_sync_extract_options.jl")
+        run_file("test_sync_tui.jl")
+        run_file("test_sync_extract_tui.jl")
+        run_file("test_sync_tierdet_tui.jl")
+        run_file("test_sync_perdet_tui.jl")
+    end
 end # withenv: the user's configuration directory is untouched and restored
 
 end # module

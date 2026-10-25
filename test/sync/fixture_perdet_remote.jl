@@ -35,5 +35,5 @@ function make_per_detector_remote()
     write_lh5_tier_det(joinpath(tier, "jldsp", "cal", "p16", "r000",
                                 "l200-p16-r000-cal-20251107T191821Z-tier_jldsp.lh5");
                        groups = ["B00000C", "V01234A"], tier = "jldsp")
-    root
+    return root
 end

@@ -21,7 +21,7 @@ function write_lh5(path::AbstractString; groups = ["B00000C", "V01234A", "aux"],
             inner_group["waveform"] = collect(Int32, 1:(100 * k * scale))
         end
     end
-    path
+    return path
 end
 
 """
@@ -33,16 +33,17 @@ environment yet: it answers `--version` and, when asked to add packages with
 in `DIR`. Returns `path`.
 """
 function write_stub_julia(path::AbstractString)
-    write(path, raw"""
-    #!/bin/sh
-    if [ "$1" = "--version" ]; then echo "julia version 9.9.9"; exit 0; fi
-    for arg in "$@"; do
-        case "$arg" in --project=*) project="${arg#--project=}";; esac
-    done
-    printf '[deps]\nHDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"\nParallelProcessingTools = "8e8a01fc-6193-5ca1-a2f1-20776dae4199"\n' > "$project/Project.toml"
-    """)
+    write(path,
+          raw"""
+#!/bin/sh
+if [ "$1" = "--version" ]; then echo "julia version 9.9.9"; exit 0; fi
+for arg in "$@"; do
+    case "$arg" in --project=*) project="${arg#--project=}";; esac
+done
+printf '[deps]\nHDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"\nParallelProcessingTools = "8e8a01fc-6193-5ca1-a2f1-20776dae4199"\n' > "$project/Project.toml"
+""")
     chmod(path, 0o755)
-    path
+    return path
 end
 
 """
@@ -69,5 +70,5 @@ function write_lh5_tier_det(path::AbstractString; groups = ["B00000C", "V01234A"
             g["waveform"] = collect(Int32, 1:(100 * k * scale))
         end
     end
-    path
+    return path
 end

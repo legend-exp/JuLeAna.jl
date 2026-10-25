@@ -20,8 +20,9 @@
     function model(; helper = HelperConfig(; staging = joinpath(mktempdir(), "stage")))
         local_root = mktempdir()
         p = Production(h, "tprod", TIER_DET_ROOT, local_root)
-        SyncModel(h, p, Options("local", TIER_DET_ROOT, local_root, nothing, "tprod",
-                                joinpath(mktempdir(), "x.yaml"), nothing, false, false, 0, helper))
+        SyncModel(h, p,
+                  Options("local", TIER_DET_ROOT, local_root, nothing, "tprod",
+                          joinpath(mktempdir(), "x.yaml"), nothing, false, false, 0, helper))
     end
     function open!(m::SyncModel, label)
         for _ in 1:40
@@ -68,15 +69,18 @@
         @test occursin("~1.2 K extract (3 files)", row_text(draw(m), 30))
         @test find_text(draw(m), "detector of the runs of p18") !== nothing
 
-        update!(m, KeyEvent('e')); settle!(m)
+        update!(m, KeyEvent('e'))
+        settle!(m)
         @test m.modal_kind == :estimate
         @test (m.estimate.extract_bytes, m.estimate.extract_files, m.estimate.extract_exact) == (1600, 3, true)
         @test isempty(m.estimate.not_in_run)
         update!(m, KeyEvent(:escape))
 
-        update!(m, KeyEvent(:down)); update!(m, KeyEvent(:down))        # aux
+        update!(m, KeyEvent(:down))
+        update!(m, KeyEvent(:down))        # aux
         update!(m, KeyEvent('x'))
-        update!(m, KeyEvent('e')); settle!(m)
+        update!(m, KeyEvent('e'))
+        settle!(m)
         @test m.estimate.extract_bytes == 1600 + 3600
         @test m.estimate.not_in_run == [(relative(m.production, r001), "aux")]
         @test occursin("1 not in run", m.modal.message)
@@ -88,9 +92,13 @@
         m = model()
         to_period!(m, "jlpks", "cal")
         open!(m, "detectors")
-        update!(m, KeyEvent(:down)); update!(m, KeyEvent('x'))          # B00000C
-        update!(m, KeyEvent(:down)); update!(m, KeyEvent(:down)); update!(m, KeyEvent('x'))   # aux
-        update!(m, KeyEvent('t')); settle!(m)
+        update!(m, KeyEvent(:down))
+        update!(m, KeyEvent('x'))          # B00000C
+        update!(m, KeyEvent(:down))
+        update!(m, KeyEvent(:down))
+        update!(m, KeyEvent('x'))   # aux
+        update!(m, KeyEvent('t'))
+        settle!(m)
         @test m.modal.selected == :confirm
         update!(m, KeyEvent(:enter))
         @test m.modal_kind == :transfer
@@ -107,13 +115,18 @@
         m = model()
         to_period!(m, "jlpks", "cal")
         open!(m, "detectors")
-        update!(m, KeyEvent(:down)); update!(m, KeyEvent('x'))          # B00000C for the period
+        update!(m, KeyEvent(:down))
+        update!(m, KeyEvent('x'))          # B00000C for the period
         period_row = current_node(m)
         period = period_row.parent.parent
         r000 = run_dirs(period)[1]
-        goto!(m, r000); update!(m, KeyEvent(:enter)); settle!(m)
+        goto!(m, r000)
+        update!(m, KeyEvent(:enter))
+        settle!(m)
         run_detectors = r000.children[1]
-        goto!(m, run_detectors); update!(m, KeyEvent(:enter)); settle!(m)
+        goto!(m, run_detectors)
+        update!(m, KeyEvent(:enter))
+        settle!(m)
         (m.tasks.active[] > 0 || isready(m.tasks.channel)) && settle!(m)
         row = run_detectors.children[1]
         @test row.label == "B00000C" && row.mode == :none
@@ -139,7 +152,8 @@
         m = model()
         to_period!(m, "jlpks", "cal")
         open!(m, "detectors")
-        update!(m, KeyEvent(:down)); update!(m, KeyEvent('x'))          # B00000C
+        update!(m, KeyEvent(:down))
+        update!(m, KeyEvent('x'))          # B00000C
         bnode = current_node(m)
         period = bnode.parent.parent
         goto!(m, period)
@@ -148,7 +162,8 @@
         @test occursin("cannot mark p18 :copy: detector B00000C of p18 is marked for extraction", m.status)
         @test period.mode == :none
 
-        goto!(m, bnode); update!(m, KeyEvent('x'))                      # unmark
+        goto!(m, bnode)
+        update!(m, KeyEvent('x'))                      # unmark
         @test bnode.mode == :none
         set_mode!(run_dirs(period)[1], :copy)
         rebuild_tree!(m)
