@@ -66,7 +66,7 @@ function process_evt_phy(processing_config, l200::LegendData, period::DataPeriod
                 rm(evtfilename, force = true)
             elseif isfile(outfilename)
                 @info "File $(basename(evtfilename)) already exists, skip"
-                evt_counts = read_ldata((@pf (; is_forced = $aux.forcedtrigger.aux_trig, is_pulser = $aux.pulser.aux_trig,
+                evt_counts = read_ldata((@pf (; is_forced = $aux.forcedtrigger.aux_trig, is_pulser = $aux.pulser_wvf.aux_trig,
                                               is_valid_qc = $geds.is_valid_qc, trig_e_det = $geds.trig_e_det)), l200, DataTier(:jlevt), fk)
                 n_forced = count(evt_counts.is_forced)
                 n_pulser = count(evt_counts.is_pulser)
@@ -86,7 +86,7 @@ function process_evt_phy(processing_config, l200::LegendData, period::DataPeriod
                 # get number of forced, physical and pulser triggers
                 n_forced = count(out_t.aux.forcedtrigger.aux_trig)
                 @debug "Number of forced triggers: $n_forced"
-                n_pulser = count(out_t.aux.pulser.aux_trig)
+                n_pulser = count(out_t.aux.pulser_wvf.aux_trig)
                 @debug "Number of pulser triggers: $n_pulser"
                 n_phy = count(out_t.geds.is_valid_qc .&& length.(out_t.geds.trig_e_det) .> 1)
                 @debug "Number of physical triggers: $n_phy"
