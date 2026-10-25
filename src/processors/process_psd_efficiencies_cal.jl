@@ -121,7 +121,7 @@ function process_psd_efficiencies_cal(processing_config, l200::LegendData, perio
                 qc_mask = read_ldata(@pf($is_single_pulse && !$is_pulser), l200, :jlqcs, filekey, det)
                 read_ldata(row -> merge(NamedTuple{(e_type_cal,)}((cal_func(row),)), row), l200, :jldsp, :cal, period, run, det)[qc_mask]
             end
-            getproperty(hit_cal, e_type), hit_cal
+            collect(getproperty(hit_cal, e_type)), hit_cal
         end
 
         @debug_progress "Detector: $det" for psd_classifier in psd_classifiers
