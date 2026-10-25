@@ -1,3 +1,18 @@
+.DS_Store
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+.ipynb_checkpoints
+.vscode
+Manifest.toml
+Manifest-v*.toml
+LocalPreferences.toml
+
+# core dumps of crashed Julia processes (core, core.<pid>, core.<host>.<pid>)
+/core
+/core.[0-9]*
+/core.*.[0-9]*
+
 # ignore special folders
 figures/
 tests/data/

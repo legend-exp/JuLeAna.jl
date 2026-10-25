@@ -1,0 +1,450 @@
+config:
+  runmode: slurm
+  submit_jobs: false
+  runmode_settings:
+    slurm:
+      flags:
+        - "--time=01:00:00"
+        - "--mem-bind=local"
+        - "--threads-per-core=1"
+        - "--cpu-bind=cores"
+        - "--nodes=1"
+        - "--ntasks-per-node=32"
+        - "--cpus-per-task=4"
+        - "--mem=480GB"
+      julia_settings: []
+    local:
+      n: 64
+      julia_settings: []
+  env_variables:
+    GKSwstype: "100"
+    JULIA_DEBUG: "JuLeAna,LegendSpecFits"
+    JULIA_WORKER_TIMEOUT: "240"
+  log_level: info
+  idle_timeout_minutes: 20
+
+processing:
+  order: dependencies
+  periods: [16, 18, 19, 20, 21, 22]
+  runs: all
+  analysis_runs_only: false
+  only_partitions: false
+  only_runs: false
+
+processors:
+  process_daq_energy_calibration_cal:
+    enabled: false
+    category: cal
+    log_level: info
+    plot_level: info
+    rank: 1
+    kwargs:
+      reprocess: false
+      timeout: 0
+    dependencies: []
+
+  process_peak_split_cal:
+    enabled: false
+    category: cal
+    log_level: info
+    plot_level: info
+    rank: 2
+    kwargs:
+      reprocess: false
+      timeout: 0
+      use_cache: false
+    dependencies:
+      - process_daq_energy_calibration_cal
+
+  process_decay_time_cal:
+    enabled: false
+    category: cal
+    log_level: info
+    plot_level: info
+    rank: 3
+    kwargs:
+      reprocess: false
+      timeout: 0
+    dependencies:
+      - process_peak_split_cal
+
+  process_filter_optimization_cal:
+    enabled: false
+    category: cal
+    log_level: info
+    plot_level: info
+    rank: 4
+    kwargs:
+      reprocess: false
+      timeout: 0
+    dependencies:
+      - process_decay_time_cal
+
+  process_aoe_optimization_cal:
+    enabled: false
+    category: cal
+    log_level: info
+    plot_level: info
+    rank: 5
+    kwargs:
+      reprocess: false
+      timeout: 0
+    dependencies:
+      - process_filter_optimization_cal
+
+  process_dsp_cal:
+    enabled: false
+    category: cal
+    log_level: info
+    plot_level: info
+    rank: 6
+    kwargs:
+      reprocess: false
+      max_wvfs: 1000
+      timeout: 0
+      use_cache: true
+      use_partition_pars: true
+    dependencies:
+      - p_process_aoe_optimization_cal
+      - process_aoe_optimization_cal
+
+  process_qcs_cal:
+    enabled: false
+    category: cal
+    log_level: info
+    plot_level: info
+    rank: 7
+    kwargs:
+      reprocess: false
+      timeout: 0
+      use_cache: true
+    dependencies:
+      - process_dsp_cal
+
+  process_ct_correction_cal:
+    enabled: false
+    category: cal
+    log_level: info
+    plot_level: info
+    rank: 8
+    kwargs:
+      reprocess: false
+      timeout: 0
+    dependencies:
+      - process_qcs_cal
+
+  process_energy_calibration_cal:
+    enabled: false
+    category: cal
+    log_level: info
+    plot_level: info
+    rank: 9
+    kwargs:
+      reprocess: false
+      timeout: 0
+    dependencies:
+      - process_ct_correction_cal
+
+  process_aoe_calibration_cut_cal:
+    enabled: false
+    category: cal
+    log_level: info
+    plot_level: info
+    rank: 10
+    kwargs:
+      reprocess: false
+      timeout: 0
+    dependencies:
+      - process_energy_calibration_cal
+
+  process_lq_calibration_cut_cal:
+    enabled: false
+    category: cal
+    log_level: info
+    plot_level: info
+    rank: 11
+    kwargs:
+      reprocess: false
+      timeout: 0
+    dependencies:
+      - process_energy_calibration_cal
+
+  process_psd_efficiencies_cal:
+    enabled: false
+    category: cal
+    log_level: info
+    plot_level: info
+    rank: 12
+    kwargs:
+      reprocess: false
+      timeout: 0
+      use_partition_pars: true
+    dependencies:
+      - p_process_aoe_calibration_cut_cal
+      - p_process_aoe_cut_cal
+      - p_process_lq_calibration_cut_cal
+      - process_aoe_calibration_cut_cal
+      - process_lq_calibration_cut_cal
+
+  process_peak_split_phy:
+    enabled: false
+    category: phy
+    log_level: info
+    plot_level: info
+    rank: 13
+    kwargs:
+      reprocess: false
+      timeout: 0
+      use_cache: false
+    dependencies:
+      - process_daq_energy_calibration_cal
+
+  process_dsp_aux_phy:
+    enabled: false
+    category: phy
+    log_level: info
+    plot_level: info
+    rank: 14
+    kwargs:
+      reprocess: false
+      timeout: 0
+      use_cache: true
+    dependencies: []
+
+  process_sipm_optimization_phy:
+    enabled: false
+    category: phy
+    log_level: info
+    plot_level: info
+    rank: 15
+    kwargs:
+      reprocess: false
+      timeout: 0
+    dependencies:
+      - process_dsp_aux_phy
+
+  process_dsp_phy:
+    enabled: false
+    category: phy
+    log_level: info
+    plot_level: info
+    rank: 16
+    kwargs:
+      reprocess: false
+      timeout: 0
+      use_cache: true
+      max_wvfs: 1000
+      use_partition_pars: true
+    dependencies:
+      - p_process_aoe_optimization_cal
+      - process_aoe_optimization_cal
+      - process_sipm_optimization_phy
+      - p_process_sipm_optimization_phy
+
+  process_qcs_phy:
+    enabled: false
+    category: phy
+    log_level: info
+    plot_level: info
+    rank: 17
+    kwargs:
+      reprocess: false
+      timeout: 0
+      use_cache: true
+    dependencies:
+      - process_dsp_phy
+
+  process_sipm_calibration_phy:
+    enabled: false
+    category: phy
+    log_level: info
+    plot_level: info
+    rank: 18
+    kwargs:
+      reprocess: false
+      timeout: 0
+    dependencies:
+      - process_dsp_phy
+
+  process_evt_phy:
+    enabled: false
+    category: phy
+    log_level: info
+    plot_level: info
+    rank: 19
+    kwargs:
+      reprocess: false
+      timeout: 0
+      use_cache: true
+    dependencies:
+      - process_energy_calibration_cal
+      - p_process_energy_cal
+      - process_aoe_calibration_cut_cal
+      - p_process_aoe_calibration_cut_cal
+      - p_process_aoe_cut_cal
+      - process_lq_calibration_cut_cal
+      - p_process_lq_calibration_cut_cal
+      - p_process_sipm_calibration_phy
+      - process_sipm_calibration_phy
+
+  process_stability_plots_phy:
+    enabled: false
+    category: phy
+    log_level: info
+    plot_level: info
+    rank: 20
+    kwargs:
+      reprocess: false
+      timeout: 0
+    dependencies:
+      - process_evt_phy
+
+p_processors:
+  p_process_decay_time_cal:
+    enabled: false
+    category: cal
+    log_level: info
+    plot_level: info
+    rank: 1
+    kwargs:
+      reprocess: false
+      timeout: 180
+    dependencies:
+      - process_peak_split_cal
+
+  p_process_filter_optimization_cal:
+    enabled: false
+    category: cal
+    log_level: info
+    plot_level: info
+    rank: 2
+    kwargs:
+      reprocess: false
+      timeout: 3000
+    dependencies:
+      - p_process_decay_time_cal
+
+  p_process_aoe_optimization_cal:
+    enabled: false
+    category: cal
+    log_level: info
+    plot_level: info
+    rank: 3
+    kwargs:
+      reprocess: false
+      timeout: 0
+      max_wvfs: 35000
+    dependencies:
+      - p_process_filter_optimization_cal
+
+  p_process_energy_cal:
+    enabled: false
+    category: cal
+    log_level: info
+    plot_level: info
+    rank: 4
+    kwargs:
+      reprocess: false
+      timeout: 0
+    dependencies:
+      - process_energy_calibration_cal
+
+  p_process_aoe_calibration_cut_cal:
+    enabled: false
+    category: cal
+    log_level: info
+    plot_level: info
+    rank: 5
+    kwargs:
+      reprocess: false
+      timeout: 0
+    dependencies:
+      - process_energy_calibration_cal
+
+  p_process_aoe_cut_cal:
+    enabled: false
+    category: cal
+    log_level: info
+    plot_level: info
+    rank: 6
+    kwargs:
+      reprocess: false
+      timeout: 0
+    dependencies:
+      - process_aoe_calibration_cut_cal
+      - p_process_aoe_calibration_cut_cal
+
+  p_process_lq_calibration_cut_cal:
+    enabled: false
+    category: cal
+    log_level: info
+    plot_level: info
+    rank: 7
+    kwargs:
+      reprocess: false
+      timeout: 0
+    dependencies:
+      - process_energy_calibration_cal
+
+  p_process_psd_efficiencies_cal:
+    enabled: false
+    category: cal
+    log_level: info
+    plot_level: info
+    rank: 8
+    kwargs:
+      reprocess: false
+      timeout: 0
+    dependencies:
+      - p_process_lq_calibration_cut_cal
+      - p_process_aoe_calibration_cut_cal
+      - p_process_aoe_cut_cal
+
+  p_process_sipm_optimization_phy:
+    enabled: false
+    category: phy
+    log_level: info
+    plot_level: info
+    rank: 9
+    kwargs:
+      reprocess: false
+      timeout: 0
+    dependencies:
+      - process_dsp_aux_phy
+
+  p_process_sipm_calibration_phy:
+    enabled: false
+    category: phy
+    log_level: info
+    plot_level: info
+    rank: 10
+    kwargs:
+      reprocess: false
+      timeout: 0
+    dependencies:
+      - process_dsp_phy
+
+  p_process_skm_phy:
+    enabled: false
+    category: phy
+    log_level: info
+    plot_level: info
+    rank: 11
+    kwargs:
+      reprocess: false
+      timeout: 0
+      use_cache: true
+    dependencies:
+      - process_evt_phy
+
+  p_process_stability_plots_phy:
+    enabled: false
+    category: phy
+    log_level: info
+    plot_level: info
+    rank: 12
+    kwargs:
+      reprocess: false
+      timeout: 0
+    dependencies:
+      - p_process_skm_phy

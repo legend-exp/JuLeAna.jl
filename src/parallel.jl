@@ -1,134 +1,254 @@
-# get worker pool
-function get_workerPool(processing_config::PropDict, process::Symbol)
-    n_workers = get(processing_config.processors[process], :n_workers, "all")
-    @assert typeof(n_workers) <: Int || n_workers == "all" "Number of workers must be an integer or 'all'."
-    if n_workers == "all" || n_workers >= nworkers()
-        wp = default_worker_pool()
-        @info "Use default worker pool with $(length(wp)) workers."
-        return wp
-    else
-        # make sure to distribute the workers evenly between all clusters
-        if length(processing_config.processing.remote_workers) == 0
-            return WorkerPool(2:n_workers+1)
-        end
-        cluster_workers_pids = [2:processing_config.processing.local_workers+1]
-        for p in processing_config.processing.remote_workers
-            last_pid = last(cluster_workers_pids[end])
-            push!(cluster_workers_pids, last_pid+1:last_pid+last(p))
-        end
-        cluster_workers = append!([processing_config.processing.local_workers], [last(p) for p in processing_config.processing.remote_workers])
-        cluster_shares = [floor(Int, n_workers * n / sum(cluster_workers)) for n in cluster_workers]
-        wpool = Int64[]
-        for (pids, share) in zip(cluster_workers_pids, cluster_shares)
-            append!(wpool, rand(pids, share))
-        end
-        wp = WorkerPool(wpool)
-        @info "Use custom worker pool with $(length(wp)) workers."
-        return wp
-    end
+"""
+    ProcessingStopped()
+
+Exception thrown by [`parallel`](@ref) when processing was stopped while the batch ran:
+items that had not started are not run, and the processor that called `parallel` ends
+without writing results.
+"""
+struct ProcessingStopped <: Exception end
+
+function Base.showerror(io::IO, ::ProcessingStopped)
+    return print(io, "ProcessingStopped: processing was stopped")
 end
 
-# retry delay check for parallel processing
-function retry_check(delay_state, err)
-    # Below each condition to retry is listed along with an explanation about why
-    # retrying should/might work.
-    should_retry = (
-        # Worker death is normally stocastic, if not then doesn't matter how many
-        # retries as it will rapidly kill all workers
-        err isa ProcessExitedException ||
-        # If we are in the middle of fetching data and the process is killed we could
-        # get an ArgumentError saying that the stream was closed or unusable.
-        # So same as above.
-        err isa ArgumentError && occursin("stream is closed or unusable", err.msg) ||
-        # In general IO errors can be transient and related to network blips
-        err isa Base.IOError
-    )
-    if should_retry
-        @info "Retrying computation that failed due to a $(typeof(err)): $err"
-    else
-        @warn "Non-retryable $(typeof(err)) occurred: $err"
-    end
-    return should_retry
+# Stop flag of the current processing run, set by `run_processing`; `nothing` outside of it.
+const PROCESSING_STOP = ScopedValue{Union{Nothing,Threads.Atomic{Bool}}}(nothing)
+
+# Flag of the current processing run to stop waiting for running items; `nothing` outside of it.
+const PROCESSING_ABANDON = ScopedValue{Union{Nothing,Threads.Atomic{Bool}}}(nothing)
+
+# Progress entry of the current processing step, set by `run_processing`; `nothing` outside of it.
+const PROGRESS_STEP = ScopedValue{Union{Nothing,Tuple{ProgressStore,ProgressKey}}}(nothing)
+
+# Called by `StoppablePool` with each worker it hands out to the current item of `parallel`.
+const ITEM_STARTED = ScopedValue{Any}(nothing)
+
+# Worker pool that hands out no worker once `stop` is set: `take!` throws
+# `ProcessingStopped` instead, also while it waits for a free worker. That keeps a stop
+# from hanging when no worker will become free, e.g. after all workers were stopped.
+struct StoppablePool{P<:AbstractWorkerPool} <: AbstractWorkerPool
+    pool::P
+    stop::Threads.Atomic{Bool}
 end
 
-function parallel(iterator::AbstractArray, f::Function, log_nt::UnionAll, wpool::WorkerPool; timeout::Int=0, retry::Bool=false, process_name::String="")
-    # prevent crash from Base
-    Base.exit_on_sigint(false)
+function Base.take!(p::StoppablePool)
+    p.stop[] && throw(ProcessingStopped())
+    taker = Threads.@spawn take!(p.pool)
+    while !istaskdone(taker)
+        if p.stop[]
+            # the worker the taker gets later goes back to the pool
+            errormonitor(Threads.@spawn put!(p.pool, fetch(taker)))
+            throw(ProcessingStopped())
+        end
+        sleep(0.2)
+    end
+    worker = fetch(taker)
+    if p.stop[]
+        put!(p.pool, worker)
+        throw(ProcessingStopped())
+    end
+    started = ITEM_STARTED[]
+    isnothing(started) || started(worker)
+    return worker
+end
 
+Base.put!(p::StoppablePool, worker::Int) = put!(p.pool, worker)
+
+"""
+    failure_log(log_nt, itr, message::AbstractString)
+
+Build the report row for an item of `parallel` that threw. `log_nt` is the processor's
+`NamedTuple{names}` row type and `message` the truncated error text. The status column
+is `ProcessStatus(0)` and every column without data is filled with `"-"`.
+
+Methods exist for `FileKey` items, giving `(itr, status, "-"..., message)`, and for
+`NamedTuple` items with `detector` and `usability` fields, giving
+`(detector, usability, [partition,] status, "-"..., message)`; the partition column is
+present when `log_nt` has a `Partition` column. A new item type for [`parallel`](@ref)
+needs its own `failure_log` method.
+"""
+function failure_log(log_nt::Type{<:NamedTuple}, itr::FileKey, message::AbstractString)
+    return log_nt((itr, ProcessStatus(0), fill("-", length(fieldnames(log_nt)) - 3)..., message))
+end
+
+function failure_log(log_nt::Type{<:NamedTuple}, itr::NamedTuple, message::AbstractString)
+    haskey(itr, :detector) && haskey(itr, :usability) ||
+        throw(ArgumentError("failure_log needs `detector` and `usability` fields, got $(keys(itr))"))
+    lead = :Partition in fieldnames(log_nt) ? (itr.detector, detector_status(itr.usability), itr.partition) :
+           (itr.detector, detector_status(itr.usability))
+    return log_nt((lead..., ProcessStatus(0), fill("-", length(fieldnames(log_nt)) - length(lead) - 2)..., message))
+end
+
+# Call `advance()` once for each task in `tasks` as it finishes, checking every `poll` seconds;
+# return when all tasks are done.
+function watch_tasks(advance, tasks::AbstractArray{Task}; poll::Real = 2)
+    counted = fill!(similar(tasks, Bool), false)
+    while !all(counted)
+        for i in eachindex(tasks, counted)
+            if !counted[i] && istaskdone(tasks[i])
+                counted[i] = true
+                advance()
+            end
+        end
+        all(counted) || sleep(poll)
+    end
+    return nothing
+end
+
+"""
+    parallel(f, iterator::AbstractArray, log_nt; timeout::Real=0, retry::Bool=false, process_name::AbstractString="")
+    parallel(iterator::AbstractArray, log_nt; kwargs...) do itr
+        ...
+    end
+
+Apply `f` to every element of `iterator` on the ParallelProcessingTools worker pool and
+return an array of `itr => f(itr)` pairs with the same shape and axes as `iterator`.
+The function comes first, as in `map`, so a `do`-block can supply it. Inside
+[`run_processing`](@ref) with a [`ProgressStore`](@ref), each item's start, worker and
+outcome are recorded for the current step; otherwise a progress bar labeled
+`process_name` shows the finished items.
+
+`log_nt` is the `NamedTuple` type of the processor's report rows. On success `f` returns a
+`NamedTuple` with at least the fields `processed::Bool` and `log`, a row of type `log_nt`
+(or a `Dict` of such rows), so that successful and failed items have the same shape for
+[`master_status`](@ref) and the report.
+An item whose result has `skipped = true`, which partition steps return for a detector
+left to the step of an earlier period, counts as not run in the progress.
+
+An item whose `f` throws, or exceeds `timeout` seconds when `timeout > 0`, does not abort
+the batch: its pair is `itr => (processed = false, log = failure_log(log_nt, itr, msg))`.
+A timed-out item's worker process is terminated and not replaced; an item on the main
+process keeps running in the background. With `retry = true`, each item gets up to three
+attempts after a worker loss or a timeout; an error thrown by `f` is not retried.
+
+Element types without a [`failure_log`](@ref) method for `log_nt` are rejected with an
+`ArgumentError` before any work starts.
+
+Inside [`run_step`](@ref), `f` sees the detector selection of `run_step` also on the
+workers (see [`redo_detector`](@ref)); with `outputs = :temp`, items whose `detector` is not
+selected are not run and are missing from the result. For items with a `detector` field,
+`parallel` throws an `ArgumentError` before any work starts if a chosen detector is not
+among them.
+
+Inside [`run_step`](@ref) with `debug = true`, the items run one after the other in the
+calling task, without workers and without `timeout`.
+
+Inside [`run_processing`](@ref), a stop of the processing run takes effect here: items that
+have not been handed to a worker are not run, items already running finish, and `parallel`
+then throws [`ProcessingStopped`](@ref) instead of returning. When the run is stopped without
+waiting for running items, `parallel` throws right away and the running items go on in
+the background; their workers return to the pool when the items end.
+
+# Examples
+```julia
+using LegendDataManagement: FileKey, ProcessStatus
+Row = NamedTuple{(:Filekey, :Status, :Events, :Error)}
+filekeys = [FileKey("l200-p03-r000-cal-20230311T235840Z")]
+results = parallel(filekeys, Row; process_name = "count events") do fk
+    (processed = true, log = Row((fk, ProcessStatus(1), 1000, "")))
+end
+master_status(results)  # process_succeeded
+```
+"""
+function parallel(f, iterator::AbstractArray, log_nt::Type{<:NamedTuple}; timeout::Real = 0, retry::Bool = false,
+                  process_name::AbstractString = "")
+    for T in unique(typeof.(iterator))
+        hasmethod(failure_log, Tuple{Type{log_nt},T,String}) || throw(ArgumentError("parallel: no failure_log method for items of type $T"))
+    end
+    # ScopedValues do not reach the workers: the item function sets those of `run_step` and the item again
+    selection, write, error_plots, log_level, plot_level, plot_formats = DETECTOR_SELECTION[], WRITE_PARS[], ERROR_PLOTS[],
+                                                                         PROCESSOR_LOG_LEVEL[], PLOT_LEVEL[], PLOT_FORMATS[]
+    if !isnothing(selection) && all(itr -> hasproperty(itr, :detector), iterator)
+        item_detectors = Set(string(itr.detector) for itr in iterator)
+        unknown = setdiff(selection, item_detectors)
+        isempty(unknown) || throw(ArgumentError("parallel: the detectors $(join(sort!(collect(unknown)), ", ")) chosen in " *
+                                                "`run_step` are not among the items; the items have the detectors $(join(sort!(collect(item_detectors)), ", "))"))
+    end
+    if !isnothing(selection) && !write
+        # `run_step` with temporary outputs: detectors that are not selected are not run
+        iterator = filter(itr -> !hasproperty(itr, :detector) || string(itr.detector) in selection, vec(iterator))
+    end
+    run_item(itr) = with(() -> f(itr), DETECTOR_SELECTION => selection, WRITE_PARS => write, ERROR_PLOTS => error_plots,
+                         PROCESSOR_LOG_LEVEL => log_level, PLOT_LEVEL => plot_level, PLOT_FORMATS => plot_formats, CURRENT_ITEM => itr)
+    stop = PROCESSING_STOP[]
+    pool = isnothing(stop) ? ppt_worker_pool() : StoppablePool(ppt_worker_pool(), stop)
+    step = PROGRESS_STEP[]
+    first_id = isnothing(step) ? 0 : items_queued!(step..., length(iterator))
     flush(stdout)
-    # assign tasks to workers 
+    # assign tasks to workers
     # Known Caveat: Split broadcasting over iterator and fetch of results in two separate lines, otherwise weird things with onworker going on
-    tasks = broadcast(iterator) do itr
-        Threads.@spawn begin
-            # maxtime will be set togehter with internal timeout for better handling
-            onworker(; tries=retry ? 3 : 1, label="$itr", maxtime=1.1*timeout) do
-                try
-                    # without timeout execute task
-                    if timeout <= 0
-                        f_res = f(itr)
-                        return itr => f_res
-                    # with timeout execute task inside thread and kill with InterruptException() in case it overruns maxtime
-                    else
-                        t_end = time() + timeout
-                        task = Threads.@spawn f(itr)
-                        while time() <= t_end && !istaskdone(task)
-                            sleep(0.1)
-                        end
-                        if !istaskdone(task)
-                            @debug "Timeout for $(itr)"
-                            @async Base.throwto(task, InterruptException())
-                            throw(ErrorException("Timeout for $(itr)"))
-                        end
-                        return itr => fetch(task)
-                    end
-                catch e
-                    if e isa TaskFailedException
-                        e = e.task.exception
-                    end
-                    @debug "Write Error log for $(itr): $(truncate_string(string(e)))"
-                    # distinguish between ch and det logging or iterator logging
-                    log_itr = nothing
-                    if itr isa NamedTuple && haskey(itr, :channel) && haskey(itr, :detector)
-                        if haskey(itr, :partition)
-                            log_itr = log_nt((itr.channel, itr.detector, itr.partition, ProcessStatus(0), fill("-", length(fieldnames(log_nt))-5)..., "$(truncate_string(string(e)))"))
-                        else
-                            log_itr = log_nt((itr.channel, itr.detector, ProcessStatus(0), fill("-", length(fieldnames(log_nt))-4)..., "$(truncate_string(string(e)))"))
-                        end
-                    elseif itr isa FileKey
-                        log_itr = log_nt((itr, ProcessStatus(0), fill("-", length(fieldnames(log_nt))-3)..., "$(truncate_string(string(e)))"))
-                    else
-                        throw(ErrorException("No logging for $(itr)"))
-                    end
-                    return itr => (processed = false, log = log_itr)
-                end
+    failure_row(itr, e) = itr => (processed = false, log = failure_log(log_nt, itr, truncate_error(e)))
+    # one progress id per item, with the axes of `iterator`
+    ids = first_id .+ (LinearIndices(iterator) .- first(LinearIndices(iterator)))
+    label(itr) = string(hasproperty(itr, :detector) ? itr.detector : itr)
+    item_outcome(res) = res isa NamedTuple && get(res, :skipped, false) === true ? :notrun : :done
+    if !isnothing(DEBUG_CAPTURE[])
+        result = map(iterator, ids) do itr, id
+            !isnothing(stop) && stop[] && throw(ProcessingStopped())
+            isnothing(step) || item_started!(step..., id, myid(), label(itr))
+            item_result, outcome = try
+                res = run_item(itr)
+                itr => res, item_outcome(res)
+            catch e
+                e isa InterruptException && rethrow()
+                failure_row(itr, e), :failed
             end
+            isnothing(step) || item_finished!(step..., id, outcome)
+            return item_result
+        end
+        record = STEP_RECORD[]
+        isnothing(record) || append!(record.results, vec(result))
+        return result
+    end
+    tasks = broadcast(iterator, ids) do itr, id
+        Threads.@spawn begin
+            started = isnothing(step) ? nothing : worker -> item_started!(step..., id, worker, label(itr))
+            result, outcome = try
+                # Past `maxtime`, onworker terminates the worker (never the main process) and
+                # counts the timeout as a failed try; the last failure lands in the catch below.
+                with(ITEM_STARTED => started) do
+                    onworker(; pool, tries = retry ? 3 : 1, label = "$itr", maxtime = timeout) do
+                        try
+                            res = run_item(itr)
+                            return itr => res, item_outcome(res)
+                        catch e
+                            # Caught here so that `retry` only covers worker loss and timeouts, not errors in `f`.
+                            @debug "Write Error log for $(itr): $e"
+                            return failure_row(itr, e), :failed
+                        end
+                    end
+                end
+            catch e
+                e isa TaskFailedException && (e = e.task.exception)
+                @debug "Worker call failed for $(itr): $e"
+                failure_row(itr, e), e isa ProcessingStopped ? :notrun : :failed
+            end
+            isnothing(step) || item_finished!(step..., id, outcome)
+            result
         end
     end
-    # set up Porgressbar
-    p = Progress(length(iterator); desc=process_name, showspeed=true, dt=0.5)
-    update!(p)
-    
-    # create result vector
-    Threads.@spawn begin
+    if isnothing(step)
+        p = Progress(length(iterator); desc = process_name, showspeed = true, dt = 0.5)
         update!(p)
-        n_finished = 0
-        while n_finished < length(iterator)
-            for t in tasks
-                if !ParallelProcessingTools.wouldwait(t)
-                    n_finished += 1
-                    next!(p)
-                    update!(p)
-                end
-            end
-            sleep(2)
+        errormonitor(Threads.@spawn watch_tasks(() -> next!(p), tasks))
+    end
+    abandon = PROCESSING_ABANDON[]
+    if !isnothing(abandon)
+        while !abandon[] && !all(istaskdone, tasks)
+            sleep(0.2)
+        end
+        if !all(istaskdone, tasks)
+            # the running items go on in the background and free their workers when done
+            isnothing(step) || items_abandoned!(step...)
+            throw(ProcessingStopped())
         end
     end
     # fetch results
     result = fetch.(tasks)
 
-    # finish!(p)
     flush(stdout)
-    Base.exit_on_sigint(true)
-
+    !isnothing(stop) && stop[] && throw(ProcessingStopped())
+    record = STEP_RECORD[]
+    isnothing(record) || append!(record.results, vec(result))
     return result
 end
