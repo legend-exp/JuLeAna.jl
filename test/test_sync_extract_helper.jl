@@ -21,7 +21,7 @@
             `$(Base.julia_cmd()) --project=$project $script $command $jobfile $extra`);
             stdout = out, stderr = err))
         lines = filter(!isempty, split(String(take!(out)), '\n'))
-        (; code = proc.exitcode, records = [TOML.parse(l)["r"] for l in lines],
+        (; code = proc.termsignal != 0 ? -proc.termsignal : proc.exitcode, records = [TOML.parse(l)["r"] for l in lines],
            stderr = String(take!(err)))
     end
 

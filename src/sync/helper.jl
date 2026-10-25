@@ -48,7 +48,15 @@ ParallelProcessingTools; the package's test environment does.
 """
 julia_project(h::SSHHost, c::HelperConfig) =
     expand_home(h, something(c.julia_project, DEFAULT_REMOTE_PROJECT))
-julia_project(::LocalHost, c::HelperConfig) = something(c.julia_project, dirname(Base.active_project()))
+function julia_project(::LocalHost, c::HelperConfig)
+    c.julia_project === nothing || return c.julia_project
+    active = Base.active_project()
+    active === nothing && throw(ErrorException("the local helper runs in the active project, but there is no active project"))
+    deps = get(TOML.parsefile(active), "deps", Dict{String,Any}())
+    lacking = [name for name in first.(HELPER_PACKAGES) if !haskey(deps, name)]
+    isempty(lacking) || throw(ErrorException("the active project $(dirname(active)) lacks $(join(lacking, ", ")), which the local helper needs"))
+    return dirname(active)
+end
 
 """
     staging_dir(h::RemoteHost, c::HelperConfig)::String

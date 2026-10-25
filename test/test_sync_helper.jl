@@ -24,6 +24,17 @@
                                                line -> error("stop here"))
     end
 
+    @testset "stream_remote kills a child that ignores SIGTERM" begin
+        # The callback fails while the child ignores SIGTERM: the call must still return, with the callback's error.
+        task = Threads.@spawn try
+            stream_remote(h, `sh -c 'trap "" TERM; echo one; sleep 600'`, line -> error("stop here"))
+        catch err
+            err
+        end
+        @test timedwait(() -> istaskdone(task), 30.0) == :ok
+        istaskdone(task) && @test occursin("stop here", sprint(showerror, fetch(task)))
+    end
+
     @testset "home expansion" begin
         @test expand_home("~/.juliaup/bin/julia", "/home/u") == "/home/u/.juliaup/bin/julia"
         @test expand_home("~", "/home/u") == "/home/u"
@@ -125,6 +136,28 @@
         @test julia_project(h, c) == dirname(Base.active_project())
         @test staging_dir(h, c) ==
               joinpath(tempdir(), "juleana-sync-" * get(ENV, "USER", "user"))
+
+        # The active project must hold the helper's packages.
+        saved, load_path = Base.ACTIVE_PROJECT[], copy(LOAD_PATH)
+        try
+            Base.set_active_project(nothing)
+            empty!(LOAD_PATH)
+            push!(LOAD_PATH, "@stdlib")
+            @test_throws "no active project" julia_project(h, c)
+            bare = mktempdir()
+            write(joinpath(bare, "Project.toml"), "[deps]\nHDF5 = \"f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f\"\n")
+            Base.set_active_project(joinpath(bare, "Project.toml"))
+            @test_throws "ParallelProcessingTools" julia_project(h, c)
+            @test_throws bare julia_project(h, c)
+            empty!(LOAD_PATH)
+            append!(LOAD_PATH, load_path)
+            Base.set_active_project(saved)
+            @test julia_project(h, c) == dirname(saved)
+        finally
+            empty!(LOAD_PATH)
+            append!(LOAD_PATH, load_path)
+            Base.set_active_project(saved)
+        end
 
         c2 = HelperConfig(; julia = "/opt/julia/bin/julia", julia_project = "/envs/x",
                           staging = "/scratch/s")
