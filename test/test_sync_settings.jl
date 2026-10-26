@@ -25,6 +25,37 @@
         end
     end
 
+    @testset "broken configuration files name the file" begin
+        mktempdir() do xdg
+            withenv("XDG_CONFIG_HOME" => xdg) do
+                mkpath(config_dir())
+                settings = joinpath(config_dir(), "settings.yaml")
+                hostsfile = joinpath(config_dir(), "hosts.yaml")
+                write(settings, "local_root: [unclosed\n")
+                @test_throws "settings.yaml" default_local_root()
+                write(settings, "local_root:\n  - a\n")
+                @test_throws "local_root in $settings must be a path" default_local_root()
+                write(hostsfile, "alpha: [unclosed\n")
+                @test_throws "hosts.yaml" host_remote_root(hostsfile, "alpha")
+                @test_throws "hosts.yaml" host_helper_config(hostsfile, "alpha")
+                @test_throws "hosts.yaml" hosts_choices(hostsfile)
+                write(hostsfile, "alpha:\n  staging: /s\n")
+                @test_throws "host alpha in $hostsfile needs a remote_root" host_remote_root(hostsfile, "alpha")
+            end
+        end
+    end
+
+    @testset "saving to the default path creates the configuration directory" begin
+        mktempdir() do xdg
+            withenv("XDG_CONFIG_HOME" => xdg) do
+                @test !isdir(config_dir())
+                sel = Selection("cslg4", "a/b", "/r", "/l", nothing, String[], String[], DateTime(2025, 1, 1))
+                path = save_selection(default_selection_path("a/b"), sel)
+                @test path == joinpath(config_dir(), "a-b.yaml") && isfile(path)
+            end
+        end
+    end
+
     hosts = joinpath(mktempdir(), "hosts.yaml")
     write(hosts, "alpha:\n  remote_root: /data/a\nbeta:\n  remote_root: /data/b\n  staging: /scratch/b\n")
 

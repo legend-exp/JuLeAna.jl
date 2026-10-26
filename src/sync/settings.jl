@@ -30,6 +30,16 @@ function default_hosts_file()
     return isfile(user) ? user : PACKAGED_HOSTS_FILE
 end
 
+# Every configuration file is read here, so a malformed one is an error that names the file.
+function read_config(file::AbstractString)
+    try
+        return readprops(file; subst_pathvar = false, subst_env = false)
+    catch err
+        err isa InterruptException && rethrow()
+        throw(ArgumentError("cannot read $file: " * sprint(showerror, err)))
+    end
+end
+
 """
     default_local_root()::String
 
@@ -39,8 +49,10 @@ The tool never guesses a local root.
 function default_local_root()
     file = joinpath(config_dir(), "settings.yaml")
     isfile(file) || return ""
-    settings = readprops(file; subst_pathvar = false, subst_env = false)
-    return haskey(settings, :local_root) ? String(settings.local_root) : ""
+    settings = read_config(file)
+    haskey(settings, :local_root) || return ""
+    settings.local_root isa AbstractString || throw(ArgumentError("local_root in $file must be a path, got $(repr(settings.local_root))"))
+    return String(settings.local_root)
 end
 
 """
@@ -50,9 +62,12 @@ The remote root that `file` (a YAML or JSON mapping of host aliases to
 `{remote_root: ...}`) lists for `host`.
 """
 function host_remote_root(file::AbstractString, host::AbstractString)
-    hosts = readprops(file; subst_pathvar = false, subst_env = false)
+    hosts = read_config(file)
     haskey(hosts, Symbol(host)) || throw(ArgumentError("host $host is not listed in $file; add it there or pass --remote-root"))
-    return String(hosts[Symbol(host)].remote_root)
+    entry = hosts[Symbol(host)]
+    entry isa PropDict && haskey(entry, :remote_root) && entry.remote_root isa AbstractString ||
+        throw(ArgumentError("host $host in $file needs a remote_root path"))
+    return String(entry.remote_root)
 end
 
 """
@@ -63,7 +78,7 @@ hosts file `file`. A host without an entry, or an entry without those keys, sele
 the defaults of [`HelperConfig`](@ref).
 """
 function host_helper_config(file::AbstractString, host::AbstractString)
-    hosts = readprops(file; subst_pathvar = false, subst_env = false)
+    hosts = read_config(file)
     haskey(hosts, Symbol(host)) || return HelperConfig()
     entry = hosts[Symbol(host)]
     value(key) = haskey(entry, key) ? String(entry[key]) : nothing
@@ -115,7 +130,7 @@ const SETTINGS_FIELDS = (:host, :remote_root, :production, :local_root, :mount_r
 The host aliases listed in the hosts file `file`; none when the file does not exist.
 """
 function hosts_choices(file::AbstractString)
-    return isfile(file) ? sort!(String.(keys(readprops(file; subst_pathvar = false, subst_env = false)))) : String[]
+    return isfile(file) ? sort!(String.(keys(read_config(file)))) : String[]
 end
 
 """
