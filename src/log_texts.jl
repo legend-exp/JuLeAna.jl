@@ -36,9 +36,10 @@ The centroid of the distribution is extracted as the decay time.
 const flt_optimization_log_text = """## Filter Optimization
 This is the log for the energy filter optimization. The algorithm loads the FEP, DEP and SEP data of each detector.
 A noise sweep on the baseline gives the rise time with minimal ENC at a fixed flat-top time. A flat-top scan at that rise time
-gives the seed flat-top time for the configured objective and the legacy flat-top time with minimal FWHM.
-A joint search over rise time and flat-top time on the sampling lattice, starting from the seed, gives the optimum.
-The FEP, the DEP, the SEP and the FEP after a coarse single-site A/E selection are compared at the legacy and the new optimum;
+gives the flat-top time that minimizes the configured objective and the legacy flat-top time with minimal FWHM.
+With joint_search enabled, a search over rise time and flat-top time on the sampling lattice, starting from that point, gives the optimum;
+otherwise the optimum is the flat-top scan optimum at the ENC rise time.
+The FEP, the DEP and the SEP are compared at the legacy and the new optimum;
 shifts of the DEP or SEP and changes of the slow-pulse residual appear in the column Crosscheck Warning.
 """
 

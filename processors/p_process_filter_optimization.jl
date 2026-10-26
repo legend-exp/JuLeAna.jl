@@ -91,12 +91,12 @@ function p_process_filter_optimization(processing_config::PropDict, l200::Legend
         if !reprocess && haskey(pars_db_det, det)
             @debug "Detector $(det) already processed, check missing filters"
             for filter_type in e_filter
-                if haskey(pars_db_det[det], filter_type) && !(all(k -> haskey(pars_db_det[det][filter_type], k), (:objective, :w90, :legacy, :converged)) && haskey(pars_db_det[det][filter_type].legacy, :rt) && haskey(pars_db_det[det][filter_type].legacy, :ft))
+                if haskey(pars_db_det[det], filter_type) && !(all(k -> haskey(pars_db_det[det][filter_type], k), (:objective, :w90, :ct_spread, :joint_search, :legacy)) && haskey(pars_db_det[det][filter_type].legacy, :rt) && haskey(pars_db_det[det][filter_type].legacy, :ft))
                     @info "Detector $det, filter $filter_type: pars from the previous method, re-optimizing"
                 elseif haskey(pars_db_det[det], filter_type)
                     @debug "Filter $filter_type already processed, skip"
                     pars_flt = pars_db_det[det][filter_type]
-                    log_info_dict[filter_type] = log_nt((det, ch, part, ProcessStatus(1), filter_type, pars_flt.objective, pars_flt.rt, pars_flt.ft, pars_flt.fwhm, pars_flt.w90, pars_flt.legacy.rt, pars_flt.legacy.ft, pars_flt.converged, "-", "Already processed --> skipped."))
+                    log_info_dict[filter_type] = log_nt((det, ch, part, ProcessStatus(1), filter_type, pars_flt.objective, pars_flt.rt, pars_flt.ft, pars_flt.fwhm, pars_flt.w90, pars_flt.legacy.rt, pars_flt.legacy.ft, get(pars_flt, :converged, "-"), "-", "Already processed --> skipped."))
                     processed_dict[filter_type] = false
                 end
             end
@@ -141,7 +141,7 @@ function p_process_filter_optimization(processing_config::PropDict, l200::Legend
                 log_info_dict[filter_type] = log_nt((det, ch, part, ProcessStatus(0), filter_type, fill("-", length(log_cols) - 6)..., truncate_error(res)))
                 processed_dict[filter_type] = false
             else
-                log_info_dict[filter_type] = log_nt((det, ch, part, ProcessStatus(1), filter_type, res.log.objective, res.pars.rt, res.pars.ft, res.pars.fwhm, res.pars.w90, res.log.legacy_rt, res.log.legacy_ft, res.pars.converged, res.log.crosscheck_warning, "-"))
+                log_info_dict[filter_type] = log_nt((det, ch, part, ProcessStatus(1), filter_type, res.log.objective, res.pars.rt, res.pars.ft, res.pars.fwhm, res.pars.w90, res.log.legacy_rt, res.log.legacy_ft, get(res.pars, :converged, "-"), res.log.crosscheck_warning, "-"))
                 result_rt_ft_dict[filter_type] = res.pars
                 processed_dict[filter_type] = true
             end
