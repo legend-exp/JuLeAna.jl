@@ -4,7 +4,7 @@
 
 Build the event tier (`jlevt`) of the `phy` run from the `jldsp` files, combining the listed subsystems.
 
-For each `phy` filekey of the run listed in the runinfo, the `jldsp` file must exist. The DSP data of the detectors of all `subsystems` are read, calibrated and combined into one event table by `calibrate_all`, including the cut flags. Per file the log counts forced triggers, pulser triggers and physical triggers (events with `geds.is_valid_qc` and more than one entry in `geds.trig_e_det`). If the PMT output is not empty and `:pmts` is in `subsystems`, a separate PMT file (`jlpmt` tier) is written.
+For each `phy` filekey of the run listed in the runinfo, the `jldsp` file must exist. The file is opened, and the DSP data of the detectors of all `subsystems` are calibrated and combined into one event table by `calibrate_all`, including the cut flags. Per file the log counts forced triggers, pulser triggers and physical triggers (events with `geds.is_valid_qc` and more than one entry in `geds.trig_e_det`). If the PMT output is not empty and `:pmts` is in `subsystems`, a separate PMT file (`jlpmt` tier) is written.
 
 # Inputs
 - `jldsp` tier of the `phy` filekeys of the run listed in the runinfo.
@@ -18,7 +18,7 @@ For each `phy` filekey of the run listed in the runinfo, the `jldsp` file must e
 # Keywords
 - `reprocess`: recreate the `jlevt` file (and the `jlpmt` file) of each filekey, removing existing ones. If `false`, existing `jlevt` files are kept and only their trigger counts are read for the report.
 - `timeout`: seconds allowed per filekey in `parallel` (0 = no limit). Failed filekeys are retried (`retry=true`).
-- `use_cache`: write each output file to a local cache directory first and move it to its place when done; otherwise write it next to its final location (default: `true`)
+- `use_cache`: read the `jldsp` file from a local cache copy, and write each output file to a local cache directory first and move it to its place when done; otherwise read and write in place (default: `true`)
 - `subsystems`: systems included in the event table, default `[:geds, :spms, :pmts, :aux]`.
 
 # Returns
@@ -77,11 +77,11 @@ function process_evt_phy(processing_config, l200::LegendData, period::DataPeriod
 
             # open output file
             @timeit dsp_timer "Evt" begin
-                dsp_detectors = unique(reduce(vcat, [channelinfo(l200, fk; system).detector for system in subsystems]))
-                dsp_data = read_ldata(l200, DataTier(:jldsp), fk, dsp_detectors; ignore_missing = true)
-                # generate evt level table
+                # generate evt level table from the open jldsp file, the evt config selects the detectors of each subsystem
                 out_t, pmts_out_t = @process_step "event table calibration of $fk" begin
-                    calibrate_all(l200, fk, dsp_data; subsystems)
+                    read_files(dspfilename; use_cache) do dspfile
+                        lh5open(dsp_data -> calibrate_all(l200, fk, dsp_data; subsystems), dspfile)
+                    end
                 end
                 # get number of forced, physical and pulser triggers
                 n_forced = count(out_t.aux.forcedtrigger.aux_trig)
