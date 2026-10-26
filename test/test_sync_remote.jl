@@ -87,7 +87,9 @@
         own = collect(ssh_command(SSHHost("cslg4", "/tmp/sock-%C"), "true").exec)
         @test "ControlPath=/tmp/sock-%C" in own
         kept = collect(ssh_command(SSHHost("viper", nothing), "uname -a").exec)
-        @test kept == ["ssh", "-n", "-o", "BatchMode=yes", "viper", "uname -a"]
+        @test kept ==
+              ["ssh", "-n", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4",
+               "viper", "uname -a"]
     end
 
     @testset "ssh never reads or prompts on the terminal" begin
@@ -103,6 +105,10 @@
             words = split(transport[2])
             @test words[1] == "ssh" && "BatchMode=yes" in words && "-n" ∉ words
             @test ("ControlPath=/tmp/sock-%C" in words) == (control_path !== nothing)
+            # A dropped connection ends the command: the connect gives up after 20 s, a silent one after 4 x 15 s.
+            for option in ("ConnectTimeout=20", "ServerAliveInterval=15", "ServerAliveCountMax=4")
+                @test option in parts && option in words
+            end
         end
         @test isempty(Sync.rsync_transport(h))
         @test_throws "whitespace" Sync.rsync_transport(SSHHost("cslg4", "/tmp/a b/sock-%C"))

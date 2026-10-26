@@ -123,7 +123,7 @@ the data production, after a confirmation; an existing file is kept as
 ## The interface
 
 The tabs at the top open the pages, also with the keys `1` to `8`. `?` shows all keys of
-the visible page, `q` or `Ctrl+C` quits (it asks first while processing runs, while the Sync page has unsaved marks, and while it transfers). The status panel under the tabs shows the state
+the visible page, `q` or `Ctrl+C` quits (it asks first while processing runs, while the Sync page has unsaved marks, and while it transfers or creates an environment). The status panel under the tabs shows the state
 of the session, the outcome of the last run, the workers and the countdown to the cancel
 of idle workers, with the newest warning or error on the right; once a processing run
 started, a bar below shows its progress and elapsed time. The bottom row lists the keys.

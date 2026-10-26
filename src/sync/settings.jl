@@ -16,7 +16,7 @@ config_dir() = joinpath(get(ENV, "XDG_CONFIG_HOME", joinpath(homedir(), ".config
 """
     default_selection_dir()::String
 
-The directory that saved selections go to unless told otherwise: [`config_dir`](@ref).
+The directory below which saved selections go unless told otherwise, in one subdirectory per host: [`config_dir`](@ref).
 """
 default_selection_dir() = config_dir()
 
@@ -91,12 +91,14 @@ function host_helper_config(file::AbstractString, host::AbstractString)
 end
 
 """
-    default_selection_path(production::AbstractString)::String
+    default_selection_path(host::AbstractString, production::AbstractString)::String
 
-Where the interface saves the selection for `production` unless told otherwise.
-Directory separators in the production path become dashes.
+Where the interface saves the selection for `production` on `host` unless told otherwise:
+`<config dir>/<host>/<production>.yaml`. Directory separators in the production path become dashes.
 """
-default_selection_path(production::AbstractString) = joinpath(default_selection_dir(), replace(production, '/' => '-') * ".yaml")
+function default_selection_path(host::AbstractString, production::AbstractString)
+    return joinpath(default_selection_dir(), host, replace(production, '/' => '-') * ".yaml")
+end
 
 """
     SyncSettings(; host, remote_root, production, local_root, mount_root, staging, jobs, selection, hosts_file)
@@ -104,7 +106,7 @@ default_selection_path(production::AbstractString) = joinpath(default_selection_
 The values of the settings panel and of the command line, all as text so that an invalid entry can be
 held and shown with its reason. An empty `remote_root` stands for the host's entry in `hosts_file`, an
 empty `staging` for the host default, an empty `mount_root` for no mount, an empty `selection` for
-[`default_selection_path`](@ref) of the production. [`Options`](@ref) turns valid settings into the
+[`default_selection_path`](@ref) of the host and production. [`Options`](@ref) turns valid settings into the
 values the rest of the tool uses. The constructor reads no file.
 """
 Base.@kwdef mutable struct SyncSettings
@@ -166,11 +168,11 @@ end
 """
     selection_path(s::SyncSettings)::String
 
-The file the selection is saved to and loaded from: `s.selection`, else the default of the production,
+The file the selection is saved to and loaded from: `s.selection`, else the default of the host and production,
 else `""` while no production is named.
 """
 function selection_path(s::SyncSettings)
-    return !isempty(s.selection) ? s.selection : isempty(s.production) ? "" : default_selection_path(s.production)
+    return !isempty(s.selection) ? s.selection : isempty(s.production) ? "" : default_selection_path(s.host, s.production)
 end
 
 """

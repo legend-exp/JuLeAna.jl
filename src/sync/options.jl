@@ -55,7 +55,7 @@ The settings that `o` came from. The default selection path of the production is
 explicit one.
 """
 function SyncSettings(o::Options; hosts_file::AbstractString = default_hosts_file())
-    explicit = isempty(o.production) || o.out != default_selection_path(o.production) ? o.out : ""
+    explicit = isempty(o.production) || o.out != default_selection_path(o.host, o.production) ? o.out : ""
     return SyncSettings(; host = o.host, remote_root = o.remote_root, production = o.production, local_root = o.local_root,
                         mount_root = something(o.mount_root, ""), staging = something(o.helper.staging, ""), jobs = string(o.jobs),
                         selection = explicit, hosts_file)
@@ -179,7 +179,7 @@ function run_headless(options::Options, host::RemoteHost)
            options.production
     production = Production(host, name, options.remote_root,
                             options.local_root; mount_root = options.mount_root)
-    selection = load_selection(options.from, production)
+    selection = load_selection(options.from, production; host = options.host)
 
     printer = StepPrinter()
     (; estimate, staging, free) = with_failed_step(printer) do

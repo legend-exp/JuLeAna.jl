@@ -4,7 +4,7 @@ Run against `cslg4` and `viper`. The automated suite never touches the
 clusters, so this is where the ssh, rsync and mount paths are confirmed. The
 `cslg4` steps use a production chosen in the production list; pick one that holds `jlevt`
 data and call it `<production>` below. Settings that the steps name as a field are the fields of the
-screen; `local_root` in `~/.config/juleana/sync/settings.yaml` or `--local-root` fills the Local root.
+screen; `local_root` in `settings.yaml` of the configuration directory (see Sync configuration) or `--local-root` fills the Local root.
 
 Record the date and the outcome of each step in a comment on the pull request.
 Do not paste per-detector numbers or plots: sizes, file counts and timings only.
@@ -87,9 +87,9 @@ Do not paste per-detector numbers or plots: sizes, file counts and timings only.
 
 ## Headless re-apply
 
-- [ ] `s` on the screen writes `~/.config/juleana/sync/<production>.yaml`, with `/` in
-      the production path replaced by `-`.
-- [ ] `juleana-sync --from ~/.config/juleana/sync/<production>.yaml --dry-run`
+- [ ] `s` on the screen writes `<config dir>/<host>/<production>.yaml`, with `/` in
+      the production path replaced by `-`; `<config dir>` is the configuration directory.
+- [ ] `juleana-sync --from <config dir>/<host>/<production>.yaml --dry-run`
       prints an estimate of 0 bytes, because everything is already there; no
       `--production` is needed.
 - [ ] Delete one copied file and re-run without `--dry-run` and with `--yes`:
@@ -172,7 +172,7 @@ top-level directory recursively.
       reports the failure and names the staging directory, and the rerun skips the
       finished files. Interrupt an rsync pull and confirm `.juleana-partial`
       directories remain in the mirror and the rerun completes.
-- [ ] Headless: `juleana-sync --from ~/.config/juleana/sync/<production>.yaml --dry-run`
+- [ ] Headless: `juleana-sync --from <config dir>/<host>/<production>.yaml --dry-run`
       prints the estimate with the extract part, then the staging directory and
       its free space. With the helper environment absent it stops with an error
       that names the `Pkg.add` command.

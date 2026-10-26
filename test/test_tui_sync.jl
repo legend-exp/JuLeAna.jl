@@ -303,7 +303,8 @@ withenv("LEGEND_DATA_CONFIG" => joinpath(mktempdir(), "config.json"), "XDG_CONFI
             Tachikoma.update!(m, KeyEvent('q'))                       # the page takes every key but Ctrl-C while a transfer runs
             @test isnothing(m.dialog) && !m.quit
             Tachikoma.update!(m, KeyEvent(:ctrl_c))
-            @test m.dialog === :quit && find_text(sync_render(m), "q: quit now, interrupting the sync transfer") !== nothing
+            @test m.dialog === :quit &&
+                  find_text(sync_render(m), "q: quit now, interrupting the sync transfer or environment creation") !== nothing
             Tachikoma.update!(m, KeyEvent('q'))
             @test m.quit
         end
@@ -327,9 +328,9 @@ withenv("LEGEND_DATA_CONFIG" => joinpath(mktempdir(), "config.json"), "XDG_CONFI
             m.sync.dirty = true
             m.sync.modal_kind = :transfer
             message = JuLeAna.quit_message(m)
-            @test occursin("s: stop after the running items, then quit, interrupting the sync transfer, discarding the unsaved sync selection\n",
+            @test occursin("s: stop after the running items, then quit, interrupting the sync transfer or environment creation, discarding the unsaved sync selection\n",
                            message)
-            @test occursin("q: quit now, ending the run and its workers, interrupting the sync transfer, discarding the unsaved sync selection",
+            @test occursin("q: quit now, ending the run and its workers, interrupting the sync transfer or environment creation, discarding the unsaved sync selection",
                            message)
             m.sync.modal_kind = :none
             m.sync.dirty = false

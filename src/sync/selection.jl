@@ -474,15 +474,18 @@ function save_selection(path::AbstractString, sel::Selection)
 end
 
 """
-    load_selection(path::AbstractString, p::Production)::Selection
+    load_selection(path::AbstractString, p::Production; host = nothing)::Selection
 
-Read a saved selection and check it belongs to `p`. Variable substitution is off:
+Read a saved selection and check it belongs to `p`, and to `host` when that is given: a selection records the host its
+tree was built from, and marks of one host do not describe the files of another. Variable substitution is off:
 a selection holds literal paths, and expanding a `\$` in one would silently point
 the transfer somewhere else. The returned selection's copy list is the union of the
 file's and `mandatory_copies(p)`, so a hand-written file still yields an openable mirror.
 """
-function load_selection(path::AbstractString, p::Production)
+function load_selection(path::AbstractString, p::Production; host::Union{Nothing,AbstractString} = nothing)
     sel = Selection(readprops(path; subst_pathvar = false, subst_env = false))
+    host === nothing || sel.host == host ||
+        throw(ArgumentError("selection $path was saved for host $(sel.host), but the current host is $host"))
     sel.production == p.name || throw(ArgumentError("selection $path is for production $(sel.production), not $(p.name)"))
     rstrip(normpath(sel.remote_root), '/') == p.remote_root ||
         throw(ArgumentError("selection $path has remote root $(sel.remote_root), not $(p.remote_root)"))

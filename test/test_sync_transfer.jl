@@ -32,7 +32,8 @@
 
         ssh = collect(rsync_command(SSHHost("cslg4", nothing), p, "/tmp/files.txt"; dry_run = false).exec)
         @test ssh[end - 1] == "cslg4:" * FIXTURE_ROOT * "/"
-        @test ["-e", "ssh -o BatchMode=yes"] == ssh[findfirst(==("-e"), ssh) .+ (0:1)]
+        @test ["-e", "ssh -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"] ==
+              ssh[findfirst(==("-e"), ssh) .+ (0:1)]
         @test "-e" ∉ collect(rsync_command(h, p, "/tmp/files.txt"; dry_run = false).exec)
     end
 
@@ -44,6 +45,15 @@
         @test prog.eta == "0:00:12"
         @test parse_progress("") === nothing
         @test parse_progress("sending incremental file list") === nothing
+    end
+
+    @testset "a failing progress callback stops rsync" begin
+        pidfile = joinpath(mktempdir(), "pid")
+        script = "echo \$\$ > $pidfile; printf '  1,000  50%%  1.00MB/s  0:00:01\\r'; exec sleep 60"
+        t = @elapsed @test_throws "callback failed" run_rsync(`sh -c $script`, _ -> error("callback failed"))
+        @test t < 30
+        pid = parse(Int, strip(read(pidfile, String)))
+        @test !success(pipeline(`kill -0 $pid`; stderr = devnull))      # the child is gone, not left running
     end
 
     @testset "check_mount" begin

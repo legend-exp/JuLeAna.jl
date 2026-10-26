@@ -58,8 +58,15 @@
         @test !should_quit(blocked) && blocked.dialog === nothing && blocked.page.modal_kind == :error && blocked.page.dirty
         discarded = app_for(; dirty = true)
         update!(discarded, KeyEvent('q'))
-        update!(discarded, KeyEvent(:escape))            # Escape is "Quit without saving"
+        update!(discarded, KeyEvent(:right))             # the second button is "Quit without saving"
+        update!(discarded, KeyEvent(:enter))
         @test should_quit(discarded) && !isfile(discarded.page.options.out)
+        # Escape closes the dialog like the quit dialog of juleana: the app stays open and nothing is saved.
+        kept = app_for(; dirty = true)
+        update!(kept, KeyEvent('q'))
+        update!(kept, KeyEvent(:escape))
+        @test !should_quit(kept) && kept.dialog === nothing && kept.dialog_kind == :none && kept.page.dirty &&
+              !isfile(kept.page.options.out)
     end
 
     @testset "a running transfer asks before quitting" begin

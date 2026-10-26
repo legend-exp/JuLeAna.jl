@@ -188,6 +188,10 @@
         @test_throws ArgumentError run_headless(Options("local", joinpath(FIXTURE_ROOT, "absent"), local_root, nothing, "test", "", out,
                                                         true, false), h)
 
+        # A selection saved for another host is refused before anything is read from the host.
+        @test_throws "saved for host local, but the current host is viper" run_headless(Options("viper", FIXTURE_ROOT, local_root, nothing,
+                                                                                                "test", "", out, true, false), h)
+
         # A failure inside a late step names that step on stderr and ends the printed line.
         bad = joinpath(mktempdir(), "bad.yaml")
         save_selection(bad,

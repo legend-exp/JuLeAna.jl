@@ -14,11 +14,13 @@
         @test o.out == ""
     end
 
-    @testset "the selection file is named after the production" begin
+    @testset "the selection file is named after the host and the production" begin
+        @test parse_options(["--host", "viper", "--production", "test"]).out ==
+              joinpath(default_selection_dir(), "viper", "test.yaml")
         @test parse_options(["--production", "test"]).out ==
-              joinpath(default_selection_dir(), "test.yaml")
+              joinpath(default_selection_dir(), "cslg4", "test.yaml")
         @test parse_options(["--production", "juleana/tmp/jl-v0.7.0dev1"]).out ==
-              joinpath(default_selection_dir(), "juleana-tmp-jl-v0.7.0dev1.yaml")
+              joinpath(default_selection_dir(), "cslg4", "juleana-tmp-jl-v0.7.0dev1.yaml")
     end
 
     @testset "remote roots per host" begin
@@ -49,7 +51,7 @@
         @test o.mount_root == "/Volumes/cslg4"
         @test o.from == "/tmp/sel.yaml"
         @test o.dry_run && o.yes
-        @test o.out == joinpath(default_selection_dir(), "preprod.yaml")
+        @test o.out == joinpath(default_selection_dir(), o.host, "preprod.yaml")
         @test parse_options(["--out", "/tmp/x.yaml"]).out == "/tmp/x.yaml"
         @test_throws "--out must end in .yaml, got /tmp/x.json" parse_options(["--out", "/tmp/x.json"])
     end
@@ -123,7 +125,7 @@
                         ["temp/jl-dev/config.json", "config_fixture.json", "temp/config_site.yaml",
                          "temp/jl-dev/legend-metadata"], String[], now())
         selpath = save_selection(joinpath(mktempdir(), "sel.yaml"), sel)
-        options = parse_options(["--remote-root", FIXTURE_ROOT, "--local-root", local_root,
+        options = parse_options(["--host", "local", "--remote-root", FIXTURE_ROOT, "--local-root", local_root,
                                  "--from", selpath, "--dry-run"])
         @test options.production == ""
         code = open(tempname(), "w") do io
@@ -132,7 +134,7 @@
         @test code == 0
 
         # When both are given they must agree.
-        both = parse_options(["--remote-root", FIXTURE_ROOT, "--local-root", local_root,
+        both = parse_options(["--host", "local", "--remote-root", FIXTURE_ROOT, "--local-root", local_root,
                               "--production", "test", "--from", selpath, "--dry-run"])
         @test_throws "is for production temp/jl-dev" main(both, h)
     end

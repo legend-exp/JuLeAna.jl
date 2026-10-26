@@ -4,8 +4,8 @@
     SyncApp(page::SyncPage)
 
 The model of `juleana-sync`: one [`SyncPage`](@ref) on the whole screen, its task queue, and the quit
-dialog. The page returns `false` for `q` and Ctrl-C; the app asks about a running transfer first, then
-about unsaved marks, and otherwise quits.
+dialog. The page returns `false` for `q` and Ctrl-C; the app asks about a running transfer or environment
+creation first, then about unsaved marks, and otherwise quits. Escape closes either question without quitting.
 """
 mutable struct SyncApp <: Model
     const page::SyncPage
@@ -31,7 +31,7 @@ function request_quit!(app::SyncApp)
     page = app.page
     if sync_busy(page)
         app.dialog = Modal(title = "Transfer running",
-                           message = "Quitting now interrupts the transfer.\nStaged files are kept and the next run resumes from them.",
+                           message = "Quitting now interrupts the running transfer or environment creation.\nStaged files are kept and the next run resumes from them.",
                            confirm_label = "Quit now", cancel_label = "Keep running", selected = :cancel)
         app.dialog_kind = :busy
     elseif sync_dirty(page)
@@ -47,6 +47,11 @@ end
 
 function update!(app::SyncApp, e::KeyEvent)
     if app.dialog !== nothing
+        # Escape on the save question keeps the app and the marks, like Escape on the quit dialog of juleana.
+        if app.dialog_kind == :unsaved && e.key == :escape
+            app.dialog, app.dialog_kind = nothing, :none
+            return app
+        end
         answer = handle_key!(app.dialog, e)
         answer in (false, :none) && return app
         kind = app.dialog_kind

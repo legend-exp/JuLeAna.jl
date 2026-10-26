@@ -13,7 +13,7 @@ PropDicts.readprops(::NotAPath; kwargs...) = throw(MethodError(identity, ()))
                 @test default_selection_dir() == config_dir()
                 @test default_hosts_file() == Sync.PACKAGED_HOSTS_FILE && isfile(default_hosts_file())
                 @test default_local_root() == ""
-                @test default_selection_path("a/b") == joinpath(config_dir(), "a-b.yaml")
+                @test default_selection_path("h", "a/b") == joinpath(config_dir(), "h", "a-b.yaml")
                 @test field_error(SyncSettings(), :local_root) == "Local root must be set"
                 @test_throws "--local-root must be set" parse_options(String[])
                 mkpath(config_dir())
@@ -68,8 +68,8 @@ PropDicts.readprops(::NotAPath; kwargs...) = throw(MethodError(identity, ()))
             withenv("XDG_CONFIG_HOME" => xdg) do
                 @test !isdir(config_dir())
                 sel = Selection("cslg4", "a/b", "/r", "/l", nothing, String[], String[], DateTime(2025, 1, 1))
-                path = save_selection(default_selection_path("a/b"), sel)
-                @test path == joinpath(config_dir(), "a-b.yaml") && isfile(path)
+                path = save_selection(default_selection_path("cslg4", "a/b"), sel)
+                @test path == joinpath(config_dir(), "cslg4", "a-b.yaml") && isfile(path)
             end
         end
     end
@@ -148,7 +148,7 @@ PropDicts.readprops(::NotAPath; kwargs...) = throw(MethodError(identity, ()))
         p = parse_options(args; hosts_file = hosts)
         @test all(f -> getfield(o, f) == getfield(p, f), fieldnames(Options))
         @test (o.remote_root, o.jobs, o.helper.staging, o.out) ==
-              ("/data/b", 3, "/scratch/b", joinpath(default_selection_dir(), "p-q.yaml"))
+              ("/data/b", 3, "/scratch/b", joinpath(default_selection_dir(), "beta", "p-q.yaml"))
         @test selection_path(r.settings) == o.out
         t = SyncSettings(o; hosts_file = hosts)
         @test all(f -> getfield(Options(t), f) == getfield(o, f), fieldnames(Options))

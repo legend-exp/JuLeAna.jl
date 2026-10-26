@@ -239,6 +239,9 @@
                             nothing, sel.copy, sel.link, sel.created)
         path3 = save_selection(joinpath(mktempdir(), "preprod.yaml"), renamed)
         @test_throws "is for production preprod" load_selection(path3, p)
+        # A selection belongs to the host its tree was built from.
+        @test load_selection(path, p; host = sel.host).production == p.name
+        @test_throws "saved for host $(sel.host), but the current host is other" load_selection(path, p; host = "other")
     end
 
     @testset "apply_selection! reconstructs the tree" begin

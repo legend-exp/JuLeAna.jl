@@ -409,7 +409,7 @@
         @test find_text(tb, "Production: temp/jl-dev") !== nothing
         @test find_text(tb, "config.json") !== nothing
         @test m.options.production == "temp/jl-dev"
-        @test m.options.out == joinpath(default_selection_dir(), "temp-jl-dev.yaml")
+        @test m.options.out == joinpath(default_selection_dir(), m.options.host, "temp-jl-dev.yaml")
         @test m.production.name == "temp/jl-dev"
 
         # The tree screen behaves as before: save writes the chosen file.

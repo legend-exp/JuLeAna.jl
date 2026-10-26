@@ -220,9 +220,9 @@ A left click on a page's tab opens the page; other mouse events go to the visibl
 Keys: the visible page gets each key first (see [`JuLeAna.setup_key!`](@ref) for the
 Setup page, [`JuLeAna.graph_key!`](@ref) for the Graph page,
 [`JuLeAna.progress_key!`](@ref) for the Progress page and [`JuLeAna.log_key!`](@ref) for the Log page, [`JuLeAna.reports_key!`](@ref) for the Reports page and [`JuLeAna.history_key!`](@ref) for the History page and [`JuLeAna.workers_key!`](@ref) for the Workers page); otherwise `1` to `8` switch pages and `q`
-or Ctrl-C quits. While processing runs, or the Sync page has unsaved marks or a running transfer, quitting asks first: `s` stops processing after
+or Ctrl-C quits. While processing runs, or the Sync page has unsaved marks or a running transfer or environment creation, quitting asks first: `s` stops processing after
 the running items and quits when the run has ended, `w` saves the sync selection and quits, `q` quits at once, ending the run and the workers connected to this
-process, interrupting the transfer and discarding the unsaved selection, and `c` or Escape keeps the interface open. The dialog lists only the keys that apply.
+process, interrupting the transfer or environment creation and discarding the unsaved selection, and `c` or Escape keeps the interface open. The dialog lists only the keys that apply.
 
 `JuLeAnaTUI(ctrl, messages; splash_seconds = 1.5)` shows a startup screen with the logo,
 the version and the link to the documentation in place of the page when the interface
@@ -231,7 +231,6 @@ ends it and is not passed on. `?` opens a panel that lists the keys of the visib
 Escape, `?` or `q` closes it. The Setup page's filter and the kwargs editor receive `?` as text.
 
 `N` on the Setup page opens the [`JuLeAna.ProductionForm`](@ref) for a new data production.
-
 The form replaces the visible page and takes every key (see [`JuLeAna.production_key!`](@ref)).
 It is also open when the interface starts without a session: when the parsed
 options have no `config` or `new_production` is set, `start!` does not load a session.

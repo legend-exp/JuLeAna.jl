@@ -31,7 +31,7 @@ function sync_initial_production(settings::SyncSettings)
     return preselect_production(joinpath(current[2], current[1]), roots)
 end
 
-# Whether leaving would lose sync work: unsaved marks or a running transfer.
+# Whether leaving would lose sync work: unsaved marks, or a running transfer or environment creation.
 sync_pending(m::JuLeAnaTUI) = !isnothing(m.sync) && (sync_dirty(m.sync) || sync_busy(m.sync))
 
 # The text of the quit dialog: one line per key that applies. The `s` and `q` lines name the sync work they lose.
@@ -40,7 +40,7 @@ function quit_message(m::JuLeAnaTUI)
     busy = !isnothing(m.sync) && sync_busy(m.sync)
     lines = String[]
     sync_effects = String[]
-    busy && push!(sync_effects, "interrupting the sync transfer")
+    busy && push!(sync_effects, "interrupting the sync transfer or environment creation")
     dirty && push!(sync_effects, "discarding the unsaved sync selection")
     processing(m) && push!(lines, join(["s: stop after the running items, then quit"; sync_effects], ", "))
     dirty && push!(lines, "w: save the sync selection to $(selection_path(m.sync.settings)), then quit")

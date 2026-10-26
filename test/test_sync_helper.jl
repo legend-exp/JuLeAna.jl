@@ -7,7 +7,9 @@
 
     @testset "remote_command wraps only for ssh" begin
         @test remote_command(h, `echo a b`) == `echo a b`
-        @test collect(remote_command(ssh, `echo 'a b'`).exec) == ["ssh", "-n", "-o", "BatchMode=yes", "cslg4", "echo 'a b'"]
+        @test collect(remote_command(ssh, `echo 'a b'`).exec) ==
+              ["ssh", "-n", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4",
+               "cslg4", "echo 'a b'"]
     end
 
     @testset "stream_remote delivers lines and returns standard error" begin
@@ -71,9 +73,11 @@
 
     @testset "pushing a file" begin
         @test collect(push_command(ssh, "/a/extract.jl", "/stage").exec) ==
-              ["rsync", "-t", "-e", "ssh -o BatchMode=yes", "--", "/a/extract.jl", "cslg4:/stage/"]
+              ["rsync", "-t", "-e", "ssh -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4", "--",
+               "/a/extract.jl", "cslg4:/stage/"]
         @test collect(push_command(ssh, "/a/job.toml", "/stage"; checksum = true).exec) ==
-              ["rsync", "-t", "-e", "ssh -o BatchMode=yes", "--checksum", "--", "/a/job.toml", "cslg4:/stage/"]
+              ["rsync", "-t", "-e", "ssh -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4",
+               "--checksum", "--", "/a/job.toml", "cslg4:/stage/"]
         src = joinpath(work, "pushed.txt")
         write(src, "payload")
         dest = push_file(h, src, joinpath(work, "dest", "dir"))

@@ -82,6 +82,7 @@
     @testset "the staging directory must have room" begin
         @test check_staging_space("/s", 10^6, 1000) === nothing
         @test_throws "has 1.0 K free but the extraction needs about 4.0 K" check_staging_space("/s", 1024, 4096)
+        @test_throws "in $(joinpath(config_dir(), "hosts.yaml")) or pass --staging" check_staging_space("/s", 1024, 4096)
     end
 
     @testset "a failure keeps the staged files and a rerun resumes" begin

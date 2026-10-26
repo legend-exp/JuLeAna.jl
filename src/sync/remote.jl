@@ -96,12 +96,15 @@ ssh_command(h::SSHHost, remote::AbstractString) = `ssh -n -o BatchMode=yes $(ssh
 """
     ssh_options(h::SSHHost)::Vector{String}
 
-The connection-sharing options of `h`: none when the ssh configuration has its own
+The options every ssh connection of `h` carries: a connect timeout of 20 s, and a probe every 15 s that ends
+the connection after 4 unanswered ones, so a dropped connection fails after about a minute instead of
+hanging. They are followed by the connection-sharing options: none when the ssh configuration has its own
 ControlMaster, the tool's control socket otherwise.
 """
 function ssh_options(h::SSHHost)
-    return h.control_path === nothing ? String[] :
-           ["-o", "ControlMaster=auto", "-o", "ControlPath=$(h.control_path)", "-o", "ControlPersist=60s"]
+    liveness = ["-o", "ConnectTimeout=20", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4"]
+    return h.control_path === nothing ? liveness :
+           [liveness; "-o"; "ControlMaster=auto"; "-o"; "ControlPath=$(h.control_path)"; "-o"; "ControlPersist=60s"]
 end
 
 """

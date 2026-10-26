@@ -144,24 +144,35 @@ end
 # read and returned rather than discarded on the success path. Progress
 # readings are separated by carriage returns, not newlines. rsync reads no
 # terminal input: its stdin is /dev/null, and the ssh transport it starts talks
-# to rsync over its own pipe.
+# to rsync over its own pipe. A failing `progress` callback stops rsync like a
+# failing `on_line` stops `stream_remote`: SIGTERM, SIGKILL after 10 s, then the
+# exception propagates.
 function run_rsync(cmd::Cmd, progress)
     errfile = tempname()
     transcript = IOBuffer()
     chunk = IOBuffer()
     proc = open(pipeline(ignorestatus(cmd); stdin = devnull, stderr = errfile), "r")
-    while !eof(proc)
-        c = read(proc, Char)
-        if c == '\r' || c == '\n'
-            text = String(take!(chunk))
-            println(transcript, text)
-            if progress !== nothing
-                reading = parse_progress(text)
-                reading === nothing || progress(reading)
+    try
+        while !eof(proc)
+            c = read(proc, Char)
+            if c == '\r' || c == '\n'
+                text = String(take!(chunk))
+                println(transcript, text)
+                if progress !== nothing
+                    reading = parse_progress(text)
+                    reading === nothing || progress(reading)
+                end
+            else
+                write(chunk, c)
             end
-        else
-            write(chunk, c)
         end
+    catch
+        # 9 is SIGKILL; Base.SIGKILL is not public.
+        kill(proc)
+        timedwait(() -> !process_running(proc), 10.0) == :ok || kill(proc, 9)
+        wait(proc)
+        rm(errfile; force = true)
+        rethrow()
     end
     println(transcript, String(take!(chunk)))
     wait(proc)
@@ -355,7 +366,8 @@ fit into `free` bytes.
 function check_staging_space(staging::AbstractString, free::Integer, needed::Integer)
     ceil(Int, STAGING_MARGIN * needed) <= free && return nothing
     return throw(ErrorException("staging directory $staging has $(format_bytes(free)) free but the extraction needs about " *
-                                "$(format_bytes(needed)); set \"staging\" for this host in config/sync/hosts.yaml or pass --staging"))
+                                "$(format_bytes(needed)); set \"staging\" for this host in " *
+                                "$(joinpath(config_dir(), "hosts.yaml")) or pass --staging"))
 end
 
 """

@@ -680,4 +680,107 @@
         m.running -= 1
     end
 
+    @testset "Estimate is refused while a task runs and Transfer moves the estimated selection" begin
+        m = fresh(; production = "test")
+        sync_start!(m)
+        settle!(m)
+        tier = m.root.children[findfirst(c -> c.label == "tier", m.root.children)]
+        set_mode!(tier, :copy)
+        m.dirty = true
+        path = save!(m)
+        start_load!(m, path)
+        sync_key!(m, KeyEvent('e'))
+        @test m.modal_kind == :none && m.estimated === nothing && m.running == 1 && occursin("busy:", m.status)
+        sync_key!(m, KeyEvent('t'))
+        @test m.modal_kind == :none && m.estimated === nothing && m.running == 1
+        settle!(m)
+        tier = m.root.children[findfirst(c -> c.label == "tier", m.root.children)]
+        target = Sync.to_local(m.production, tier.remote_path)
+        @test !ispath(target)
+        sync_key!(m, KeyEvent('t'))
+        settle!(m)
+        @test m.modal_kind == :estimate && m.estimated !== nothing
+        # The tree is replaced while the dialog is open: the transfer still moves what was estimated.
+        m.root = production_tree(m.host, m.production)
+        sync_key!(m, KeyEvent(:enter))
+        settle!(m)
+        @test m.modal_kind == :message && ispath(target) && m.estimated === nothing
+        @test_throws "no estimated selection" start_transfer!(m)
+    end
+
+    @testset "busy names the running task and ignores background sizes" begin
+        m = fresh(; production = "test")
+        sync_start!(m)
+        settle!(m)
+        m.status = ""
+        push!(m.active, "sizes:/x")
+        m.running += 1
+        @test !Sync.busy!(m) && m.status == ""
+        push!(m.active, "productions")
+        m.running += 1
+        @test Sync.busy!(m) && m.status == "busy: listing productions"
+        m.status = ""
+        pop!(m.active)
+        m.running -= 1
+        pop!(m.active)
+        m.running -= 1
+        # Connect proceeds while sizes are computed.
+        push!(m.active, "sizes:/x")
+        m.running += 1
+        connect!(m)
+        @test m.connecting && !occursin("busy", m.status)
+        settle!(m)
+        pop!(m.active)
+        m.running -= 1
+    end
+
+    @testset "an error while a transfer or environment dialog is open goes to the status line" begin
+        m = fresh(; production = "test")
+        sync_start!(m)
+        settle!(m)
+        for kind in (:transfer, :busy)
+            m.modal_kind = kind
+            m.modal = Tachikoma.Modal(title = "Working", message = "…", confirm_label = "", cancel_label = "")
+            m.status = ""
+            push!(m.pending, "/x")
+            m.running += 1
+            update!(m, TaskEvent(Symbol("sync:listing:/x"), ErrorException("listing failed")))
+            @test m.modal_kind == kind && m.modal.title == "Working" && sync_busy(m) && occursin("listing failed", m.status)
+            @test !("/x" in m.pending)
+            m.running += 1
+            push!(m.pending, "/y")
+            update!(m, TaskEvent(Symbol("sync:detectors:/y"), ErrorException("inspection failed")))
+            @test m.modal_kind == kind && sync_busy(m) && occursin("inspection failed", m.status)
+        end
+        # The result of the task that owns the dialog replaces it.
+        m.running += 1
+        update!(m, TaskEvent(Symbol("sync:bootstrap"), ErrorException("pkg failed")))
+        @test m.modal_kind == :error && occursin("pkg failed", m.modal.message)
+    end
+
+    @testset "a new connection forgets the helper environment" begin
+        m = fresh(; production = "test")
+        sync_start!(m)
+        settle!(m)
+        m.environment = EnvironmentStatus("julia", "/project", true, String[])
+        connect!(m)
+        settle!(m)
+        @test m.environment === nothing
+    end
+
+    @testset "a saved selection records the host of the tree, and Load refuses another host" begin
+        m = fresh(; production = "test")
+        sync_start!(m)
+        settle!(m)
+        m.settings.host = "edited-after-connect"
+        path = save!(m)
+        @test load_selection(path, m.production).host == "local"
+        foreign = Selection("viper", "test", FIXTURE_ROOT, m.production.local_root, nothing, String[], String[], now(), ExtractEntry[])
+        save_selection(path, foreign)
+        m.settings.host = "local"
+        load_selection!(m)
+        settle!(m)
+        @test m.modal_kind == :error && occursin("saved for host viper, but the current host is local", m.modal.message)
+    end
+
 end

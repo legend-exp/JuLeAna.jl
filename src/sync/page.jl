@@ -52,7 +52,9 @@ render); `guarded` is the action waiting for the answer of the discard dialog;
 `panel_rects` and `summary_rect` are the screen cells of the last render, which mouse handling uses.
 
 The page is given a `TaskQueue` and starts its tasks with ids prefixed `sync:`; the host routes events with that
-prefix to [`sync_task!`](@ref). `running` counts the page's own unanswered tasks, because the queue may be shared.
+prefix to [`sync_task!`](@ref). `running` counts the page's own unanswered tasks, because the queue may be shared, and
+`active` holds their ids. `estimated` is the selection the estimate dialog describes; a transfer started from the dialog
+moves exactly that selection.
 """
 mutable struct SyncPage
     host::Union{Nothing,RemoteHost}
@@ -92,6 +94,8 @@ mutable struct SyncPage
     step_started::Float64
     connecting::Bool
     suggested::Bool
+    active::Vector{String}
+    estimated::Union{Nothing,Selection}
 end
 
 # Every constructor starts from the same blank state; `root` and `panel_open` are what they differ in.
@@ -100,7 +104,7 @@ function blank_page(host, production, options, settings, root, queue, host_facto
                     # Replaced by rebuild_tree! when there is a production: that needs the page to exist.
                     TreeView(TreeNode("")), queue, false, "", nothing, nothing, :none, nothing, nothing, nothing, nothing, nothing,
                     nothing, :tree, 1, nothing, panel_open, true, Dict{Symbol,String}(), "", Pair{Symbol,Rect}[], Rect(1, 1, 0, 0), false,
-                    nothing, host_factory, nothing, 0.0, false, false)
+                    nothing, host_factory, nothing, 0.0, false, false, String[], nothing)
 end
 
 function SyncPage(host::RemoteHost, production::Production, options::Options; queue::TaskQueue = TaskQueue())
@@ -168,11 +172,23 @@ function in_step(f, what::AbstractString)
     end
 end
 
-# Whether another task of the page runs; the status then says what the page is busy with.
+# Whether another task of the page runs; the status then says what the page is busy with. Background directory sizes
+# do not count: they only fill in a column.
 function busy!(m::SyncPage)
-    m.running > 0 || return false
-    m.status = "busy: " * (isempty(m.status) ? "a background task is running" : m.status)
+    ids = filter(!startswith("sizes:"), m.active)
+    m.running > length(m.active) - length(ids) || return false
+    m.status = "busy: " * (isempty(m.status) ? (isempty(ids) ? "a background task" : task_description(first(ids))) : m.status)
     return true
+end
+
+# What a task with the id `id` is doing, for the status line.
+function task_description(id::AbstractString)
+    startswith(id, "listing:") && return "listing " * basename(chopprefix(id, "listing:"))
+    startswith(id, "detectors:") && return "inspecting the files of " * basename(chopprefix(id, "detectors:"))
+    names = Dict("connect" => "connecting", "productions" => "listing productions", "open" => "opening the production",
+                 "load" => "loading the selection", "estimate" => "estimating", "transfer" => "transferring",
+                 "environment" => "checking the helper environment", "bootstrap" => "creating the helper environment")
+    return get(names, id, id)
 end
 
 """
@@ -195,6 +211,7 @@ handled by [`sync_task!`](@ref).
 """
 function spawn!(f, m::SyncPage, id)
     m.running += 1
+    push!(m.active, String(id))
     return spawn_task!(f, m.tasks, Symbol("sync:", id))
 end
 
@@ -449,10 +466,13 @@ end
 
 Ask what the selection would actually move, in the background. `confirm` decides
 which button the modal opens on: `e` looks, `t` intends to sync. A selection with
-extract entries first needs the helper environment.
+extract entries first needs the helper environment. It is refused while another task of the page runs. The selection
+is kept in `m.estimated` for [`start_transfer!`](@ref).
 """
 function open_estimate!(m::SyncPage; confirm::Bool)
+    busy!(m) && return m
     selection = Selection(m.production, m.options.host, m.root)
+    m.estimated = selection
     m.modal_kind = :estimating
     m.status = "estimating…"
     return isempty(selection.extract) ? run_estimate!(m, selection, confirm) :
@@ -483,7 +503,7 @@ end
 """
     start_transfer!(m::SyncPage)::SyncPage
 
-Run the transfer in the background. The step report runs on that task and
+Run the transfer of the selection that was estimated (`m.estimated`) in the background. The step report runs on that task and
 never touches the model: it pushes a `TaskEvent` like every other result.
 """
 function start_transfer!(m::SyncPage)
@@ -491,7 +511,9 @@ function start_transfer!(m::SyncPage)
     production = m.production
     helper = m.options.helper
     jobs = m.options.jobs
-    selection = Selection(production, m.options.host, m.root)
+    selection = m.estimated
+    selection === nothing && error("start_transfer!: no estimated selection; open the estimate first")
+    m.estimated = nothing
     report = report_to(m)
     m.modal = Modal(title = "Transferring", message = "starting…",
                     confirm_label = "", cancel_label = "")
@@ -534,6 +556,20 @@ end
 Report a failure and leave the tool usable.
 """
 show_error!(m::SyncPage, err) = (open_message!(m, "Error", sprint(showerror, err)); m.modal_kind = :error; m)
+
+"""
+    note_error!(m::SyncPage, err)::SyncPage
+
+Report a failure that does not belong to the dialog on screen. While a transfer or an environment creation shows its
+dialog (`:transfer`, `:busy`), the first line of the message is appended to the status line and the dialog stays;
+otherwise [`show_error!`](@ref) opens the error dialog. The failure of the task that owns that dialog uses `show_error!`.
+"""
+function note_error!(m::SyncPage, err)
+    m.modal_kind in (:transfer, :busy) || return show_error!(m, err)
+    message = first(split(sprint(showerror, err), '\n'))
+    m.status = isempty(m.status) ? message : m.status * "; " * message
+    return m
+end
 
 """
     apply_prompt!(m::SyncPage)::SyncPage
@@ -581,7 +617,7 @@ Write the selection to the configured path and return it.
 function save!(m::SyncPage)
     path = selection_path(m.settings)
     isempty(path) && (m.status = "choose a production before saving"; return path)
-    save_selection(path, Selection(m.production, m.settings.host, m.root))
+    save_selection(path, Selection(m.production, m.options.host, m.root))
     m.saved = path
     m.dirty = false
     m.status = ""
@@ -903,7 +939,7 @@ end
     render_sync(m::SyncPage, area::Rect, buf::Buffer)
 
 Draw the interface into `area`. The area is explicit and nothing assumes it owns
-the terminal, so the future Juleana app can host this as one screen.
+the terminal.
 """
 function render_sync(m::SyncPage, area::Rect, buf::Buffer)
     wide = area.width >= WIDE_PANEL
@@ -1141,7 +1177,7 @@ function start_load!(m::SyncPage, path::AbstractString)
     report = report_to(m)
     m.status = "loading $path…"
     spawn!(m, :load) do
-        selection = load_selection(path, production)
+        selection = load_selection(path, production; host = options.host)
         fresh = production_tree(host, production)
         apply_selection!(host, production, fresh, selection; helper = options.helper, jobs = options.jobs,
                          steps = Steps(["listing directories"], report))
@@ -1360,15 +1396,9 @@ function shielded(f, m::SyncPage, fallback)
         return f()
     catch err
         err isa InterruptException && rethrow()
-        if m.modal_kind in (:transfer, :busy)
-            # The transfer dialog stays; the fault goes to the status line. `show_error!` below is not shielded: a fault in
-            # it propagates, so reporting a fault can never loop.
-            message = first(split(sprint(showerror, err), '\n'))
-            m.status = isempty(m.status) ? message : m.status * "; " * message
-        else
-            m.edit = nothing
-            show_error!(m, err)
-        end
+        # Reporting is not shielded: a fault in it propagates, so reporting a fault can never loop.
+        m.modal_kind in (:transfer, :busy) || (m.edit = nothing)
+        note_error!(m, err)
         return fallback
     end
 end
@@ -1432,6 +1462,8 @@ function sync_task!(m::SyncPage, e::TaskEvent)
         if id != "step"
             m.running > 0 || error("the result :$id arrived while no sync task runs; a task id was mixed up")
             m.running -= 1
+            i = findfirst(==(id), m.active)
+            i === nothing || deleteat!(m.active, i)
         end
         task!(m, id, e)
         return true
@@ -1446,7 +1478,7 @@ function task!(m::SyncPage, id::AbstractString, e::TaskEvent)
         path = chopprefix(id, "listing:")
         if e.value isa Exception
             delete!(m.pending, path)
-            return show_error!(m, e.value)
+            return note_error!(m, e.value)
         end
         attach_listing!(m, e.value)
         node, children = e.value
@@ -1482,7 +1514,7 @@ function task!(m::SyncPage, id::AbstractString, e::TaskEvent)
         failed = m.step
         m.step = nothing
         e.value isa Exception &&
-            return show_error!(m, failed === nothing ? e.value : ErrorException(sprint(showerror, e.value) * step_note(failed)))
+            return note_error!(m, failed === nothing ? e.value : ErrorException(sprint(showerror, e.value) * step_note(failed)))
         node, children = e.value
         attach_detectors!(node, children)
         delete!(m.collapsed, path)
@@ -1501,7 +1533,7 @@ function task!(m::SyncPage, id::AbstractString, e::TaskEvent)
         m.continuation = nothing
         text = sprint(showerror, e.value) * step_note(failed)
         id == "productions" && (m.productions = nothing)
-        show_error!(m, ErrorException(text))
+        id in ("transfer", "bootstrap") ? show_error!(m, ErrorException(text)) : note_error!(m, ErrorException(text))
         # The dialog clears the status; once it is dismissed the page says why it has no production.
         id == "productions" && (m.status = "no productions found in $(m.options.remote_root)")
         return m
@@ -1519,6 +1551,7 @@ function task!(m::SyncPage, id::AbstractString, e::TaskEvent)
             return blocked(m) ? m : start_connect!(m)
         end
         m.host, m.options, m.productions = host, options, productions
+        m.environment = nothing      # the helper environment belongs to the host and staging directory just connected to
         name = m.settings.production
         if isempty(name)
             return open_picker!(m)

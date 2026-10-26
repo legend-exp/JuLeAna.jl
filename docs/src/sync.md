@@ -25,17 +25,19 @@ closes it).
 ## Sync configuration
 
 The tool reads and writes in the directory `$XDG_CONFIG_HOME/juleana/sync` (`~/.config/juleana/sync` when
-`XDG_CONFIG_HOME` is not set); the package directory is never written.
+`XDG_CONFIG_HOME` is not set), called the configuration directory and written `<config dir>` below; the package
+directory is never written.
 
 | File | Content |
 |------|---------|
 | `hosts.yaml` | host aliases with `remote_root` and optionally `julia`, `julia_project`, `staging`; if it is absent, the file shipped in the package's `config/sync` is read |
 | `settings.yaml` | optional `local_root: <directory>`, the default of the Local root field |
-| `<production>.yaml` | saved selections; `/` in the production name becomes `-`; the directory is created at the first save |
+| `<host>/<production>.yaml` | saved selections, one directory per host; `/` in the production name becomes `-`; the directories are created at the first save |
 
 There is no default Local root: without `local_root` in `settings.yaml` or `--local-root`, the field is empty and
-Connect, Estimate and Transfer refuse with "Local root must be set". Selections saved by earlier versions
-under the package's `config/sync` are loaded by giving their path in the Selection field and pressing Load selection, or applied headless with `--from`.
+Connect, Estimate and Transfer refuse with "Local root must be set". A selection file anywhere else is loaded by
+giving its path in the Selection field and pressing Load selection, or applied headless with `--from`. A selection
+records the host its tree was built from; Load and `--from` refuse a file saved for another host and name both hosts.
 A malformed file stops `juleana-sync` with a message that names the file; `juleana` shows the message in the
 dialog of the Sync tab and keeps running. A `hosts.yaml` entry without `remote_root` is reported the same way when the Sync tab opens with an empty
 Production field (the remote roots are read for the preselection), and otherwise at Connect if that host is used.
@@ -56,7 +58,7 @@ details pane of the row under the cursor on the right. The last row is the progr
 | Mount root | `--mount-root` | a local directory, or empty for no link mode (Tab completes) |
 | Staging | `--staging` | an absolute path or `~/...` on the host, or empty for the host default |
 | Jobs | `--jobs` | an integer, 0 or larger; 0 lets the helper decide |
-| Selection | `--out` | a path ending in `.yaml`; empty is `<config dir>/<production>.yaml` (see Sync configuration); `--from` does not fill it, it applies a saved selection headless |
+| Selection | `--out` | a path ending in `.yaml`; empty is `<config dir>/<host>/<production>.yaml` (see Sync configuration); `--from` does not fill it, it applies a saved selection headless |
 
 `Tab` and `Shift-Tab` move through the fields and buttons and then to the tree, the mouse works on
 every field and button, `Enter` edits a field and `Esc` cancels. An invalid value stays in the field
@@ -136,18 +138,19 @@ that host and opens the list. Changing the production on the Sync tab does not c
 
 The keys of `juleana` (`1` to `8`, `?`, `T`, `q`) keep their meaning on this tab unless a field is being
 edited or a dialog is open. `q` or `ctrl+c` asks before leaving when the selection has unsaved marks or a
-transfer runs; while a transfer runs the page takes `q`, so use `ctrl+c` then. The dialog lists one line per key that applies:
+transfer or an environment creation runs; while one runs the page takes `q`, so use `ctrl+c` then. The dialog lists one line per key that applies:
 
 | Key | Shown when | Action |
 |-----|------------|--------|
-| `s` | processing runs | Stop after the running items, then quit; the line adds the sync work that is lost (an interrupted transfer, the unsaved selection) |
+| `s` | processing runs | Stop after the running items, then quit; the line adds the sync work that is lost (an interrupted transfer or environment creation, the unsaved selection) |
 | `w` | the selection has unsaved marks | Save the selection, then quit; if processing or a transfer still runs, the dialog stays open |
-| `q` | always | Quit now, ending the processing run and its workers, interrupting the transfer and discarding the unsaved selection, as far as each applies |
+| `q` | always | Quit now, ending the processing run and its workers, interrupting the transfer or environment creation and discarding the unsaved selection, as far as each applies |
 | `c` | always | Cancel |
 
-`juleana-sync` shows one quit dialog: the "Transfer running" dialog (Quit now or Keep running) when a transfer runs,
-otherwise the "Unsaved selection" dialog (Save and quit or Quit without saving), which names the file the
-selection would be saved to. Quit now on the transfer dialog does not ask about the marks.
+`juleana-sync` shows one quit dialog: the "Transfer running" dialog (Quit now or Keep running) when a transfer or an
+environment creation runs, otherwise the "Unsaved selection" dialog (Save and quit or Quit without saving), which names
+the file the selection would be saved to. Quit now on the transfer dialog does not ask about the marks. `Esc` closes
+either dialog without quitting and without saving.
 
 ### Running on cslg4
 
@@ -155,6 +158,9 @@ selection would be saved to. Quit now on the transfer dialog does not ask about 
 choose the host `viper` and a local root on `cslg4` (for example under `/mnt/scratch`). `ssh viper` has
 to work without a password from `cslg4`. Connect checks the system `rsync` on `cslg4` and names the
 version found if it is not GNU rsync 3.1 or newer.
+
+Every ssh connection of the tool gives up connecting after 20 s and ends when the host stops answering for four
+15 s probes, so a dropped connection fails after about a minute with ssh's error instead of hanging.
 
 ## Extracting detectors
 
@@ -325,7 +331,7 @@ runs in the main process for fewer than four files and otherwise uses
 | `--local-root PATH` | Local directory mirroring it (default: `local_root` in `settings.yaml`; no default otherwise) |
 | `--mount-root PATH` | Where the remote root is mounted; enables link mode |
 | `--production PATH` | Production to sync, relative to the remote root (default: choose on the screen) |
-| `--out FILE` | Where the screen saves the selection (default `~/.config/juleana/sync/<production>.yaml`, with `/` in the production path replaced by `-`); the name must end in `.yaml` |
+| `--out FILE` | Where the screen saves the selection (default `<config dir>/<host>/<production>.yaml`, the configuration directory of Sync configuration, with `/` in the production path replaced by `-`); the name must end in `.yaml` |
 | `--jobs N` | Worker processes the remote extraction helper may use (default: the helper decides) |
 | `--staging PATH` | Staging directory on the host for extraction (default: the host's `staging` key, else `${TMPDIR:-/tmp}/juleana-sync-$(id -un)`) |
 | `--from FILE` | Apply a saved selection without starting the screen; the production is taken from the selection unless `--production` is given, in which case the two must agree; a selection saved as `.json` is read as well |
@@ -358,7 +364,7 @@ that were applied.
 ## Re-applying a selection
 
 ``` bash
-juleana-sync --from ~/.config/juleana/sync/test.yaml --yes
+juleana-sync --from <config dir>/cslg4/test.yaml --yes
 ```
 
 The saved selection lists only the rows that were chosen explicitly, so it stays
