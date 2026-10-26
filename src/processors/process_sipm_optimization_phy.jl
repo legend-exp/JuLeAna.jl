@@ -238,7 +238,6 @@ function process_sipm_optimization_phy(processing_config, l200::LegendData, peri
                 processed_dict[filter_type] = true
 
                 # call garbage collector
-                GC.gc()
                 yield()
             catch e
                 e isa ProcessStepError || @error "Filter: $filter_type filter optimization: $(truncate_error(e))"

@@ -171,7 +171,6 @@ function process_sipm_calibration_phy(processing_config, l200::LegendData, perio
                     @debug "Get $e_type simple calibration"
                     sipm_simple_calibration(getproperty(data_det_after_qc, e_type); NamedTuple(e_type_config.simple.kwargs)...)
                 end
-                GC.gc()
 
                 # save plots for simple calibration for control
                 @debug_plot @process_step "$e_type simple calibration plot" begin
@@ -186,7 +185,6 @@ function process_sipm_calibration_phy(processing_config, l200::LegendData, perio
                     fit_sipm_spectrum(result_simple.pe_simple_cal, e_type_config.fit.min_pe, e_type_config.fit.max_pe;
                                       NamedTuple(e_type_config.fit.kwargs)..., f_uncal = result_simple.f_simple_uncal, uncertainty = true)
                 end
-                GC.gc()
 
                 @process_step "$e_type peak fits plot" begin
                     p = LegendMakie.lplot(report_fit, figsize = (700, 500), xerrscaling = 5,
@@ -224,7 +222,6 @@ function process_sipm_calibration_phy(processing_config, l200::LegendData, perio
                 log_info_dict[e_type] = log_info
                 processed_dict[e_type] = true
 
-                GC.gc()
             catch e
                 e isa ProcessStepError || @error "Error in processing detector $det ($ch): $(truncate_error(e))"
                 log_info = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(0), e_type, "-", "-", "-", truncate_error(e)))

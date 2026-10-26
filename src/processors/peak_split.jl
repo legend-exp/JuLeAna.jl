@@ -93,7 +93,6 @@ function split_peaks(l200::LegendData, period::DataPeriod, run::DataRun, categor
                 @info "Writing $output_filename"
             end
         end
-        GC.gc()
 
         # create total timer by summing over memory usage and time
         total_time = canonicalize(Dates.Nanosecond(TimerOutputs.tottime(split_timer)))

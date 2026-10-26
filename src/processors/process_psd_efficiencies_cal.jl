@@ -279,7 +279,6 @@ function process_psd_efficiencies_cal(processing_config, l200::LegendData, perio
                 log_info_dict[psd_classifier] = log_info
                 processed_dict[psd_classifier] = true
 
-                GC.gc()
             catch e
                 # a failed `@process_step` has logged its error already
                 e isa ProcessStepError || @error "Error in $psd_classifier cut generation: $(truncate_error(e))"
