@@ -56,7 +56,7 @@ import Makie
 import Measures
 using Measurements: Measurements, value as mvalue
 using ParallelProcessingTools: ParallelProcessingTools, @always_everywhere, CreateOrModify, CreateOrReplace, FlexWorkerPool, OnLocalhost,
-                               OnSlurm, AutoThreadPinning, onworker, ppt_worker_pool!, ppt_worker_pool, runworkers, write_files,
+                               OnSlurm, AutoThreadPinning, onworker, ppt_worker_pool!, ppt_worker_pool, read_files, runworkers, write_files,
                                write_worker_start_script
 import Printf
 using PrecompileTools: @compile_workload, @setup_workload
