@@ -114,13 +114,12 @@ function process_psd_efficiencies_cal(processing_config, l200::LegendData, perio
         end
 
         e_cal, hit_cal = @process_step "hit data loader" begin
-            hit_cal = let e_type_cal=e_type, e_type=Symbol(first(split(string(e_type), "_cal")))
-
-                @debug "Reading from $(period)-$(run)"
-                cal_func = ljl_propfunc(l200.par.rpars.ecal[period, run][det][e_type].cal.func)
-                qc_mask = read_ldata(@pf($is_single_pulse && !$is_pulser), l200, :jlqcs, filekey, det)
-                read_ldata(row -> merge(NamedTuple{(e_type_cal,)}((cal_func(row),)), row), l200, :jldsp, :cal, period, run, det)[qc_mask]
-            end
+            # the A/E and LQ classifier functions of the PSD classifiers; a missing one fails its
+            # classifier below
+            classifier_names = [(pars, Symbol(first(split(string(psd_classifiers_dict[psd_classifier][i]), "_classifier"))))
+                                for psd_classifier in psd_classifiers for (pars, i) in ((pars_aoe, 1), (pars_lq, 3))]
+            classifier_funcs = [pars[det][name].func for (pars, name) in classifier_names if haskey(pars, det) && haskey(pars[det], name)]
+            hit_cal = read_hit_cal(l200, det, [(period, run)], e_type, classifier_funcs)
             collect(getproperty(hit_cal, e_type)), hit_cal
         end
 
