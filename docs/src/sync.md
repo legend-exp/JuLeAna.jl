@@ -37,8 +37,8 @@ There is no default Local root: without `local_root` in `settings.yaml` or `--lo
 Connect, Estimate and Transfer refuse with "Local root must be set". Selections saved by earlier versions
 under the package's `config/sync` are loaded by giving their path in the Selection field and pressing Load selection, or applied headless with `--from`.
 A malformed file stops `juleana-sync` with a message that names the file; `juleana` shows the message in the
-dialog of the Sync tab and keeps running. A `hosts.yaml` entry without `remote_root` is reported the same way when
-the Sync tab opens.
+dialog of the Sync tab and keeps running. A `hosts.yaml` entry without `remote_root` is reported the same way when the Sync tab opens with an empty
+Production field (the remote roots are read for the preselection), and otherwise at Connect if that host is used.
 
 ## The screen
 
@@ -117,7 +117,7 @@ A successful transfer's summary ends with any warnings rsync printed.
 Every long operation reports its steps in the progress line as `[k/N] step`, for example
 `[2/4] checking files to copy`. A step with a known total shows a bar and a count, such as
 `[1/4] listing detector files 3/12`; extracting on the host adds the bytes staged so far
-(`[3/6] extracting on the host 2/5  <bytes>`), and the rsync steps count to 100 and add the rate and remaining time. A step without a
+(`[3/7] extracting on the host 2/5  <bytes>`), and the rsync steps count to 100 and add the rate and remaining time. A step without a
 total shows a moving indicator and the elapsed time. The estimate reports listing the detector files of the
 selection, planning the extraction, sizing the extract groups, checking the files to copy and the free space of the staging directory.
 The transfer reports extracting on the host, copying, pulling the extracted files, creating links and cleaning up
@@ -236,8 +236,8 @@ loses groups. The summary of an extraction reads `extracted N files, N groups`,
 followed by the bytes rsync moved for them.
 
 The screen takes no key but `ctrl+c` while it checks the helper environment, creates it, or
-transfers. During a transfer the gauge reads `extracting k/N files` while the helper
-runs and shows the rsync progress afterward.
+transfers. During a transfer the progress line reads `[k/N] extracting on the host d/t` with the staged bytes while the helper
+runs and shows the rsync progress afterward (see Progress line).
 
 ### Detector files of per-detector tiers
 

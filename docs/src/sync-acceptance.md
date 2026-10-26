@@ -147,7 +147,7 @@ top-level directory recursively.
 - [ ] Mark one detector with `x`; the progress line shows `~... extract (N files)`.
       `e` shows the exact size (within a few percent of N times the row's size)
       and the line `staging <dir>: ... free`.
-- [ ] `t` extracts: the gauge reads `extracting k/N files`, then the rsync
+- [ ] `t` extracts: the progress line reads `[k/N] extracting on the host d/t` with the staged bytes, then the rsync
       progress. The summary reads `extracted N files, N groups`.
 - [ ] The files are at the mirrored paths with the original names. `h5ls` is not
       needed: in Julia, `HDF5.h5open(file) do f; keys(f); end` lists only the
