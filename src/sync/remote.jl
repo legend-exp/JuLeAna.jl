@@ -288,7 +288,7 @@ function stream_remote(h::RemoteHost, cmd::Cmd, on_line)
         catch
             # A child can stay stuck after SIGTERM while it compiles, so it is killed after 10 s.
             kill(proc)
-            timedwait(() -> !process_running(proc), 10.0) == :ok || kill(proc, Base.SIGKILL)
+            timedwait(() -> !process_running(proc), 10.0) == :ok || kill(proc, 9)
             rethrow()
         finally
             wait(proc)

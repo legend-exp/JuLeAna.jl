@@ -228,6 +228,8 @@
         delete!(env, "OPENBLAS_NUM_THREADS")
         delete!(env, "OMP_NUM_THREADS")
         delete!(env, "OPENBLAS_DEFAULT_NUM_THREADS")
+        # Pkg.test restricts the load path to the test project, which does not list the LinearAlgebra standard library.
+        env["JULIA_LOAD_PATH"] = "@:@stdlib"
         code = """
             const LOADED_AS_LIBRARY = true
             include($(repr(script)))

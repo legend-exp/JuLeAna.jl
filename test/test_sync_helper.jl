@@ -137,7 +137,7 @@
               joinpath(tempdir(), "juleana-sync-" * get(ENV, "USER", "user"))
 
         # The active project must hold the helper's packages.
-        saved, load_path = Base.ACTIVE_PROJECT[], copy(LOAD_PATH)
+        saved, load_path = Base.active_project(), copy(LOAD_PATH)
         try
             Base.set_active_project(nothing)
             empty!(LOAD_PATH)
