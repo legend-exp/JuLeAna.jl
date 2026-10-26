@@ -15,7 +15,7 @@ waits for the same processor to finish for the previous period.
 The processors are documented by topic:
 
 - [HPGe calibration](processors_hpge.md): peak splitting, DSP, quality cuts, decay
-  time, filter optimization and energy calibration;
+  time, filter optimization, energy calibration and the QC machine-learning sample;
 - [Pulse shape discrimination](processors_psd.md): A/E, LQ and PSD efficiencies;
 - [SiPMs, events and stability](processors_phy.md): SiPM optimization and calibration,
   event building, skims and stability plots.
