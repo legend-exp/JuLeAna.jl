@@ -30,12 +30,17 @@ function default_hosts_file()
     return isfile(user) ? user : PACKAGED_HOSTS_FILE
 end
 
-# Every configuration file is read here, so a malformed one is an error that names the file.
+# The errors of a file that cannot be read or parsed: YAML's scanner, parser, composer and constructor errors, a missing
+# or unreadable file, and the ArgumentError of PropDicts for an unsupported format or a malformed JSON file.
+const CONFIG_FILE_ERRORS = Union{YAML.ScannerError,YAML.ParserError,YAML.ComposerError,YAML.ConstructorError,SystemError,ArgumentError}
+
+# Every configuration file is read here, so a malformed one is an error that names the file. Any other exception is a
+# fault of the program and propagates unchanged.
 function read_config(file::AbstractString)
     try
         return readprops(file; subst_pathvar = false, subst_env = false)
     catch err
-        err isa InterruptException && rethrow()
+        err isa CONFIG_FILE_ERRORS || rethrow()
         throw(ArgumentError("cannot read $file: " * sprint(showerror, err)))
     end
 end

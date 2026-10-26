@@ -1,5 +1,9 @@
 # This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
 
+# A path whose reader fails the way a bug would, not the way a broken file does.
+struct NotAPath <: AbstractString end
+PropDicts.readprops(::NotAPath; kwargs...) = throw(MethodError(identity, ()))
+
 @testset "settings.jl" begin
     # test_sync.jl sets XDG_CONFIG_HOME to a temporary directory for the whole module, so no test sees a user configuration.
     @testset "the configuration directory" begin
@@ -42,6 +46,20 @@
                 write(hostsfile, "alpha:\n  staging: /s\n")
                 @test_throws "host alpha in $hostsfile needs a remote_root" host_remote_root(hostsfile, "alpha")
             end
+        end
+    end
+
+    @testset "read_config turns only parse and file errors into a message that names the file" begin
+        mktempdir() do dir
+            for (name, text) in ("scanner.yaml" => "a: 'unclosed\n", "parser.yaml" => "a: [1, 2\n", "composer.yaml" => "a: *nothing\n",
+                                 "format.txt" => "x\n")
+                file = joinpath(dir, name)
+                write(file, text)
+                @test_throws "cannot read $file: " Sync.read_config(file)
+            end
+            @test_throws "cannot read $(joinpath(dir, "missing.yaml")): " Sync.read_config(joinpath(dir, "missing.yaml"))
+            # A fault that is not about the file is not hidden behind the file name.
+            @test_throws MethodError Sync.read_config(NotAPath())
         end
     end
 
