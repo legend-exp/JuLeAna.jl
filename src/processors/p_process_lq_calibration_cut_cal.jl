@@ -181,7 +181,7 @@ function p_process_lq_calibration_cut_cal(processing_config, l200::LegendData, p
             @debug("Load data")
             if !all([haskey(processed_dict, lq_type) for lq_type in lq_types]) ||
                !all([haskey(processed_dict, lq_classifier) for lq_classifier in lq_classifiers])
-                hit_cal = read_hit_cal(l200, det, zip(partinfo_det.period, partinfo_det.run), e_type,
+                hit_cal = read_hit_cal(l200, det, zip(partinfo_det.period, partinfo_det.run), [e_type],
                                        vcat(collect(values(lq_funcs)), [qdrift_expression]))
                 e_cal = collect(getproperty(hit_cal, e_type))
                 dep_σ = mvalue(pars_energy[det][Symbol(first(split(string(e_type), "_cal")))].fit.Tl208DEP.fwhm / (2 * sqrt(2 * log(2))))

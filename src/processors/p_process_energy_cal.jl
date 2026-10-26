@@ -116,27 +116,23 @@ function p_process_energy_cal(processing_config, l200::LegendData, period::DataP
         th228_names = Symbol.(energy_config_det.th228_names)
         th228_lines_dict = Dict(th228_names .=> energy_config_det.th228_lines)
 
-        for e_type in energy_types
-            if haskey(processed_dict, e_type)
-                continue
-            end
+        # the calibrated energies of all energy types that are not processed yet, read in one pass
+        e_types_todo = filter(e_type -> !haskey(processed_dict, e_type), energy_types)
+        hit_cal = @process_step "data loader" begin
+            isempty(e_types_todo) ? nothing :
+            read_hit_cal(l200, det, zip(partinfo_det.period, partinfo_det.run), [Symbol("$(e_type)_cal") for e_type in e_types_todo], [])
+        end
+
+        for e_type in e_types_todo
             try
                 @debug "Calibrate $e_type"
 
-                energy = @process_step "$e_type data loader" begin
-                    fast_flatten([begin
-                                      @debug "Reading from $(pinfo.period)-$(pinfo.run)"
-                                      qc_mask = read_ldata(@pf($is_single_pulse && !$is_pulser), l200, :jlqcs, pinfo.cal.startkey, det)
-                                      read_ldata(ljl_propfunc(l200.par.rpars.ecal[pinfo.period, pinfo.run][det][e_type].cal.func), l200,
-                                                 :jldsp, :cal, pinfo.period, pinfo.run, det)[qc_mask]
-                                  end
-                                  for pinfo in partinfo_det])
-                end
+                energy = collect(getproperty(hit_cal, Symbol("$(e_type)_cal")))
 
                 e_unit = u"keV"
                 peakhists, peakstats, _, _ = @process_step "$e_type simple calibration" begin
                     @debug "Get $e_type peakhists and peakstats"
-                    peakhists_gamma(collect(energy), energy_config_det.th228_lines, energy_config_det.left_window_sizes,
+                    peakhists_gamma(energy, energy_config_det.th228_lines, energy_config_det.left_window_sizes,
                                     energy_config_det.right_window_sizes)
                 end
 

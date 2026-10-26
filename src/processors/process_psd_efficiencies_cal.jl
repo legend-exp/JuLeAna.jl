@@ -119,7 +119,7 @@ function process_psd_efficiencies_cal(processing_config, l200::LegendData, perio
             classifier_names = [(pars, Symbol(first(split(string(psd_classifiers_dict[psd_classifier][i]), "_classifier"))))
                                 for psd_classifier in psd_classifiers for (pars, i) in ((pars_aoe, 1), (pars_lq, 3))]
             classifier_funcs = [pars[det][name].func for (pars, name) in classifier_names if haskey(pars, det) && haskey(pars[det], name)]
-            hit_cal = read_hit_cal(l200, det, [(period, run)], e_type, classifier_funcs)
+            hit_cal = read_hit_cal(l200, det, [(period, run)], [e_type], classifier_funcs)
             collect(getproperty(hit_cal, e_type)), hit_cal
         end
 
