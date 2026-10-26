@@ -21,7 +21,7 @@ Do not paste per-detector numbers or plots: sizes, file counts and timings only.
       `preprod/...` productions in a list titled `Productions on cslg4` within a few
       seconds (the progress line shows the connection steps meanwhile).
 - [ ] `enter` on a production that holds `jlevt` opens the two-pane layout,
-      and the status bar reads `selected: 0 B copy (0 files), 0 links`.
+      and the progress line reads `selected: 0 B copy (0 files), 0 links`.
 - [ ] The details pane of the production row reads `overlays: config_cslg4.json`.
 - [ ] The tree shows `config.json` and one row per configured path key of the
       production, at minimum `metadata`, `par`, `tier`, `tier/jldsp`,
@@ -30,7 +30,7 @@ Do not paste per-detector numbers or plots: sizes, file counts and timings only.
       while the request is out.
 - [ ] The listed directories show `…` for their size first, and the sizes fill in
       a moment later while the tree stays usable; a section keeps `…`. While a
-      selected directory has no size, the status bar total ends in `?`.
+      selected directory has no size, the total in the progress line ends in `?`.
 - [ ] In a real terminal, the wheel scrolls the tree and the production list, a click selects a
       row, and a second click on the selected row opens, lists or collapses it like
       `enter`. Clicks do nothing while a dialog is open.
@@ -40,10 +40,10 @@ Do not paste per-detector numbers or plots: sizes, file counts and timings only.
       sizes them (about 27 GB each) with one `du -sb` call in the background; record
       how long the sizes take to appear.
 - [ ] Outside a dialog, `ctrl+c` quits like `q` (offering to save first when
-      the selection changed). While a transfer dialog is open no key is
-      accepted; press `ctrl+c` at the terminal during a transfer and record
-      whether the process still exits and what state the mirror is left in
-      (partial files under `--partial` are expected).
+      the selection changed). During a transfer `q` does nothing and `ctrl+c`
+      opens the "Transfer running" dialog: record that Keep running continues the
+      transfer, and that Quit now ends the process and what state the mirror is
+      left in (partial files under `--partial` are expected).
 - [ ] Walking down `tier/jldsp` → `cal` → `p18` → `r000` shows one row per
       detector, labeled with the detector name.
 - [ ] Walking down `tier/jlevt` → `phy` → `p18` → `r000` shows one row per
@@ -71,7 +71,7 @@ Do not paste per-detector numbers or plots: sizes, file counts and timings only.
 - [ ] `t` creates a symlink at the mirrored path pointing into the mount, and
       the summary reads `created 1 links, replaced 0 stale ones`, with no line
       about skipped targets.
-- [ ] Without the mount root, `l` refuses and says so in the status bar.
+- [ ] Without the mount root, `l` refuses and the progress line says "set Mount root".
 - [ ] With the mount unmounted, a transfer that has links refuses before moving
       anything, naming the mount root.
 
@@ -144,7 +144,7 @@ top-level directory recursively.
 - [ ] On a detector row, `space`, `l` and `n` only report "use x" or "n applies to
       run directories". `x` on a detector of a run marked `space` reports `... is
       already transferred whole`.
-- [ ] Mark one detector with `x`; the status bar shows `~... extract (N files)`.
+- [ ] Mark one detector with `x`; the progress line shows `~... extract (N files)`.
       `e` shows the exact size (within a few percent of N times the row's size)
       and the line `staging <dir>: ... free`.
 - [ ] `t` extracts: the gauge reads `extracting k/N files`, then the rsync
@@ -195,7 +195,7 @@ top-level directory recursively.
 - [ ] Open a period directory (`p18`): a `detectors` row appears
       above the run directories; opening it takes a few seconds per run and lists the union of the detectors. A category directory
       (`cal`) has no such row. Record the time for a period with many runs.
-- [ ] Mark one detector on the period row: the status bar shows `~... extract (N
+- [ ] Mark one detector on the period row: the progress line shows `~... extract (N
       files)` with N the files of all runs that hold it. Open one run's `detectors`
       row: the detector shows `[e]` and `x` on it reports that it is extracted for
       the whole period.
@@ -216,7 +216,7 @@ top-level directory recursively.
       `listing the detector files of ...` and then the detector names with sizes,
       without a helper environment dialog. Record the time for a period with many
       runs. A `jldsp` period still lists through the helper.
-- [ ] `space` on one detector: the row reads `[x]` and the status bar shows the sum
+- [ ] `space` on one detector: the row reads `[x]` and the progress line shows the sum
       of its files and one file per run that holds it. `x` reports that the files
       hold one detector each. Open a run: the detector's file shows `[x]` and
       `space` or `l` on it says to unmark the period's detector.
@@ -235,8 +235,10 @@ top-level directory recursively.
 
 ## Settings screen
 
-- [ ] `juleana-sync --host cslg4` shows the panel with every field filled; the Production field is empty
-      and the list of productions opens by itself after Connect finishes.
+- [ ] `juleana-sync --host cslg4` shows the panel. Host is filled; Remote root shows the `hosts.yaml` entry in
+      parentheses; Local root is filled when `settings.yaml` sets it; Production shows `(choose with Enter)`,
+      Mount root `(none)`, Staging `(host default)`, Jobs `0` and Selection `(default after choosing a
+      production)`. The list of productions opens by itself after Connect finishes.
 - [ ] Each field accepts a valid value and shows the reason for an invalid one (a missing local root,
       `--jobs -1`, a staging path that is not absolute); Estimate stays refused until it is fixed.
 - [ ] Mark a directory, press `s`, quit, start again, press `o` on the same production: the marks are back.
@@ -257,11 +259,11 @@ top-level directory recursively.
 - [ ] Choosing another production on the Sync tab leaves the Setup tab on its production.
 - [ ] The digits, `?`, `T` and `q` work on the tab; typing digits into the Jobs field does not switch tabs.
 - [ ] `q` with unsaved marks lists `w` (save) in the dialog; `w` saves and quits.
-- [ ] While a transfer runs, `ctrl+c` opens the dialog and its `q` line names the interrupted transfer.
+- [ ] While a transfer runs, `q` does nothing and `ctrl+c` opens the dialog; its `q` line names the interrupted transfer.
 
 ## cslg4 to viper
 
 - [ ] On `cslg4`, `ssh viper true` succeeds without a password prompt.
 - [ ] Start `juleana-sync`, choose host `viper` and a local root under `/mnt/scratch`, choose a production,
-      mark one detector of one run, estimate and transfer: the mirror holds the file and `rsync --version`
-      on `cslg4` was reported as GNU 3.1 or newer.
+      mark one detector of one run, estimate and transfer: the mirror holds the file. The tool names the rsync
+      version only when its check fails, so record `rsync --version | head -1` on `cslg4` by hand (GNU 3.1 or newer).

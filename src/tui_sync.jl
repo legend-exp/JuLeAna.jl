@@ -34,18 +34,18 @@ end
 # Whether leaving would lose sync work: unsaved marks or a running transfer.
 sync_pending(m::JuLeAnaTUI) = !isnothing(m.sync) && (sync_dirty(m.sync) || sync_busy(m.sync))
 
-# The text of the quit dialog: one line per key that applies.
+# The text of the quit dialog: one line per key that applies. The `s` and `q` lines name the sync work they lose.
 function quit_message(m::JuLeAnaTUI)
     dirty = !isnothing(m.sync) && sync_dirty(m.sync)
     busy = !isnothing(m.sync) && sync_busy(m.sync)
     lines = String[]
-    processing(m) && push!(lines, "s: stop after the running items, then quit")
+    sync_effects = String[]
+    busy && push!(sync_effects, "interrupting the sync transfer")
+    dirty && push!(sync_effects, "discarding the unsaved sync selection")
+    processing(m) && push!(lines, join(["s: stop after the running items, then quit"; sync_effects], ", "))
     dirty && push!(lines, "w: save the sync selection to $(selection_path(m.sync.settings)), then quit")
-    effects = String[]
-    processing(m) && push!(effects, "ending the run and its workers")
-    busy && push!(effects, "interrupting the sync transfer")
-    dirty && push!(effects, "discarding the unsaved sync selection")
-    push!(lines, "q: quit now, " * join(effects, ", "))
+    effects = processing(m) ? ["ending the run and its workers"; sync_effects] : sync_effects
+    push!(lines, join(["q: quit now"; effects], ", "))
     push!(lines, processing(m) ? "c: cancel, keep processing" : "c: cancel")
     return join(lines, "\n")
 end

@@ -1302,7 +1302,7 @@ function key!(m::SyncPage, e::KeyEvent)
         end
     elseif e.char == 'l'
         if m.production.mount_root === nothing
-            m.status = "link mode needs a mount root; restart with --mount-root PATH"
+            m.status = "link mode needs a mount root; set Mount root"
         elseif node !== nothing && (hint = detector_hint(node)) !== nothing
             m.status = hint
         elseif node !== nothing

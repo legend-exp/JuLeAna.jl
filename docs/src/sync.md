@@ -35,9 +35,10 @@ The tool reads and writes in the directory `$XDG_CONFIG_HOME/juleana/sync` (`~/.
 
 There is no default Local root: without `local_root` in `settings.yaml` or `--local-root`, the field is empty and
 Connect, Estimate and Transfer refuse with "Local root must be set". Selections saved by earlier versions
-under the package's `config/sync` are loaded by giving their path in the Selection field or with `--from`.
+under the package's `config/sync` are loaded by giving their path in the Selection field and pressing Load selection, or applied headless with `--from`.
 A malformed file stops `juleana-sync` with a message that names the file; `juleana` shows the message in the
-dialog of the Sync tab and keeps running.
+dialog of the Sync tab and keeps running. A `hosts.yaml` entry without `remote_root` is reported the same way when
+the Sync tab opens.
 
 ## The screen
 
@@ -55,7 +56,7 @@ details pane of the row under the cursor on the right. The last row is the progr
 | Mount root | `--mount-root` | a local directory, or empty for no link mode (Tab completes) |
 | Staging | `--staging` | an absolute path or `~/...` on the host, or empty for the host default |
 | Jobs | `--jobs` | an integer, 0 or larger; 0 lets the helper decide |
-| Selection | `--out`, `--from` | a path ending in `.yaml`; empty is `<config dir>/<production>.yaml` (see Sync configuration) |
+| Selection | `--out` | a path ending in `.yaml`; empty is `<config dir>/<production>.yaml` (see Sync configuration); `--from` does not fill it, it applies a saved selection headless |
 
 `Tab` and `Shift-Tab` move through the fields and buttons and then to the tree, the mouse works on
 every field and button, `Enter` edits a field and `Esc` cancels. An invalid value stays in the field
@@ -66,11 +67,14 @@ terminal is too low to leave room for the tree.
 
 Connect checks the host, GNU rsync and the productions, and opens the production named in the
 Production field or the list to choose from. It runs by itself when the screen starts with valid
-settings, and again when a setting changes while no tree is loaded.
-Load selection replaces the marks by the ones in the selection file; if any mark names a
+settings. A new Host or Remote root connects again, also when a tree is loaded; the Production, Local root and
+Mount root reload the tree once a host is connected; with no connection, any change that makes the settings
+valid connects.
+Load selection needs an open production and an existing file. It asks Replace or Keep when the tree has
+unsaved marks, then replaces the marks by the ones in the selection file; if any mark names a
 directory or detector that no longer exists, nothing changes and the message names it. Changing the
 host, the remote root, the production, the local root or the mount root while the tree has unsaved marks
-asks before it discards them (Keep or Discard).
+asks before it discards them (Discard or Keep).
 
 ### The tree and its keys
 
@@ -78,7 +82,7 @@ asks before it discards them (Keep or Discard).
   configured path key. Directories are listed when you open them, so nothing
   walks the cluster's filesystem up front.
 - The details pane describes the row under the cursor.
-- The progress line shows what the current selection would transfer on its left and where the
+- When nothing runs, the progress line shows what the current selection would transfer on its left and where the
   selection will be saved on its right (`unsaved: <production>.yaml` until it is saved, `saved: <production>.yaml` afterwards,
   relative to the configuration directory when the file lies in it).
 
@@ -90,31 +94,35 @@ asks before it discards them (Keep or Discard).
 | mouse wheel | Scroll the tree or the production list |
 | left click | Select a row; a click on the selected row does what `enter` does |
 | `space` | Copy this row (`[x]`), or stop copying it; on a detector row of a per-detector tier, copy that detector's files |
-| `l` | Reach this row through the mount instead (`[~]`); needs a mount root; on a detector row of a per-detector tier, link that detector's files |
+| `l` | Reach this row through the mount instead (`[~]`); without a mount root the line says "set Mount root"; on a detector row of a per-detector tier, link that detector's files |
 | `n` | On a run directory: copy the first N filekeys |
 | `x` | On a detector row below a `detectors` row of a per-filekey tier (of a run or of a period): extract this detector (`[e]`), or stop extracting it |
 | `c` | Connect: list the productions of the host |
-| `o` | Load the selection file |
+| `o` | Load the selection file; needs an open production and an existing file |
 | `s` | Save the selection to the file of the Selection field |
 | `e` | Ask rsync exactly what the selection would move |
 | `t` | Estimate, confirm, and transfer |
 | `p` | Collapse or expand the settings panel |
-| `q` | Leave, offering to save first, or after a running transfer |
-| `ctrl+c` | Same as `q`, also during a transfer |
+| `q` | Leave, offering to save first when the selection has unsaved marks; does nothing while a transfer runs |
+| `ctrl+c` | Same as `q` outside a dialog; during a transfer it opens the quit dialog |
 
 A `[-]` marker means the row itself is not selected but something below it is.
-While a dialog is open or a transfer is running, only `ctrl+c` reacts to the keyboard, and the mouse is ignored.
+While a transfer runs, the helper environment is checked or created, or the estimate waits for rsync, only `ctrl+c`
+reacts to the keyboard. Every other dialog answers the arrow keys, `Tab`, `Enter` and `Esc`. The mouse is ignored
+while a dialog is open.
 A successful transfer's summary ends with any warnings rsync printed.
 
 ### Progress line
 
 Every long operation reports its steps in the progress line as `[k/N] step`, for example
 `[2/4] checking files to copy`. A step with a known total shows a bar and a count, such as
-`listing detector files 3/12`, and a copy shows the rsync rate and remaining time. A step without a
+`[1/4] listing detector files 3/12`; extracting on the host adds the bytes staged so far
+(`[3/6] extracting on the host 2/5  <bytes>`), and the rsync steps count to 100 and add the rate and remaining time. A step without a
 total shows a moving indicator and the elapsed time. The estimate reports listing the detector files of the
-selection, sizing the extract groups, checking the files to copy and the free space of the staging directory.
+selection, planning the extraction, sizing the extract groups, checking the files to copy and the free space of the staging directory.
 The transfer reports extracting on the host, copying, pulling the extracted files, creating links and cleaning up
-the staging directory. Opening a `detectors` row and loading a selection report their directory listings.
+the staging directory. Opening a `detectors` row reports "listing runs" (per-detector tiers), "reading first files" (a period) or
+"reading first file" (a run), and loading a selection reports "listing directories".
 A failure names the step it happened in. A headless run prints the same steps as updating lines. When nothing
 runs, the line shows the running estimate and the selection file.
 
@@ -128,17 +136,18 @@ that host and opens the list. Changing the production on the Sync tab does not c
 
 The keys of `juleana` (`1` to `8`, `?`, `T`, `q`) keep their meaning on this tab unless a field is being
 edited or a dialog is open. `q` or `ctrl+c` asks before leaving when the selection has unsaved marks or a
-transfer runs, as `juleana-sync` does. The dialog lists one line per key that applies:
+transfer runs; while a transfer runs the page takes `q`, so use `ctrl+c` then. The dialog lists one line per key that applies:
 
 | Key | Shown when | Action |
 |-----|------------|--------|
-| `s` | processing runs | Stop after the running items, then quit |
+| `s` | processing runs | Stop after the running items, then quit; the line adds the sync work that is lost (an interrupted transfer, the unsaved selection) |
 | `w` | the selection has unsaved marks | Save the selection, then quit; if processing or a transfer still runs, the dialog stays open |
 | `q` | always | Quit now, ending the processing run and its workers, interrupting the transfer and discarding the unsaved selection, as far as each applies |
 | `c` | always | Cancel |
 
-`juleana-sync` asks about a running transfer first, then about unsaved marks, and names the file the
-selection would be saved to.
+`juleana-sync` shows one quit dialog: the "Transfer running" dialog (Quit now or Keep running) when a transfer runs,
+otherwise the "Unsaved selection" dialog (Save and quit or Quit without saving), which names the file the
+selection would be saved to. Quit now on the transfer dialog does not ask about the marks.
 
 ### Running on cslg4
 
@@ -175,7 +184,7 @@ over the runs that hold the detector, and `x` on one of its rows extracts that
 detector from every run of the period. The run-level row of a detector that the
 period extracts shows the inherited `[e]` and cannot be toggled; unmark the period
 row instead. A run-level and a period-level mark for the same detector may coexist;
-the plan merges them per run, so nothing is extracted twice. The status bar shows the
+the plan merges them per run, so nothing is extracted twice. The progress line shows the
 approximate extracted size (`~1.2 G extract (2 files)`: the sizes in the first file
 times the number of files); `e` inspects every file and shows the exact size, the
 free space of the staging directory and the detectors left out (see below).
@@ -275,7 +284,7 @@ the selection was saved is included. A run without a file for a detector is repo
 as "not in run" (`<detector> in <run>`, in the estimate, the headless output and the
 summary), as is a run directory without per-detector files; a period without any
 per-detector file is an error naming the entry. A file that the copy list already
-covers is not transferred twice. The status bar counts a marked row once, with one
+covers is not transferred twice. The progress line counts a marked row once, with one
 file or link per run that holds the detector.
 
 ### Remote setup

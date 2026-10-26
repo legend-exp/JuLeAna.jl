@@ -483,8 +483,8 @@ function update_key!(m::JuLeAnaTUI, evt::Tachikoma.KeyEvent)
             m.dialog, m.quit_after_stop = nothing, true
             m.snap.state === :running && send_command!(m, StopProcessing())
         elseif evt.key == :char && evt.char == 'w' && !isnothing(m.sync) && sync_dirty(m.sync)
-            save!(m.sync)
-            processing(m) || sync_pending(m) || (m.quit = true)
+            # A failing write shows its error in the page's dialog; the quit dialog and the marks stay.
+            shielded(() -> (save!(m.sync); true), m.sync, false) && (processing(m) || sync_pending(m) || (m.quit = true))
         elseif evt.key == :char && evt.char == 'q'
             m.quit = true
         elseif evt.key == :escape || (evt.key == :char && evt.char == 'c') || ctrl_c

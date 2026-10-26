@@ -177,7 +177,8 @@ the background of the terminal unchanged.
    processing history `history.md`.
 7. **History**: the processing state of every processor in the runs on disk. The columns are
    the periods and runs selected in the session; `a` switches to all periods and runs of the
-. **Sync**: the data sync tool, see [Data sync tool](sync.md). The page is created when the tab is first shown.
+   data production and back, and the title shows which. `r` reads the state anew.
+8. **Sync**: the data sync tool, see [Data sync tool](sync.md). The page is created when the tab is first shown.
 
 Every processing run appends a section to `history.md` in the `jllog` tier. The History
 page and the `v` view of the Graph page show the state on disk, also from earlier sessions.

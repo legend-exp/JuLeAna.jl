@@ -243,6 +243,21 @@ withenv("LEGEND_DATA_CONFIG" => joinpath(mktempdir(), "config.json"), "XDG_CONFI
             end
         end
 
+        @testset "Setup's production below the remote root of a host in hosts.yaml" begin
+            remote = sync_fixture_root()
+            hosts = joinpath(mktempdir(), "hosts.yaml")
+            write(hosts, "other:\n  remote_root: /nowhere/else\nlocal:\n  remote_root: $remote\n")
+            settings = Sync.SyncSettings(; host = "local", remote_root = remote, local_root = mktempdir(), hosts_file = hosts,
+                                         selection = joinpath(mktempdir(), "sel.yaml"))
+            withenv("LEGEND_DATA_CONFIG" => joinpath(remote, "test", "config.json")) do
+                m = sync_tui(; settings)
+                Tachikoma.update!(m, KeyEvent('8'))
+                @test m.sync.settings.production == "test" && m.sync.suggested
+                @test sync_settle!(() -> m.sync.running == 0, m)
+                @test m.sync.production !== nothing && m.sync.production.name == "test"
+            end
+        end
+
         # Mark the section "tier" (root, config.json, metadata, par, tier: four rows down); the mandatory copies are not marked.
         function mark_tier!(m)
             for _ in 1:4
@@ -308,6 +323,34 @@ withenv("LEGEND_DATA_CONFIG" => joinpath(mktempdir(), "config.json"), "XDG_CONFI
             Tachikoma.update!(m, KeyEvent('w'))
             @test m.dialog === :quit && !m.quit && !Sync.sync_dirty(m.sync)
             @test !occursin("w: save", JuLeAna.quit_message(m))
+            # The s line names the sync work that the quit loses; a transfer is named next to the marks.
+            m.sync.dirty = true
+            m.sync.modal_kind = :transfer
+            message = JuLeAna.quit_message(m)
+            @test occursin("s: stop after the running items, then quit, interrupting the sync transfer, discarding the unsaved sync selection\n",
+                           message)
+            @test occursin("q: quit now, ending the run and its workers, interrupting the sync transfer, discarding the unsaved sync selection",
+                           message)
+            m.sync.modal_kind = :none
+            m.sync.dirty = false
+            message = JuLeAna.quit_message(m)
+            @test occursin("s: stop after the running items, then quit\n", message) && !occursin("sync", message)
+            m.snap = nothing
+            @test JuLeAna.quit_message(m) == "q: quit now\nc: cancel"
+        end
+
+        @testset "a failing save in the quit dialog shows the error and keeps the dialog" begin
+            blocker = joinpath(mktempdir(), "file")
+            write(blocker, "x")
+            settings = sync_settings(; production = "test")
+            settings.selection = joinpath(blocker, "sel.yaml")               # a file is not a directory
+            m = sync_tui(; settings)
+            Tachikoma.update!(m, KeyEvent('8'))
+            @test sync_settle!(() -> m.sync.running == 0, m)
+            mark_tier!(m)
+            Tachikoma.update!(m, KeyEvent('q'))
+            Tachikoma.update!(m, KeyEvent('w'))
+            @test m.dialog === :quit && !m.quit && Sync.sync_dirty(m.sync) && m.sync.modal_kind == :error
         end
 
         @testset "hints and help" begin
