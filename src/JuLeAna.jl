@@ -114,7 +114,8 @@ include("tui_production.jl")
 include("tui_timing.jl")
 include("sync/Sync.jl")
 using .Sync: SyncPage, SyncSettings, SSHHost, PACKAGED_HOSTS_FILE, sync_key!, sync_mouse!, sync_task!, render_sync, sync_hints,
-             sync_text_input, sync_start!, shielded, user_settings
+             sync_text_input, sync_start!, shielded, user_settings, preselect_production, host_remote_roots, sync_dirty, sync_busy,
+             save!, selection_path, normdir
 include("tui.jl")
 include("tui_logo.jl")
 include("tui_branding.jl")

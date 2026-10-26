@@ -2,8 +2,9 @@
 
 Run against `cslg4` and `viper`. The automated suite never touches the
 clusters, so this is where the ssh, rsync and mount paths are confirmed. The
-`cslg4` steps use a production chosen in the picker; pick one that holds `jlevt`
-data and call it `<production>` below.
+`cslg4` steps use a production chosen in the production list; pick one that holds `jlevt`
+data and call it `<production>` below. Settings that the steps name as a field are the fields of the
+screen; `local_root` in `~/.config/juleana/sync/settings.yaml` or `--local-root` fills the Local root.
 
 Record the date and the outcome of each step in a comment on the pull request.
 Do not paste per-detector numbers or plots: sizes, file counts and timings only.
@@ -12,13 +13,13 @@ Do not paste per-detector numbers or plots: sizes, file counts and timings only.
 
 - [ ] `rsync --version | head -1` names GNU rsync 3.1 or newer, not openrsync.
 - [ ] `ssh cslg4 true` succeeds without a password prompt.
-- [ ] The local mirror directory exists and is writable.
+- [ ] The local mirror directory exists and is writable, and it is the Local root.
 
 ## Interface
 
-- [ ] `juleana-sync` opens the picker, titled `Productions on cslg4`,
-      and lists `test`, `temp/...`, `ref/...` and `preprod/...` productions
-      within a few seconds (it shows `listing…` meanwhile).
+- [ ] `juleana-sync` opens the screen and lists `test`, `temp/...`, `ref/...` and
+      `preprod/...` productions in a list titled `Productions on cslg4` within a few
+      seconds (the progress line shows the connection steps meanwhile).
 - [ ] `enter` on a production that holds `jlevt` opens the two-pane layout,
       and the status bar reads `selected: 0 B copy (0 files), 0 links`.
 - [ ] The details pane of the production row reads `overlays: config_cslg4.json`.
@@ -30,7 +31,7 @@ Do not paste per-detector numbers or plots: sizes, file counts and timings only.
 - [ ] The listed directories show `…` for their size first, and the sizes fill in
       a moment later while the tree stays usable; a section keeps `…`. While a
       selected directory has no size, the status bar total ends in `?`.
-- [ ] In a real terminal, the wheel scrolls the tree and the picker, a click selects a
+- [ ] In a real terminal, the wheel scrolls the tree and the production list, a click selects a
       row, and a second click on the selected row opens, lists or collapses it like
       `enter`. Clicks do nothing while a dialog is open.
 - [ ] Expanding a second directory is visibly faster than the first: the ssh
@@ -86,9 +87,9 @@ Do not paste per-detector numbers or plots: sizes, file counts and timings only.
 
 ## Headless re-apply
 
-- [ ] `s` in the interface writes `config/sync/<production>.yaml`, with `/` in
+- [ ] `s` on the screen writes `~/.config/juleana/sync/<production>.yaml`, with `/` in
       the production path replaced by `-`.
-- [ ] `juleana-sync --from config/sync/<production>.yaml --dry-run`
+- [ ] `juleana-sync --from ~/.config/juleana/sync/<production>.yaml --dry-run`
       prints an estimate of 0 bytes, because everything is already there; no
       `--production` is needed.
 - [ ] Delete one copied file and re-run without `--dry-run` and with `--yes`:
@@ -99,9 +100,8 @@ Do not paste per-detector numbers or plots: sizes, file counts and timings only.
 ## viper
 
 - [ ] `ssh viper true` succeeds without a password prompt.
-- [ ] `juleana-sync --host viper` opens the picker, titled
-      `Productions on viper`, and lists productions below `juleana/`
-      (`auto`, `preprod`, `ref`, `tmp`).
+- [ ] `juleana-sync --host viper` lists productions below `juleana/`
+      (`auto`, `preprod`, `ref`, `tmp`) in a list titled `Productions on viper`.
 - [ ] `enter` on `juleana/tmp/jl-v0.7.0dev1` opens the tree. The details pane of
       the production row reads `overlays: juleana/config_viper.yaml`, and the
       `tier/raw` section points into `raw-compressed/` beside `juleana/`.
@@ -134,7 +134,7 @@ top-level directory recursively.
       without touching a real one.)
 - [ ] The same bootstrap on `viper`. Record whether `/tmp` on the login node has
       room for one run's selection (`df -h /tmp` there); if it does not, set
-      `staging` for `viper` in `config/sync/hosts.yaml` to `/ptmp/<user>/juleana-sync`.
+      `staging` for `viper` in `hosts.yaml` to `/ptmp/<user>/juleana-sync`.
 - [ ] Walk to `tier/jldsp` -> `cal` -> `p18` -> `r000` and press `enter` on the
       `detectors` row (the first row below the run, above the filekey rows): one
       row per group of the first file, sized, within a few seconds. On a `jlevt` run the `detectors` row disappears with the status
@@ -172,14 +172,14 @@ top-level directory recursively.
       reports the failure and names the staging directory, and the rerun skips the
       finished files. Interrupt an rsync pull and confirm `.juleana-partial`
       directories remain in the mirror and the rerun completes.
-- [ ] Headless: `juleana-sync --from config/sync/<production>.yaml --dry-run`
+- [ ] Headless: `juleana-sync --from ~/.config/juleana/sync/<production>.yaml --dry-run`
       prints the estimate with the extract part, then the staging directory and
       its free space. With the helper environment absent it stops with an error
       that names the `Pkg.add` command.
 - [ ] A missing Julia executable (set `julia` for the host to a wrong path) stops
       with the remote error message attached.
-- [ ] `git status` in the checkout shows `config/sync/hosts.yaml` as tracked and
-      any saved `config/sync/<production>.yaml` as ignored.
+- [ ] `git status` in the checkout shows no change after saving a selection: the file
+      is in the configuration directory.
 
 ### Tier/detector layout and period selection
 
@@ -207,7 +207,7 @@ top-level directory recursively.
       as "not in run"; `t` extracts the other runs and the summary repeats the line.
       A run that holds none of the chosen detectors has no files in the mirror.
 - [ ] Save, quit, and re-run headless with `--from`: the period entry is applied
-      without the interface and gives the same extraction.
+      without the screen and gives the same extraction.
 
 ### Detector files of a per-detector tier
 
@@ -230,5 +230,38 @@ top-level directory recursively.
       is marked reports `cannot mark ... :copy`; with the period copied, `space` on
       the detector row reports `... is already transferred whole`.
 - [ ] Save, quit and run headless with `--from` and `--dry-run`: the estimate and the
-      pairs match the interface. The saved file lists the marks under
+      pairs match the screen. The saved file lists the marks under
       `detector_files`.
+
+## Settings screen
+
+- [ ] `juleana-sync --host cslg4` shows the panel with every field filled; the Production field is empty
+      and the list of productions opens by itself after Connect finishes.
+- [ ] Each field accepts a valid value and shows the reason for an invalid one (a missing local root,
+      `--jobs -1`, a staging path that is not absolute); Estimate stays refused until it is fixed.
+- [ ] Mark a directory, press `s`, quit, start again, press `o` on the same production: the marks are back.
+- [ ] Edit the saved file so one mark names a directory that does not exist, press `o`: the message names it
+      and the tree keeps its earlier marks.
+- [ ] Change the host while marks are unsaved: the question appears; Keep leaves everything, Discard reloads.
+- [ ] The progress line shows a step with a count while the estimate lists detector files and an elapsed
+      time while rsync checks the files.
+- [ ] `Tab` moves between the panel and the tree, `p` collapses the panel, and `c`, `o`, `s`, `e` and `t`
+      work from the panel as well as from the tree.
+
+## The Sync tab of `juleana`
+
+- [ ] The tab does no work until it is shown; opening it starts the connection.
+- [ ] With a production in the Setup tab below the local root, the Production field starts with its name.
+      With a production that the host does not have, the field is cleared, the progress line says so and the
+      list opens.
+- [ ] Choosing another production on the Sync tab leaves the Setup tab on its production.
+- [ ] The digits, `?`, `T` and `q` work on the tab; typing digits into the Jobs field does not switch tabs.
+- [ ] `q` with unsaved marks lists `w` (save) in the dialog; `w` saves and quits.
+- [ ] While a transfer runs, `ctrl+c` opens the dialog and its `q` line names the interrupted transfer.
+
+## cslg4 to viper
+
+- [ ] On `cslg4`, `ssh viper true` succeeds without a password prompt.
+- [ ] Start `juleana-sync`, choose host `viper` and a local root under `/mnt/scratch`, choose a production,
+      mark one detector of one run, estimate and transfer: the mirror holds the file and `rsync --version`
+      on `cslg4` was reported as GNU 3.1 or newer.

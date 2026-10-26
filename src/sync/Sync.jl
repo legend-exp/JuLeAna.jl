@@ -51,6 +51,6 @@ include("app.jl")
 public main, Options, SyncSettings, parse_options, parse_settings, run_headless, SyncPage, SyncApp, sync_key!, sync_mouse!, sync_task!,
        render_sync, sync_hints, sync_dirty, sync_busy, sync_text_input, sync_start!, run_tui, StepProgress, Steps, StepPrinter, format_step,
        save!, shielded, selection_path, hosts_choices, SSHHost,
-       PACKAGED_HOSTS_FILE
+       PACKAGED_HOSTS_FILE, normdir, preselect_production, host_remote_roots
 
 end # module

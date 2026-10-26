@@ -8,7 +8,10 @@ function sync_page!(m::JuLeAnaTUI)
     isnothing(m.sync) || return m.sync
     problem = nothing
     page = try
-        SyncPage(isnothing(m.sync_settings) ? user_settings() : m.sync_settings, m.queue; host_factory = m.sync_host)
+        settings = isnothing(m.sync_settings) ? user_settings() : m.sync_settings
+        initial = isempty(settings.production) ? sync_initial_production(settings) : nothing
+        isnothing(initial) || (settings.production = initial)
+        SyncPage(settings, m.queue; host_factory = m.sync_host, suggested = !isnothing(initial))
     catch err
         err isa InterruptException && rethrow()
         problem = err
@@ -17,6 +20,34 @@ function sync_page!(m::JuLeAnaTUI)
     m.sync = page
     isnothing(problem) || shielded(() -> throw(problem), page, nothing)
     return page
+end
+
+# The production Setup works on, as a candidate name for the Sync page: its folder relative to the local root (a mirror)
+# or to the remote root of a host.
+function sync_initial_production(settings::SyncSettings)
+    current = current_production()
+    isnothing(current) && return nothing
+    roots = [normdir(expanduser(settings.local_root)); host_remote_roots(settings.hosts_file)]
+    return preselect_production(joinpath(current[2], current[1]), roots)
+end
+
+# Whether leaving would lose sync work: unsaved marks or a running transfer.
+sync_pending(m::JuLeAnaTUI) = !isnothing(m.sync) && (sync_dirty(m.sync) || sync_busy(m.sync))
+
+# The text of the quit dialog: one line per key that applies.
+function quit_message(m::JuLeAnaTUI)
+    dirty = !isnothing(m.sync) && sync_dirty(m.sync)
+    busy = !isnothing(m.sync) && sync_busy(m.sync)
+    lines = String[]
+    processing(m) && push!(lines, "s: stop after the running items, then quit")
+    dirty && push!(lines, "w: save the sync selection to $(selection_path(m.sync.settings)), then quit")
+    effects = String[]
+    processing(m) && push!(effects, "ending the run and its workers")
+    busy && push!(effects, "interrupting the sync transfer")
+    dirty && push!(effects, "discarding the unsaved sync selection")
+    push!(lines, "q: quit now, " * join(effects, ", "))
+    push!(lines, processing(m) ? "c: cancel, keep processing" : "c: cancel")
+    return join(lines, "\n")
 end
 
 """

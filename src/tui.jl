@@ -220,9 +220,9 @@ A left click on a page's tab opens the page; other mouse events go to the visibl
 Keys: the visible page gets each key first (see [`JuLeAna.setup_key!`](@ref) for the
 Setup page, [`JuLeAna.graph_key!`](@ref) for the Graph page,
 [`JuLeAna.progress_key!`](@ref) for the Progress page and [`JuLeAna.log_key!`](@ref) for the Log page, [`JuLeAna.reports_key!`](@ref) for the Reports page and [`JuLeAna.history_key!`](@ref) for the History page and [`JuLeAna.workers_key!`](@ref) for the Workers page); otherwise `1` to `8` switch pages and `q`
-or Ctrl-C quits. While processing runs, quitting asks first: `s` stops processing after
-the running items and quits when the run has ended, `q` quits at once, ending the run and the workers connected to this
-process, and `c` or Escape keeps the interface open.
+or Ctrl-C quits. While processing runs, or the Sync page has unsaved marks or a running transfer, quitting asks first: `s` stops processing after
+the running items and quits when the run has ended, `w` saves the sync selection and quits, `q` quits at once, ending the run and the workers connected to this
+process, interrupting the transfer and discarding the unsaved selection, and `c` or Escape keeps the interface open. The dialog lists only the keys that apply.
 
 `JuLeAnaTUI(ctrl, messages; splash_seconds = 1.5)` shows a startup screen with the logo,
 the version and the link to the documentation in place of the page when the interface
@@ -479,9 +479,12 @@ function update_key!(m::JuLeAnaTUI, evt::Tachikoma.KeyEvent)
         return nothing
     end
     if m.dialog === :quit
-        if evt.key == :char && evt.char == 's'
+        if evt.key == :char && evt.char == 's' && processing(m)
             m.dialog, m.quit_after_stop = nothing, true
             m.snap.state === :running && send_command!(m, StopProcessing())
+        elseif evt.key == :char && evt.char == 'w' && !isnothing(m.sync) && sync_dirty(m.sync)
+            save!(m.sync)
+            processing(m) || sync_pending(m) || (m.quit = true)
         elseif evt.key == :char && evt.char == 'q'
             m.quit = true
         elseif evt.key == :escape || (evt.key == :char && evt.char == 'c') || ctrl_c
@@ -522,7 +525,7 @@ function update_key!(m::JuLeAnaTUI, evt::Tachikoma.KeyEvent)
     m.page == 7 && !ctrl_c && history_key!(m.history_page, evt) && return nothing
     m.page == SYNC_PAGE && !ctrl_c && sync_key!(sync_page!(m), evt) && return nothing
     if ctrl_c || (evt.key == :char && evt.char == 'q')
-        processing(m) ? (m.dialog = :quit) : (m.quit = true)
+        processing(m) || sync_pending(m) ? (m.dialog = :quit) : (m.quit = true)
     elseif evt.key == :char && evt.char == '?'
         m.help = true
     elseif evt.key == :char && evt.char == 'T'
@@ -788,10 +791,8 @@ function draw_interface!(m::JuLeAnaTUI, f::Tachikoma.Frame)
 
     m.help && render_help(m, f.area, f.buffer)
     if m.dialog === :quit
-        modal = Tachikoma.Modal(; title = "Processing runs",
-                                message = "s: stop after the running items, then quit\n" *
-                                          "q: quit now, ending the run and its workers\n" *
-                                          "c: cancel, keep processing", confirm_label = "", cancel_label = "")
+        modal = Tachikoma.Modal(; title = processing(m) ? "Processing runs" : "Quit", message = quit_message(m), confirm_label = "",
+                                cancel_label = "")
         Tachikoma.render(modal, f.area, f.buffer)
     end
     return nothing
@@ -800,7 +801,7 @@ end
 """
     JuLeAna.run_tui(parsed_args::AbstractDict; processors = PROCESSORS, loader)
 
-Open the terminal user interface with the pages Setup, Graph, Workers, Progress, Log, Reports and History on
+Open the terminal user interface with the pages Setup, Graph, Workers, Progress, Log, Reports, History and Sync on
 a [`DataflowController`](@ref) for the parsed command line options `parsed_args`, as
 returned by [`JuLeAna.parse_commandline`](@ref). Returns `nothing` when the user quits.
 

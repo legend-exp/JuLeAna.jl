@@ -141,6 +141,29 @@ function hosts_choices(file::AbstractString)
 end
 
 """
+    host_remote_roots(file)::Vector{String}
+
+The remote roots of all hosts of the hosts file `file`, in host order.
+"""
+host_remote_roots(file::AbstractString) = [host_remote_root(file, host) for host in hosts_choices(file)]
+
+"""
+    preselect_production(folder, roots)::Union{Nothing,String}
+
+`folder` as a path relative to the first of `roots` that contains it, which is the name of a
+production when `folder` is one; `nothing` when no root contains it. A root itself does not count,
+and neither does a root that only shares a name prefix with `folder`.
+"""
+function preselect_production(folder::AbstractString, roots::AbstractVector{<:AbstractString})
+    folder = normdir(folder)
+    for root in roots
+        prefix = endswith(root, "/") ? normdir(root) : normdir(root) * "/"
+        startswith(folder, prefix) && length(folder) > length(prefix) && return String(folder[(length(prefix) + 1):end])
+    end
+    return nothing
+end
+
+"""
     selection_path(s::SyncSettings)::String
 
 The file the selection is saved to and loaded from: `s.selection`, else the default of the production,

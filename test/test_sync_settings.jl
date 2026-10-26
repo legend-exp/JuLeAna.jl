@@ -77,6 +77,18 @@ PropDicts.readprops(::NotAPath; kwargs...) = throw(MethodError(identity, ()))
     hosts = joinpath(mktempdir(), "hosts.yaml")
     write(hosts, "alpha:\n  remote_root: /data/a\nbeta:\n  remote_root: /data/b\n  staging: /scratch/b\n")
 
+    @testset "preselect_production" begin
+        roots = ["/home/u/mirror", "/data/l200"]
+        @test preselect_production("/home/u/mirror/juleana/ref/x", roots) == "juleana/ref/x"
+        @test preselect_production("/data/l200/test", roots) == "test"
+        @test preselect_production("/data/l2001/test", roots) === nothing          # a name prefix is not a parent
+        @test preselect_production("/data/l200", roots) === nothing                # the root is not a production
+        @test preselect_production("/elsewhere/x", roots) === nothing
+        @test preselect_production("/data/l200/test/", roots) == "test"
+        @test preselect_production("/anything/x", ["/"]) == "anything/x"
+        @test host_remote_roots(hosts) == ["/data/a", "/data/b"]
+    end
+
     @testset "defaults and the fields in panel order" begin
         s = SyncSettings(; local_root = "/tmp", hosts_file = hosts, host = "alpha")
         @test SETTINGS_FIELDS == (:host, :remote_root, :production, :local_root, :mount_root, :staging, :jobs, :selection)

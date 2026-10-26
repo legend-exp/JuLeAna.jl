@@ -122,8 +122,8 @@ the data production, after a confirmation; an existing file is kept as
 
 ## The interface
 
-The tabs at the top open the pages, also with the keys `1` to `7`. `?` shows all keys of
-the visible page, `q` or `Ctrl+C` quits. The status panel under the tabs shows the state
+The tabs at the top open the pages, also with the keys `1` to `8`. `?` shows all keys of
+the visible page, `q` or `Ctrl+C` quits (it asks first while processing runs, while the Sync page has unsaved marks, and while it transfers). The status panel under the tabs shows the state
 of the session, the outcome of the last run, the workers and the countdown to the cancel
 of idle workers, with the newest warning or error on the right; once a processing run
 started, a bar below shows its progress and elapsed time. The bottom row lists the keys.
@@ -177,7 +177,7 @@ the background of the terminal unchanged.
    processing history `history.md`.
 7. **History**: the processing state of every processor in the runs on disk. The columns are
    the periods and runs selected in the session; `a` switches to all periods and runs of the
-   data production and back, and the title shows which. `r` reads the state anew.
+. **Sync**: the data sync tool, see [Data sync tool](sync.md). The page is created when the tab is first shown.
 
 Every processing run appends a section to `history.md` in the `jllog` tier. The History
 page and the `v` view of the Graph page show the state on disk, also from earlier sessions.

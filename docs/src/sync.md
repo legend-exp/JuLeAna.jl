@@ -1,51 +1,151 @@
 # Data sync tool
 
-`juleana-sync` mirrors part of a remote LEGEND data production onto this machine so
+The data sync tool mirrors part of a remote LEGEND data production onto this machine so
 that the dataflow and the analysis scripts can be developed against real data
 without an open session on the cluster. The mirror keeps the remote layout, so
 `LegendDataManagement` opens it with the config the tool writes beside it.
 
+The tool has one screen and two ways to open it:
+
+- `juleana-sync` opens the screen alone.
+- Tab 8 "Sync" of `juleana` shows the same screen next to the dataflow pages.
+
 ``` bash
-juleana-sync --production test
+juleana-sync --host viper --production juleana/tmp/jl-v0.7.0dev1 --local-root ~/data
 ```
 
-The app is installed with `Pkg.Apps.develop(path = "path/to/JuLeAna.jl")`, which creates `juleana` and `juleana-sync`; `julia --project=. -m JuLeAna.Sync` runs it from a checkout.
+The apps are installed with `Pkg.Apps.develop(path = "path/to/JuLeAna.jl")`, which creates `juleana` and `juleana-sync`; `julia --project=. -m JuLeAna.Sync` runs the second one from a checkout.
 
 `--production` is the production's path relative to the remote root, for example
 `test`, `temp/jl-v0.6.0dev5` or `juleana/tmp/jl-v0.7.0dev1`. Without it, the
-interface opens on a picker that lists every directory with a `config.json`
-within three levels of the root (`↑` `↓` move, `enter` opens, `q` quits).
+screen lists every directory with a `config.json` up to three directories below the
+root and opens a list to choose from (`↑` `↓` move, `enter` opens, `r` lists again, `esc`
+closes it).
 
-This opens a terminal interface:
+## Sync configuration
 
-- The left pane is the production's tree: its `config.json`, then one branch per
+The tool reads and writes in the directory `$XDG_CONFIG_HOME/juleana/sync` (`~/.config/juleana/sync` when
+`XDG_CONFIG_HOME` is not set); the package directory is never written.
+
+| File | Content |
+|------|---------|
+| `hosts.yaml` | host aliases with `remote_root` and optionally `julia`, `julia_project`, `staging`; if it is absent, the file shipped in the package's `config/sync` is read |
+| `settings.yaml` | optional `local_root: <directory>`, the default of the Local root field |
+| `<production>.yaml` | saved selections; `/` in the production name becomes `-`; the directory is created at the first save |
+
+There is no default Local root: without `local_root` in `settings.yaml` or `--local-root`, the field is empty and
+Connect, Estimate and Transfer refuse with "Local root must be set". Selections saved by earlier versions
+under the package's `config/sync` are loaded by giving their path in the Selection field or with `--from`.
+A malformed file stops `juleana-sync` with a message that names the file; `juleana` shows the message in the
+dialog of the Sync tab and keeps running.
+
+## The screen
+
+The upper part is the settings panel, the lower part the production tree on the left with the
+details pane of the row under the cursor on the right. The last row is the progress line.
+
+### Settings
+
+| Field | Option | Input |
+|-------|--------|-------|
+| Host | `--host` | an alias from `hosts.yaml` (Tab completes) or any ssh alias; default `cslg4` |
+| Remote root | `--remote-root` | a path on the host; empty uses the host's entry in `hosts.yaml` |
+| Production | `--production` | `Enter` opens the list of the productions on the host |
+| Local root | `--local-root` | a local directory that exists (Tab completes); empty until set here, by `--local-root` or by `local_root` in `settings.yaml` |
+| Mount root | `--mount-root` | a local directory, or empty for no link mode (Tab completes) |
+| Staging | `--staging` | an absolute path or `~/...` on the host, or empty for the host default |
+| Jobs | `--jobs` | an integer, 0 or larger; 0 lets the helper decide |
+| Selection | `--out`, `--from` | a path ending in `.yaml`; empty is `<config dir>/<production>.yaml` (see Sync configuration) |
+
+`Tab` and `Shift-Tab` move through the fields and buttons and then to the tree, the mouse works on
+every field and button, `Enter` edits a field and `Esc` cancels. An invalid value stays in the field
+with its reason and blocks Connect, Estimate and Transfer. The buttons are Connect (`c`), Load selection
+(`o`), Save selection (`s`), Estimate (`e`) and Transfer (`t`); the letter works from the tree and from the panel.
+`p`, or a click on the title row, collapses the panel to one line; the panel is also hidden when the
+terminal is too low to leave room for the tree.
+
+Connect checks the host, GNU rsync and the productions, and opens the production named in the
+Production field or the list to choose from. It runs by itself when the screen starts with valid
+settings, and again when a setting changes while no tree is loaded.
+Load selection replaces the marks by the ones in the selection file; if any mark names a
+directory or detector that no longer exists, nothing changes and the message names it. Changing the
+host, the remote root, the production, the local root or the mount root while the tree has unsaved marks
+asks before it discards them (Keep or Discard).
+
+### The tree and its keys
+
+- The tree shows the production's `config.json`, then one branch per
   configured path key. Directories are listed when you open them, so nothing
   walks the cluster's filesystem up front.
-- The right pane describes the row under the cursor and lists the keys.
-- The status bar's left span shows what the current selection would transfer;
-  its right span shows where the selection will be saved, relative to
-  `config/sync`.
+- The details pane describes the row under the cursor.
+- The progress line shows what the current selection would transfer on its left and where the
+  selection will be saved on its right (`unsaved: <production>.yaml` until it is saved, `saved: <production>.yaml` afterwards,
+  relative to the configuration directory when the file lies in it).
 
 | Key | Action |
 |-----|--------|
+| `Tab` `Shift-Tab` | Move between the settings panel and the tree |
 | `↑` `↓` `home` `end` | Move the cursor |
 | `enter` | Expand or collapse; lists the directory the first time |
-| mouse wheel | Scroll the tree or the production picker |
+| mouse wheel | Scroll the tree or the production list |
 | left click | Select a row; a click on the selected row does what `enter` does |
 | `space` | Copy this row (`[x]`), or stop copying it; on a detector row of a per-detector tier, copy that detector's files |
-| `l` | Reach this row through the mount instead (`[~]`); needs `--mount-root`; on a detector row of a per-detector tier, link that detector's files |
+| `l` | Reach this row through the mount instead (`[~]`); needs a mount root; on a detector row of a per-detector tier, link that detector's files |
 | `n` | On a run directory: copy the first N filekeys |
 | `x` | On a detector row below a `detectors` row of a per-filekey tier (of a run or of a period): extract this detector (`[e]`), or stop extracting it |
+| `c` | Connect: list the productions of the host |
+| `o` | Load the selection file |
+| `s` | Save the selection to the file of the Selection field |
 | `e` | Ask rsync exactly what the selection would move |
 | `t` | Estimate, confirm, and transfer |
-| `s` | Save the selection to `config/sync/<production>.yaml` |
-| `q` | Leave, offering to save first |
-| `ctrl+c` | Same as `q`, outside a dialog |
+| `p` | Collapse or expand the settings panel |
+| `q` | Leave, offering to save first, or after a running transfer |
+| `ctrl+c` | Same as `q`, also during a transfer |
 
 A `[-]` marker means the row itself is not selected but something below it is.
-While a transfer is running, the interface accepts no key until it finishes.
-The mouse is ignored while a dialog is open or the interface is busy.
+While a dialog is open or a transfer is running, only `ctrl+c` reacts to the keyboard, and the mouse is ignored.
 A successful transfer's summary ends with any warnings rsync printed.
+
+### Progress line
+
+Every long operation reports its steps in the progress line as `[k/N] step`, for example
+`[2/4] checking files to copy`. A step with a known total shows a bar and a count, such as
+`listing detector files 3/12`, and a copy shows the rsync rate and remaining time. A step without a
+total shows a moving indicator and the elapsed time. The estimate reports listing the detector files of the
+selection, sizing the extract groups, checking the files to copy and the free space of the staging directory.
+The transfer reports extracting on the host, copying, pulling the extracted files, creating links and cleaning up
+the staging directory. Opening a `detectors` row and loading a selection report their directory listings.
+A failure names the step it happened in. A headless run prints the same steps as updating lines. When nothing
+runs, the line shows the running estimate and the selection file.
+
+### In `juleana`
+
+Tab 8 is created when it is first shown, so starting `juleana` costs nothing when the tab is not
+used. If the production of the Setup tab lies below the local root, or below the remote root of a host
+in `hosts.yaml`, its path relative to that root is offered as the production; Connect then checks the
+name against the productions of the chosen host and either opens it or reports that it is not a production on
+that host and opens the list. Changing the production on the Sync tab does not change the Setup tab.
+
+The keys of `juleana` (`1` to `8`, `?`, `T`, `q`) keep their meaning on this tab unless a field is being
+edited or a dialog is open. `q` or `ctrl+c` asks before leaving when the selection has unsaved marks or a
+transfer runs, as `juleana-sync` does. The dialog lists one line per key that applies:
+
+| Key | Shown when | Action |
+|-----|------------|--------|
+| `s` | processing runs | Stop after the running items, then quit |
+| `w` | the selection has unsaved marks | Save the selection, then quit; if processing or a transfer still runs, the dialog stays open |
+| `q` | always | Quit now, ending the processing run and its workers, interrupting the transfer and discarding the unsaved selection, as far as each applies |
+| `c` | always | Cancel |
+
+`juleana-sync` asks about a running transfer first, then about unsaved marks, and names the file the
+selection would be saved to.
+
+### Running on cslg4
+
+`hosts.yaml` lists `cslg4` and `viper`. To sync from `viper` to `cslg4`, start the screen on `cslg4`,
+choose the host `viper` and a local root on `cslg4` (for example under `/mnt/scratch`). `ssh viper` has
+to work without a password from `cslg4`. Connect checks the system `rsync` on `cslg4` and names the
+version found if it is not GNU rsync 3.1 or newer.
 
 ## Extracting detectors
 
@@ -126,7 +226,7 @@ is rebuilt with the union of the old and the new groups, so a later extraction n
 loses groups. The summary of an extraction reads `extracted N files, N groups`,
 followed by the bytes rsync moved for them.
 
-The interface accepts no key while it checks the helper environment, creates it, or
+The screen takes no key but `ctrl+c` while it checks the helper environment, creates it, or
 transfers. During a transfer the gauge reads `extracting k/N files` while the helper
 runs and shows the rsync progress afterward.
 
@@ -180,7 +280,7 @@ file or link per run that holds the detector.
 
 ### Remote setup
 
-Per host, `config/sync/hosts.yaml` accepts these optional keys next to `remote_root`:
+Per host, `hosts.yaml` (see Sync configuration) accepts these optional keys next to `remote_root`:
 
 | Key | Default | Meaning |
 |-----|---------|---------|
@@ -188,12 +288,11 @@ Per host, `config/sync/hosts.yaml` accepts these optional keys next to `remote_r
 | `julia_project` | `~/.julia/environments/juleana-sync` | Environment with HDF5 and ParallelProcessingTools |
 | `staging` | `${TMPDIR:-/tmp}/juleana-sync-$(id -un)` | Staging directory (an absolute path or one starting with `~`); set it to a scratch area (for example `/ptmp/<user>/juleana-sync`) when `/tmp` on the login node is small |
 
-`hosts.yaml` is tracked in git; the selections saved under `config/sync/` are
-git-ignored. The free space of `/tmp` on `viper` has not been measured; if a run's
+The free space of `/tmp` on `viper` has not been measured; if a run's
 selection does not fit there, set `staging` for `viper` to a directory below
 `/ptmp/<user>/`.
 
-When the environment is missing or lacks a package, the interface shows the
+When the environment is missing or lacks a package, the screen shows the
 `Pkg.add` command and asks before running it (`Create` or `Cancel`). `Create` only
 works when the environment directory does not exist: the tool never modifies an
 existing environment and refuses it with an error. Add the missing packages yourself
@@ -213,20 +312,20 @@ runs in the main process for fewer than four files and otherwise uses
 | Option | Description |
 |--------|-------------|
 | `--host ALIAS` | ssh alias of the machine holding the production (default `cslg4`) |
-| `--remote-root PATH` | Remote directory holding the productions (default: the entry for `--host` in `config/sync/hosts.yaml`) |
-| `--local-root PATH` | Local directory mirroring it (default `../data` next to this checkout) |
+| `--remote-root PATH` | Remote directory holding the productions (default: the entry for `--host` in `hosts.yaml`) |
+| `--local-root PATH` | Local directory mirroring it (default: `local_root` in `settings.yaml`; no default otherwise) |
 | `--mount-root PATH` | Where the remote root is mounted; enables link mode |
-| `--production PATH` | Production to sync, relative to the remote root (default: choose in the interface) |
-| `--out FILE` | Where the interface saves the selection (default `config/sync/<production>.yaml`, with `/` in the production path replaced by `-`); the name must end in `.yaml` |
+| `--production PATH` | Production to sync, relative to the remote root (default: choose on the screen) |
+| `--out FILE` | Where the screen saves the selection (default `~/.config/juleana/sync/<production>.yaml`, with `/` in the production path replaced by `-`); the name must end in `.yaml` |
 | `--jobs N` | Worker processes the remote extraction helper may use (default: the helper decides) |
 | `--staging PATH` | Staging directory on the host for extraction (default: the host's `staging` key, else `${TMPDIR:-/tmp}/juleana-sync-$(id -un)`) |
-| `--from FILE` | Apply a saved selection without starting the interface; the production is taken from the selection unless `--production` is given, in which case the two must agree; a selection saved as `.json` is read as well |
+| `--from FILE` | Apply a saved selection without starting the screen; the production is taken from the selection unless `--production` is given, in which case the two must agree; a selection saved as `.json` is read as well |
 | `--dry-run` | With `--from`: ask rsync what would move and print it, then stop |
 | `--yes` | With `--from`: transfer without asking |
 
 ## Hosts, layouts and site overlays
 
-The remote root of each host is listed in `config/sync/hosts.yaml`, so
+The remote root of each host is listed in `hosts.yaml`, so
 `--host viper` works without `--remote-root`. The productions sit at different
 places on the two sites:
 
@@ -244,13 +343,13 @@ first, then the overlays from the root downwards. A later file wins, so each
 overlay overrides the production and a deeper overlay overrides a shallower one.
 `$_` expands to the directory of the file it is written in. The overlays are
 always copied with the production, and `config_local.yaml` is derived from the
-merged config. The row of the production in the interface lists the overlays
+merged config. The row of the production on the screen lists the overlays
 that were applied.
 
 ## Re-applying a selection
 
 ``` bash
-juleana-sync --from config/sync/test.yaml --yes
+juleana-sync --from ~/.config/juleana/sync/test.yaml --yes
 ```
 
 The saved selection lists only the rows that were chosen explicitly, so it stays

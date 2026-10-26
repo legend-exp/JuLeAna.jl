@@ -188,6 +188,128 @@ withenv("LEGEND_DATA_CONFIG" => joinpath(mktempdir(), "config.json"), "XDG_CONFI
             end
         end
 
+        @testset "Setup's production is offered when it can be matched" begin
+            mirror = mktempdir()
+            settings(; production = "") = sync_settings(; production, local_root = mirror)
+            # Setup works on <mirror>/test: below the local root, and "test" is a production on the host.
+            mkpath(joinpath(mirror, "test"))
+            withenv("LEGEND_DATA_CONFIG" => joinpath(mirror, "test", "config.json")) do
+                m = sync_tui(; settings = settings())
+                Tachikoma.update!(m, KeyEvent('8'))
+                @test m.sync.settings.production == "test" && m.sync.suggested
+                @test sync_settle!(() -> m.sync.running == 0, m)
+                @test m.sync.production !== nothing && m.sync.production.name == "test" && !m.sync.picking
+                # Choosing another production on the Sync tab leaves Setup alone: its state, the pending commands and
+                # the environment of the process are the same afterwards.
+                setup_state() = (JuLeAna.current_production(), ENV["LEGEND_DATA_CONFIG"], m.pending, m.answered, m.page, m.setup.root,
+                                 m.snap)
+                before = setup_state()
+                draw_page = m.page
+                Tachikoma.update!(m, KeyEvent(:tab))
+                Tachikoma.update!(m, KeyEvent(:tab))
+                Tachikoma.update!(m, KeyEvent(:tab))   # Production
+                Tachikoma.update!(m, KeyEvent(:enter))                  # the productions are known: the list opens
+                @test m.sync.picking
+                Tachikoma.update!(m, KeyEvent(:enter))                  # the first row, temp/jl-dev
+                @test sync_settle!(() -> m.sync.running == 0, m)
+                @test m.sync.production.name == "temp/jl-dev" && m.sync.settings.production == "temp/jl-dev"
+                @test setup_state() == before && m.page == draw_page
+            end
+            # A name that is not a production on the host is dropped and the picker opens.
+            mkpath(joinpath(mirror, "nope"))
+            withenv("LEGEND_DATA_CONFIG" => joinpath(mirror, "nope", "config.json")) do
+                m = sync_tui(; settings = settings())
+                Tachikoma.update!(m, KeyEvent('8'))
+                @test sync_settle!(() -> m.sync.running == 0, m)
+                @test m.sync.settings.production == "" && occursin("nope is not a production on local", m.sync.status) && m.sync.picking
+            end
+            # Setup's production lies elsewhere: the field starts empty.
+            withenv("LEGEND_DATA_CONFIG" => joinpath(mktempdir(), "prod", "config.json")) do
+                m = sync_tui(; settings = settings())
+                Tachikoma.update!(m, KeyEvent('8'))
+                @test m.sync.settings.production == "" && !m.sync.suggested
+            end
+            # No production in Setup at all.
+            withenv("LEGEND_DATA_CONFIG" => nothing) do
+                m = sync_tui(; settings = settings())
+                Tachikoma.update!(m, KeyEvent('8'))
+                @test m.sync.settings.production == ""
+            end
+            # A production named in the given settings is kept: only an empty field is filled.
+            withenv("LEGEND_DATA_CONFIG" => joinpath(mirror, "test", "config.json")) do
+                m = sync_tui(; settings = settings(; production = "temp/jl-dev"))
+                Tachikoma.update!(m, KeyEvent('8'))
+                @test m.sync.settings.production == "temp/jl-dev" && !m.sync.suggested
+            end
+        end
+
+        # Mark the section "tier" (root, config.json, metadata, par, tier: four rows down); the mandatory copies are not marked.
+        function mark_tier!(m)
+            for _ in 1:4
+                Tachikoma.update!(m, KeyEvent(:down))
+            end
+            @test Sync.current_node(m.sync).label == "tier"
+            Tachikoma.update!(m, KeyEvent(' '))
+            @test Sync.sync_dirty(m.sync)
+        end
+
+        @testset "the quit dialog lists every pending reason" begin
+            m = sync_tui(; settings = sync_settings(; production = "test"))
+            Tachikoma.update!(m, KeyEvent('8'))
+            @test sync_settle!(() -> m.sync.running == 0, m)
+            Tachikoma.update!(m, KeyEvent('q'))
+            @test m.quit && isnothing(m.dialog)                              # nothing pending
+
+            # Unsaved marks.
+            m = sync_tui(; settings = sync_settings(; production = "test"))
+            Tachikoma.update!(m, KeyEvent('8'))
+            @test sync_settle!(() -> m.sync.running == 0, m)
+            mark_tier!(m)
+            @test Sync.sync_dirty(m.sync) && JuLeAna.sync_pending(m)
+            Tachikoma.update!(m, KeyEvent('q'))
+            @test m.dialog === :quit && !m.quit
+            text = sync_render(m)
+            @test find_text(text, "w: save the sync selection to") !== nothing
+            @test find_text(text, "q: quit now, discarding the unsaved sync selection") !== nothing
+            @test find_text(text, "s: stop after the running items") === nothing
+            Tachikoma.update!(m, KeyEvent('s'))                              # s does nothing without a run
+            @test m.dialog === :quit
+            Tachikoma.update!(m, KeyEvent('c'))
+            @test isnothing(m.dialog) && !m.quit && Sync.sync_dirty(m.sync)
+            Tachikoma.update!(m, KeyEvent('q'))
+            Tachikoma.update!(m, KeyEvent('w'))
+            @test m.quit && isfile(Sync.selection_path(m.sync.settings)) && !Sync.sync_dirty(m.sync)
+
+            # A running transfer.
+            m = sync_tui(; settings = sync_settings(; production = "test"))
+            Tachikoma.update!(m, KeyEvent('8'))
+            @test sync_settle!(() -> m.sync.running == 0, m)
+            m.sync.modal_kind = :transfer
+            Tachikoma.update!(m, KeyEvent('q'))                       # the page takes every key but Ctrl-C while a transfer runs
+            @test isnothing(m.dialog) && !m.quit
+            Tachikoma.update!(m, KeyEvent(:ctrl_c))
+            @test m.dialog === :quit && find_text(sync_render(m), "q: quit now, interrupting the sync transfer") !== nothing
+            Tachikoma.update!(m, KeyEvent('q'))
+            @test m.quit
+        end
+
+        @testset "processing and unsaved marks: w saves and the dialog stays" begin
+            m = sync_tui(; settings = sync_settings(; production = "test"))
+            Tachikoma.update!(m, KeyEvent('8'))
+            @test sync_settle!(() -> m.sync.running == 0, m)
+            mark_tier!(m)
+            @test Sync.sync_dirty(m.sync)
+            m.snap = (; state = :running)                                     # the quit logic reads only the state
+            message = JuLeAna.quit_message(m)
+            @test occursin("s: stop after the running items, then quit", message) && occursin("w: save the sync selection to", message)
+            @test occursin("q: quit now, ending the run and its workers, discarding the unsaved sync selection", message)
+            @test occursin("c: cancel, keep processing", message)
+            m.dialog = :quit
+            Tachikoma.update!(m, KeyEvent('w'))
+            @test m.dialog === :quit && !m.quit && !Sync.sync_dirty(m.sync)
+            @test !occursin("w: save", JuLeAna.quit_message(m))
+        end
+
         @testset "hints and help" begin
             m = sync_tui(; settings = sync_settings(; production = "test"))
             Tachikoma.update!(m, KeyEvent('8'))
