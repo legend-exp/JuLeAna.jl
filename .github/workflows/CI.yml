@@ -41,6 +41,12 @@ jobs:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
       - uses: julia-actions/cache@v3
+      - name: Install GNU rsync
+        # The sync tool needs GNU rsync; macOS ships openrsync.
+        if: runner.os == 'macOS'
+        run: |
+          brew install rsync
+          echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
       - name: registry_add
         run: julia add_registries.jl
       - uses: julia-actions/julia-buildpkg@v1

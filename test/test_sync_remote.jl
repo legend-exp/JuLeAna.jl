@@ -148,9 +148,13 @@
     @testset "SSHHost(alias) follows the ssh configuration" begin
         # Both outcomes are valid: the user's own master (nothing) or the tool's
         # socket under ~/.ssh, depending on the machine's ssh config.
-        s = SSHHost("cslg4")
-        @test s.control_path === nothing ||
-              startswith(s.control_path, joinpath(homedir(), ".ssh") * "/")
+        mktempdir() do d
+            mkdir(joinpath(d, ".ssh"))
+            withenv("HOME" => d) do
+                s = SSHHost("cslg4")
+                @test s.control_path === nothing || startswith(s.control_path, joinpath(d, ".ssh") * "/")
+            end
+        end
 
         if has_control_master(read(`ssh -G cslg4`, String))
             @info "ssh already configures a ControlMaster for cslg4; the ~/.ssh existence check of SSHHost did not run"
