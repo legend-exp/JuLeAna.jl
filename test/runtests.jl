@@ -3,8 +3,8 @@
 import Test
 
 # Code that writes to the config folder of the data production, such as the worker start
-# script, must never reach a real production from the tests.
-withenv("LEGEND_DATA_CONFIG" => joinpath(mktempdir(), "config.json")) do
+# script, must never reach a real production from the tests; the user's configuration directory is never read.
+withenv("LEGEND_DATA_CONFIG" => joinpath(mktempdir(), "config.json"), "XDG_CONFIG_HOME" => mktempdir()) do
     Test.@testset "Package JuLeAna" begin
         if get(ENV, "JULEANA_TEST_GROUP", "") != "sync"
             include("test_aqua.jl")

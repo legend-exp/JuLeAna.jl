@@ -251,7 +251,7 @@ is the latest controller snapshot. Return `true` if the key was used and `false`
   - `o` opens the form of the SLURM options, such as the time limit and the number of nodes,
     if `snap` has the run mode settings; [`JuLeAna.slurm_form_key!`](@ref) handles the keys
     while it is open.
-  - Other keys, such as `1` to `7` and `q`, are not used while no editor, form, message or question is open.
+  - Other keys, such as `1` to `8` and `q`, are not used while no editor, form, message or question is open.
 """
 function workers_key!(page::WorkersPage, evt::Tachikoma.KeyEvent, send; snap = nothing)::Bool
     modal = !isnothing(page.editor) || !isnothing(page.form) || !isnothing(page.notice) || !isnothing(page.confirm)

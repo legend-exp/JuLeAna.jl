@@ -413,7 +413,7 @@ Otherwise:
   - `a` switches between all reports on disk and the reports of the steps of the current or
     last processing run, and reads them.
   - `r` reads the reports anew.
-  - Other keys, such as `1` to `6` and `q`, are not used.
+  - Other keys, such as `1` to `8` and `q`, are not used.
 """
 function reports_key!(page::ReportsPage, evt::Tachikoma.KeyEvent)::Bool
     if !isnothing(page.viewer_path)

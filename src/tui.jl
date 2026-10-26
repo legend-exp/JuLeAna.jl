@@ -232,10 +232,11 @@ Escape, `?` or `q` closes it. The Setup page's filter and the kwargs editor rece
 
 `N` on the Setup page opens the [`JuLeAna.ProductionForm`](@ref) for a new data production.
 
-Page 8 shows the `JuLeAna.Sync` screen. It is created when the tab is first shown and starts connecting to the host then.
 The form replaces the visible page and takes every key (see [`JuLeAna.production_key!`](@ref)).
 It is also open when the interface starts without a session: when the parsed
 options have no `config` or `new_production` is set, `start!` does not load a session.
+
+Page 8 shows the `JuLeAna.Sync` screen. It is created when the tab is first shown and starts connecting to the host then.
 
 The field `timing` is the [`JuLeAna.InterfaceTiming`](@ref) that records the times of the
 `view` and `Tachikoma.update!` calls; once a session is loaded it appends a row every 10

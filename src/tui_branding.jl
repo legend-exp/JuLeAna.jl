@@ -186,9 +186,10 @@ end
 # Draw the name `JuLeAna` with the version, and below it the current data production, right
 # aligned at the right end of the tab row `area`. Both lines need to fit right of the tabs;
 # the root path of the production is clipped from the left, and nothing is drawn if even the
-# first line does not fit.
+# first line does not fit or a tab is hidden by the width of the bar.
 function render_corner_logo(m::JuLeAnaTUI, area::Tachikoma.Rect, buf::Tachikoma.Buffer)
-    used = isempty(m.tabs._tab_rects) ? area.x - 1 : maximum(Tachikoma.right, m.tabs._tab_rects)
+    length(m.tabs._tab_rects) < length(TUI_PAGES) && return nothing
+    used = maximum(Tachikoma.right, m.tabs._tab_rects)
     right = Tachikoma.right(area)
     available = right - used - 1
     title = vcat(logo_name_spans(), [(" " * juleana_version(), Tachikoma.tstyle(:text_dim))])
