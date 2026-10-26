@@ -314,8 +314,6 @@ function p_process_lq_calibration_cut_cal(processing_config, l200::LegendData, p
                 log_info_dict[lq_type] = log_info
                 processed_dict[lq_type] = true
 
-                # free memory
-                GC.gc()
             catch e
                 # a failed `@process_step` has logged its error already
                 e isa ProcessStepError || @error "$lq_type calibration failed for $det: $(truncate_error(e))"
@@ -411,7 +409,6 @@ function p_process_lq_calibration_cut_cal(processing_config, l200::LegendData, p
                 log_info_dict[lq_classifier] = log_info
                 processed_dict[lq_classifier] = true
 
-                GC.gc()
             catch e
                 # a failed `@process_step` has logged its error already
                 e isa ProcessStepError || @error "lq cut generation of $lq_classifier failed for $det: $(truncate_error(e))"

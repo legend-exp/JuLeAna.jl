@@ -158,7 +158,6 @@ function process_aoe_calibration_cut_cal(processing_config, l200::LegendData, pe
                     aoe ./= cuts_aoe.max
                     aoe, "$(aoe_funcs[aoe_type]) / $(cuts_aoe.max)"
                 end
-                GC.gc()
 
                 @debug_plot @process_step "$aoe_type uncalibrated A/E plot" begin
                     h_aoe_uncal = fit(Histogram, (ustrip.(e_unit, e_cal[isfinite.(aoe)]), aoe[isfinite.(aoe)]), (0:0.5:3000, 0.1:5e-3:1.8))
@@ -191,7 +190,6 @@ function process_aoe_calibration_cut_cal(processing_config, l200::LegendData, pe
                                                                  uncertainty = true)
                     result_bands, report_bands, peakhists_bands
                 end
-                GC.gc()
 
                 qc_compton_bands = findall(band -> band in keys(result_fit) &&
                                                    result_fit[band].gof.converged &&
@@ -299,8 +297,6 @@ function process_aoe_calibration_cut_cal(processing_config, l200::LegendData, pe
                 log_info_dict[aoe_type] = log_info
                 processed_dict[aoe_type] = true
 
-                # free memory
-                GC.gc()
             catch e
                 e isa ProcessStepError || @error "Error in $aoe_type calibration: $(truncate_error(e))"
                 log_info = log_nt_cal((det, detector_status(chinfo_det.usability), ProcessStatus(0), aoe_type, fill("-", 4)...,
@@ -428,7 +424,6 @@ function process_aoe_calibration_cut_cal(processing_config, l200::LegendData, pe
                 log_info_dict[aoe_classifier] = log_info
                 processed_dict[aoe_classifier] = true
 
-                GC.gc()
             catch e
                 e isa ProcessStepError || @error "Error in $aoe_classifier cut generation: $(truncate_error(e))"
                 log_info = log_nt_cut((det, detector_status(chinfo_det.usability), ProcessStatus(0), aoe_classifier, "-", "-", "-",

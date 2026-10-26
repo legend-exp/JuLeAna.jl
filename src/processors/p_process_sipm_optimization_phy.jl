@@ -265,7 +265,6 @@ function p_process_sipm_optimization_phy(processing_config, l200::LegendData, pe
                 processed_dict[filter_type] = true
 
                 # call garbage collector
-                GC.gc()
             catch e
                 e isa ProcessStepError || @error "Error in processing detector $det: $(truncate_error(e))"
                 log_info = log_nt((det, detector_status(chinfo_det.usability), part, ProcessStatus(0), filter_type, "-", "-", "-", "-",

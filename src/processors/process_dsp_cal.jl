@@ -173,8 +173,6 @@ function process_dsp_cal(processing_config, l200::LegendData, period::DataPeriod
                             # save data to hdf5
                             "$det" in processed_detectors && delete_entry!(outdata, "jldsp/$det")
                             outdata[:jldsp, det] = outdata_det
-                            # free memory
-                            GC.gc()
                             # count number of detectors processed and Successful
                             n_detectors += 1
                             # flush streams

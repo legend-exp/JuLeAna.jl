@@ -132,7 +132,6 @@ function p_process_energy_cal(processing_config, l200::LegendData, period::DataP
                                   end
                                   for pinfo in partinfo_det])
                 end
-                GC.gc()
 
                 e_unit = u"keV"
                 peakhists, peakstats, _, _ = @process_step "$e_type simple calibration" begin
@@ -140,7 +139,6 @@ function p_process_energy_cal(processing_config, l200::LegendData, period::DataP
                     peakhists_gamma(collect(energy), energy_config_det.th228_lines, energy_config_det.left_window_sizes,
                                     energy_config_det.right_window_sizes)
                 end
-                GC.gc()
 
                 @process_step "$e_type energy spectrum plot" begin
                     p = LegendMakie.lplot(fit(Histogram, ustrip.(e_unit, energy), 0:0.5:3000), xlabel = "Energy ($e_unit)",
@@ -169,7 +167,6 @@ function p_process_energy_cal(processing_config, l200::LegendData, period::DataP
                     fit_peaks(peakhists, peakstats, th228_names; e_unit = e_unit, fit_func = Symbol.(energy_config_det.th228_fit_func),
                               calib_type = :th228)
                 end
-                GC.gc()
 
                 @debug_plot @process_step "$e_type peak fits plot" begin
                     p = LegendMakie.lplot(report_fit, figsize = (600, 400 * length(report_fit)),
@@ -250,7 +247,6 @@ function p_process_energy_cal(processing_config, l200::LegendData, period::DataP
                 log_info_dict[e_type] = log_info
                 processed_dict[e_type] = true
 
-                GC.gc()
             catch e
                 e isa ProcessStepError || @error "Error in $e_type: $(truncate_error(e))"
                 log_info = log_nt((det, detector_status(chinfo_det.usability), part, ProcessStatus(0), e_type, "-", "-", "-",

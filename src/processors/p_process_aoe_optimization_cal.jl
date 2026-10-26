@@ -238,9 +238,6 @@ function p_process_aoe_optimization_cal(processing_config, l200::LegendData, per
                     (dep = dsp_dep[ljl_propfunc(qc_string).(dsp_dep)], sep = dsp_sep[ljl_propfunc(qc_string).(dsp_sep)])
                 end
 
-                # free memory
-                GC.gc()
-
                 plot_dep_sep_distributions() = begin
                     fig = Makie.Figure(size = (900, 700))
                     Makie.Label(fig[0, 1:2], get_plottitle(filekey_det, part, det, "DEP and SEP"; additional_type = string(filter_type)))
@@ -282,8 +279,6 @@ function p_process_aoe_optimization_cal(processing_config, l200::LegendData, per
                 processed_dict[filter_type] = true
                 result_wl_dict[filter_type] = result_wl
 
-                # free memory
-                GC.gc()
                 yield()
             catch e
                 e isa ProcessStepError || @error "Filter: $filter_type filter optimization: $(truncate_error(e))"
