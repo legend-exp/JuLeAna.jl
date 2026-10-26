@@ -35,7 +35,8 @@ function request_quit!(app::SyncApp)
                            confirm_label = "Quit now", cancel_label = "Keep running", selected = :cancel)
         app.dialog_kind = :busy
     elseif sync_dirty(page)
-        app.dialog = Modal(title = "Unsaved selection", message = "Save the selection to\n$(page.options.out)\nbefore leaving?",
+        app.dialog = Modal(title = "Unsaved selection",
+                           message = "Save the selection to\n$(selection_path(page.settings))\nbefore leaving?",
                            confirm_label = "Save and quit", cancel_label = "Quit without saving", selected = :confirm)
         app.dialog_kind = :unsaved
     else

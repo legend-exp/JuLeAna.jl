@@ -137,18 +137,40 @@ Connect in the background: build the host with the page's `host_factory`, check 
 [`Options`](@ref) from a copy of the settings and list the productions. The result is handled by [`sync_task!`](@ref).
 """
 function start_connect!(m::SyncPage)
-    m.connecting && (m.status = "busy: connecting to $(m.settings.host); change the setting again when it is done"; return m)
+    m.connecting && (m.status = "busy: connecting to $(m.settings.host); the current settings are used when it is done"; return m)
     s = copy(m.settings)
     factory = m.host_factory
     m.connecting = true
     m.status = "connecting to $(s.host)…"
     spawn!(m, :connect) do
-        host = factory(s.host)
-        check_rsync()
+        host = in_step("checking host $(s.host)") do
+            return factory(s.host)
+        end
+        in_step(check_rsync, "checking rsync")
         options = Options(s)
-        return (host, options, list_productions(host, options.remote_root))
+        productions = in_step("listing productions on $(s.host)") do
+            return list_productions(host, options.remote_root)
+        end
+        return (host, options, productions, s)
     end
     return m
+end
+
+# Run `f()`; a failure is rethrown with `what` in front of its message, so the error dialog names the step.
+function in_step(f, what::AbstractString)
+    try
+        return f()
+    catch err
+        err isa InterruptException && rethrow()
+        throw(ErrorException(string(what, ": ", sprint(showerror, err))))
+    end
+end
+
+# Whether another task of the page runs; the status then says what the page is busy with.
+function busy!(m::SyncPage)
+    m.running > 0 || return false
+    m.status = "busy: " * (isempty(m.status) ? "a background task is running" : m.status)
+    return true
 end
 
 """
@@ -158,6 +180,7 @@ The Connect button: refuse while a setting is invalid, ask before dropping unsav
 [`start_connect!`](@ref).
 """
 function connect!(m::SyncPage)
+    busy!(m) && return m
     blocked(m) && return m
     return discard_guard!(m, () -> "Discard the marks on $(m.production.name)?", () -> start_connect!(m))
 end
@@ -758,7 +781,10 @@ function change_setting!(m::SyncPage, field::Symbol, text::AbstractString)
     apply = function ()
         setfield!(m.settings, field, String(text))
         revalidate!(m)
-        field in (:host, :remote_root) || (field in RELOAD_FIELDS && m.host !== nothing) ? reload_for!(m, field) : refresh_options!(m)
+        connected = m.host !== nothing || m.root !== nothing
+        # Without a connection any setting that makes the settings valid connects; with one, only the connection's own settings reload.
+        !connected || field in (:host, :remote_root) || (field in RELOAD_FIELDS && m.host !== nothing) ? reload_for!(m, field) :
+        refresh_options!(m)
         return nothing
     end
     field in RELOAD_FIELDS || return (apply(); m)
@@ -788,7 +814,7 @@ Rebuild `page.options` from the settings when they are valid, so the next estima
 new jobs, staging directory and selection path.
 """
 function refresh_options!(m::SyncPage)
-    isempty(m.errors) || return m
+    (isempty(m.errors) && m.options !== nothing) || return m
     m.options = Options(m.settings; from = m.options.from, dry_run = m.options.dry_run, yes = m.options.yes)
     return m
 end
@@ -1027,13 +1053,14 @@ Open the production list; when the productions are not known yet, or the last li
 first and open the list when they arrive.
 """
 function open_picker!(m::SyncPage)
-    if m.running > 0
-        m.status = "busy: " * (isempty(m.status) ? "a background task is running" : m.status)
+    busy!(m) && return m
+    m.host === nothing && return connect!(m)
+    if m.productions === nothing
+        request_productions!(m)
         return m
     end
-    m.host === nothing && return connect!(m)
-    if m.productions === nothing || isempty(m.productions)
-        request_productions!(m)
+    if isempty(m.productions)
+        m.status = "no productions found in $(m.options.remote_root)"
         return m
     end
     m.picker = SelectableList(m.productions; focused = true, block = Block(title = "Productions on $(m.settings.host)"))
@@ -1093,6 +1120,7 @@ The Load selection button: read the file at [`selection_path`](@ref), asking fir
 """
 function load_selection!(m::SyncPage)
     needs_production!(m) && return m
+    busy!(m) && return m
     blocked(m) && return m
     path = selection_path(m.settings)
     isfile(path) || (m.status = "no selection file $path"; return m)
@@ -1470,7 +1498,7 @@ function task!(m::SyncPage, id::AbstractString, e::TaskEvent)
         m.step = nothing
         m.continuation = nothing
         text = sprint(showerror, e.value) * step_note(failed)
-        id == "productions" && (m.productions = String[])
+        id == "productions" && (m.productions = nothing)
         show_error!(m, ErrorException(text))
         # The dialog clears the status; once it is dismissed the page says why it has no production.
         id == "productions" && (m.status = "no productions found in $(m.options.remote_root)")
@@ -1483,7 +1511,12 @@ function task!(m::SyncPage, id::AbstractString, e::TaskEvent)
         return m
     elseif id == "connect"
         m.connecting = false
-        m.host, m.options, m.productions = e.value
+        host, options, productions, used = e.value
+        # Settings that changed while the connection was made describe another connection: drop this one.
+        if !all(field -> getfield(used, field) == getfield(m.settings, field), fieldnames(SyncSettings))
+            return blocked(m) ? m : start_connect!(m)
+        end
+        m.host, m.options, m.productions = host, options, productions
         name = m.settings.production
         if isempty(name)
             return open_picker!(m)

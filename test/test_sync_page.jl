@@ -593,4 +593,91 @@
         end
     end
 
+
+    @testset "settings changed on a page without a connection connect once they are valid" begin
+        m = fresh()
+        m.settings.local_root = joinpath(tempdir(), "no-such-sync-dir")
+        revalidate!(m)
+        change_setting!(m, :jobs, "2")                          # no options yet: nothing to rebuild, and the reason shows
+        @test m.settings.jobs == "2" && m.running == 0 && occursin("is not an existing directory", m.status)
+        change_setting!(m, :local_root, mktempdir())
+        @test m.running == 1 && m.connecting
+        settle!(m)
+        @test m.host === h && m.options.jobs == 2 && m.picking
+        m2 = fresh()
+        m2.settings.mount_root = joinpath(tempdir(), "no-such-mount")
+        revalidate!(m2)
+        change_setting!(m2, :mount_root, "")
+        @test m2.connecting
+        settle!(m2)
+    end
+
+    @testset "the quit dialog names the file Save writes" begin
+        local_root = mktempdir()
+        p = Production(h, "test", FIXTURE_ROOT, local_root)
+        options = Options("local", FIXTURE_ROOT, local_root, nothing, "test", joinpath(mktempdir(), "old.yaml"), nothing, false, false)
+        app = SyncApp(SyncPage(h, p, options))
+        app.page.dirty = true
+        edited = joinpath(mktempdir(), "edited.yaml")
+        change_setting!(app.page, :selection, edited)
+        change_setting!(app.page, :jobs, "x")                   # another field is invalid: the options stay as they were
+        update!(app, KeyEvent('q'))
+        @test app.dialog_kind == :unsaved && occursin(edited, app.dialog.message)
+        update!(app, KeyEvent(:enter))
+        @test isfile(edited)
+    end
+
+    @testset "a Connect result for settings that changed meanwhile is dropped" begin
+        gate = Channel{Bool}(1)
+        seen = String[]
+        slow = function (alias)
+            push!(seen, alias)
+            alias == "local" && take!(gate)
+            return h
+        end
+        settings = SyncSettings(; host = "local", remote_root = FIXTURE_ROOT, local_root = mktempdir())
+        m = SyncPage(settings, TaskQueue(); host_factory = slow)
+        sync_start!(m)
+        @test m.connecting
+        change_setting!(m, :host, "local2")                      # the Connect for "local" is held
+        @test m.settings.host == "local2" && occursin("busy:", m.status)
+        put!(gate, true)
+        settle!(m)
+        @test seen == ["local", "local2"] && m.host === h && m.options.host == "local2" && m.picking && !m.connecting
+    end
+
+    @testset "a failing Connect names its step" begin
+        for (factory, root, step) in ((_ -> error("no route"), "/x", "checking host x: "),
+                                      (_ -> h, joinpath(FIXTURE_ROOT, "nosuch"), "listing productions on x: "))
+            m = SyncPage(SyncSettings(; host = "x", remote_root = root, local_root = mktempdir()), TaskQueue(); host_factory = factory)
+            sync_start!(m)
+            settle!(m)
+            @test m.modal_kind == :error && occursin(step, m.modal.message)
+        end
+    end
+
+    @testset "an empty production list is reported instead of listed again" begin
+        empty_root = mktempdir()
+        m = SyncPage(SyncSettings(; host = "local", remote_root = empty_root, local_root = mktempdir()), TaskQueue(); host_factory = _ -> h)
+        sync_start!(m)
+        settle!(m)
+        @test m.productions == String[] && !m.picking && occursin("no productions found", m.status)
+        open_picker!(m)
+        @test m.running == 0 && occursin("no productions found", m.status)
+    end
+
+    @testset "Connect and Load are refused while another task runs" begin
+        m = fresh(; production = "test")
+        sync_start!(m)
+        settle!(m)
+        m.running += 1
+        m.status = "listing x…"
+        connect!(m)
+        @test m.running == 1 && !m.connecting && occursin("busy: listing x", m.status)
+        m.status = "listing x…"
+        load_selection!(m)
+        @test m.running == 1 && occursin("busy: listing x", m.status)
+        m.running -= 1
+    end
+
 end
