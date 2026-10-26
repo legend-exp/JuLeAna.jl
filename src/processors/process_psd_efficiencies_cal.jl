@@ -118,8 +118,8 @@ function process_psd_efficiencies_cal(processing_config, l200::LegendData, perio
 
                 @debug "Reading from $(period)-$(run)"
                 cal_func = ljl_propfunc(l200.par.rpars.ecal[period, run][det][e_type].cal.func)
-                qc_mask = read_ldata(@pf($is_single_pulse && !$is_pulser), l200, :jlqcs, filekey, det)
-                read_ldata(row -> merge(NamedTuple{(e_type_cal,)}((cal_func(row),)), row), l200, :jldsp, :cal, period, run, det)[qc_mask]
+                read_ldata(row -> merge(NamedTuple{(e_type_cal,)}((cal_func(row),)), row), l200, :jldsp, :cal, period, run, det;
+                           filterby = :jlqcs => @pf($is_single_pulse && !$is_pulser))
             end
             collect(getproperty(hit_cal, e_type)), hit_cal
         end

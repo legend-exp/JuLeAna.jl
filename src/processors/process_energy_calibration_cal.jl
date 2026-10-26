@@ -7,7 +7,7 @@ Calibrate the energy of all processable HPGe detectors (`geds`) of the `cal` run
 For each energy type in `energy_types` of the energy config, the uncalibrated energies of single-pulse, non-pulser events passing the quality cuts are calibrated in three steps: a simple calibration locates the Th-228 peaks, the peaks are fitted with the functions in `th228_fit_func`, and a polynomial calibration curve (`cal_pol_order`) and a FWHM curve (`fwhm_pol_order` for energy types ending in `_ctc`, otherwise a quadratic FWHM² model) are fitted to the peaks that pass the fit quality cuts in `qc`. Peaks in `cal_fit_excluded_peaks` and `fwhm_fit_excluded_peaks` are left out of the respective fit. Energy types ending in `_ctc` use the charge-trapping-corrected energy expression from the CT correction results.
 
 # Inputs
-- `jlqcs` tier of the start `cal` filekey (event mask `is_single_pulse && !is_pulser`) and `jldsp` tier of the `cal` run, for each detector.
+- `jlqcs` tier (event mask `is_single_pulse && !is_pulser`) and `jldsp` tier of the `cal` run, for each detector.
 - `dataprod_config(l200).energy(filekey)` (`default` and per-detector entries).
 - `l200.par.rpars.ctc[period, run]` (needed for `_ctc` energy types).
 - `l200.par.rpars.ecal[period, run]` (existing results, unless `reprocess` is set).
@@ -93,8 +93,7 @@ function process_energy_calibration_cal(processing_config, l200::LegendData, per
                 e_names = Symbol.(first.(split.(string.(energy_types), "_ctc")))
                 columns_to_read = any(endswith(string(e_type), "_ctc") for e_type in energy_types) ? (unique(e_names)..., :qdrift) :
                                   Tuple(unique(e_names))
-                qc_mask = read_ldata(@pf($is_single_pulse && !$is_pulser), l200, :jlqcs, filekey, det)
-                read_ldata(columns_to_read, l200, :jldsp, :cal, period, run, det)[qc_mask]
+                read_ldata(columns_to_read, l200, :jldsp, :cal, period, run, det; filterby = :jlqcs => @pf($is_single_pulse && !$is_pulser))
             end
         end
 

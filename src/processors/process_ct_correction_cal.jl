@@ -7,7 +7,7 @@ Determine the charge-trapping correction for all processable HPGe detectors (`ge
 For each energy type in `energy_types` of the `ctc` section of the energy config, the energy is calibrated with a simple Th-228 calibration, and the correction parameters (polynomial in `qdrift` of order `ctc_order`) are optimized on the peak `peak` within the window (`left_window_size`, `right_window_size`). The FWHM of the peak before and after the correction is reported. Only single-pulse, non-pulser events passing the quality cuts are used.
 
 # Inputs
-- `jlqcs` tier of the start `cal` filekey (event mask `is_single_pulse && !is_pulser`) and `jldsp` tier of the `cal` run (energy types and `qdrift`), for each detector. A missing `jlqcs` file counts as a failure of that detector.
+- `jlqcs` tier (event mask `is_single_pulse && !is_pulser`) and `jldsp` tier of the `cal` run (energy types and `qdrift`), for each detector. A missing `jlqcs` file counts as a failure of that detector.
 - `dataprod_config(l200).energy(filekey)` (`default`, `ctc.default` and per-detector entries).
 - `l200.par.rpars.ctc[period, run]` (existing results, unless `reprocess` is set).
 
@@ -61,13 +61,6 @@ function process_ct_correction_cal(processing_config, l200::LegendData, period::
 
         @debug "Processing detector $det ($ch)"
 
-        qcsfilename = l200.tier[:jlqcs, filekey, det]
-        # load data file
-        if !isfile(qcsfilename)
-            @error "QC file $qcsfilename not found"
-            throw(ErrorException("QC file not found"))
-        end
-
         result_dict = Dict{Symbol,NamedTuple}()
         log_info_dict = Dict{Symbol,NamedTuple}()
         processed_dict = Dict{Symbol,Bool}()
@@ -95,8 +88,7 @@ function process_ct_correction_cal(processing_config, l200::LegendData, period::
         data_det_after_qc = @process_step "data loader" begin
             @debug "Load DSP data after QC"
             if !all([haskey(processed_dict, e_type) for e_type in energy_types])
-                qc_mask = read_ldata(@pf($is_single_pulse && !$is_pulser), l200, :jlqcs, filekey, det)
-                read_ldata((energy_types..., :qdrift), l200, :jldsp, :cal, period, run, det)[qc_mask]
+                read_ldata((energy_types..., :qdrift), l200, :jldsp, :cal, period, run, det; filterby = :jlqcs => @pf($is_single_pulse && !$is_pulser))
             end
         end
 

@@ -141,11 +141,11 @@ const dsp_cal_log_text = """## DSP
 This is the log for the dsp. The algorithm iterates through each file and process within each file each detector separate."""
 
 const qcs_cal_log_text = """## Cal QC generation
-QC flags and pulser/Tl-208 FEP survival fractions are saved for each detector.
+QC flags are generated per filekey. Pulser/Tl-208 FEP survival fractions of the nonremoved filekeys are saved for each detector.
 The report counts single-pulse events failing the metadata's is_valid_e check."""
 
 const qcs_phy_log_text = """## Physics QC generation
-QC flags and pulser/forced-trigger survival fractions are saved for each detector. Forced triggers exclude pulsers.
+QC flags are generated per filekey. Pulser/forced-trigger survival fractions of the nonremoved filekeys are saved for each detector. Forced triggers exclude pulsers.
 The report counts single-pulse events failing the metadata's is_valid_dsp check."""
 
 const energy_ctc_log_text = """## CT Correction

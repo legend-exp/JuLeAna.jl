@@ -137,9 +137,7 @@ function p_process_psd_efficiencies_cal(processing_config, l200::LegendData, per
             hpge_kwargs = get_ged_evt_kwargs(l200, filekey_det)
             if !all([haskey(processed_dict, psd_classifier) for psd_classifier in psd_classifiers])
                 hit_cal = fast_flatten([let
-                                            qc_mask = read_ldata(@pf($is_single_pulse && !$is_pulser), l200, :jlqcs, pinfo.cal.startkey,
-                                                                 det)
-                                            dsp = read_ldata(l200, :jldsp, :cal, pinfo.period, pinfo.run, det)[qc_mask]
+                                            dsp = read_ldata(l200, :jldsp, :cal, pinfo.period, pinfo.run, det; filterby = :jlqcs => @pf($is_single_pulse && !$is_pulser))
                                             @debug "Calibrating $(pinfo.period)-$(pinfo.run)"
                                             calibrate_ged_detector_data(l200, pinfo.cal.startkey, det, dsp; keep_detdata = true,
                                                                         hpge_kwargs...)
