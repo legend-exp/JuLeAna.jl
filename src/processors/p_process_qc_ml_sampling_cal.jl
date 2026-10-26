@@ -6,7 +6,7 @@ Draw the QC machine-learning training sample of the `cal` data of `period` and c
 propagation. The processor writes the unlabeled parameter entry of the training filekey and its validity.
 `p_process_qc_ml_sampling_phy` does the same for the `phy` data.
 
-The training filekey `fk` is `training_filekey(l200, period, :cal)`. The processor reads the QC ML config
+The training filekey `fk` is `training_filekey(l200, period, DataCategory(:cal))`. The processor reads the QC ML config
 `dataprod_config(l200).qc(fk).ml`, scans the raw files of all analysis runs of `period` for the configured
 detectors, draws the sample by the selection rules of the config and clusters its waveforms. The entry holds the
 sample description, the clustering and one label per cluster exemplar, all `UNLABELED`.
@@ -34,7 +34,7 @@ Always `false`: nothing is skipped because of an earlier period.
 """
 function p_process_qc_ml_sampling_cal(processing_config, l200::LegendData, period::DataPeriod; reprocess::Bool = false,
                                       only_first_period::Bool = true)
-    fk = training_filekey(l200, period, :cal)
+    fk = training_filekey(l200, period, DataCategory(:cal))
     report = qc_ml_sampling(l200, fk; reprocess)
     isnothing(report) || write_report(get_preportfilename(l200, fk, :qc_ml_sampling_cal), report)
     return false

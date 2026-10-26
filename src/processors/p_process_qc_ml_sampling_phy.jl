@@ -6,7 +6,7 @@
 """
 function p_process_qc_ml_sampling_phy(processing_config, l200::LegendData, period::DataPeriod; reprocess::Bool = false,
                                       only_first_period::Bool = true)
-    fk = training_filekey(l200, period, :phy)
+    fk = training_filekey(l200, period, DataCategory(:phy))
     report = qc_ml_sampling(l200, fk; reprocess)
     isnothing(report) || write_report(get_preportfilename(l200, fk, :qc_ml_sampling_phy), report)
     return false
