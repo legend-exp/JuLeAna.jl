@@ -1,46 +1,5 @@
 # This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
 
-# The mirror sits beside the dataflow checkout, so a production's relative
-# layout is the same here as on the remote.
-const DEFAULT_LOCAL_ROOT = normpath(joinpath(@__DIR__, "..", "..", "..", "data"))
-const DEFAULT_SELECTION_DIR = normpath(joinpath(@__DIR__, "..", "..", "config", "sync"))
-const DEFAULT_HOSTS_FILE = joinpath(DEFAULT_SELECTION_DIR, "hosts.yaml")
-
-"""
-    host_remote_root(file::AbstractString, host::AbstractString)::String
-
-The remote root that `file` (a YAML or JSON mapping of host aliases to
-`{remote_root: ...}`) lists for `host`.
-"""
-function host_remote_root(file::AbstractString, host::AbstractString)
-    hosts = readprops(file; subst_pathvar = false, subst_env = false)
-    haskey(hosts, Symbol(host)) || throw(ArgumentError("host $host is not listed in $file; add it there or pass --remote-root"))
-    return String(hosts[Symbol(host)].remote_root)
-end
-
-"""
-    host_helper_config(file::AbstractString, host::AbstractString)::HelperConfig
-
-The optional `julia`, `julia_project` and `staging` keys of `host`'s entry in the
-hosts file `file`. A host without an entry, or an entry without those keys, selects
-the defaults of [`HelperConfig`](@ref).
-"""
-function host_helper_config(file::AbstractString, host::AbstractString)
-    hosts = readprops(file; subst_pathvar = false, subst_env = false)
-    haskey(hosts, Symbol(host)) || return HelperConfig()
-    entry = hosts[Symbol(host)]
-    value(key) = haskey(entry, key) ? String(entry[key]) : nothing
-    return HelperConfig(value(:julia), value(:julia_project), value(:staging))
-end
-
-"""
-    default_selection_path(production::AbstractString)::String
-
-Where the interface saves the selection for `production` unless told otherwise.
-Directory separators in the production path become dashes.
-"""
-default_selection_path(production::AbstractString) = joinpath(DEFAULT_SELECTION_DIR, replace(production, '/' => '-') * ".yaml")
-
 """
     Options
 
@@ -70,31 +29,64 @@ function Options(host, remote_root, local_root, mount_root, production, out, fro
 end
 
 """
-    parse_options(args::AbstractVector{<:AbstractString}; hosts_file = DEFAULT_HOSTS_FILE)::Options
+    Options(s::SyncSettings; from = nothing, dry_run = false, yes = false, cli = false)::Options
 
-Without `--remote-root`, the root of `--host` is read from `hosts_file`. The helper
-settings come from the host's entry in `hosts_file`; `--staging` replaces its staging
-directory and is a path on the host: absolute or starting with `~`.
+The options for valid settings. The first invalid field is an `ArgumentError` with its reason (named by
+option with `cli`, by label otherwise). The helper settings come from the host's entry in the hosts
+file; a staging directory in `s` replaces its staging directory. Paths become absolute because
+[`check_mount`](@ref) compares a path's device with its parent's, which needs an absolute path.
 """
-function parse_options(args::AbstractVector{<:AbstractString}; hosts_file::AbstractString = DEFAULT_HOSTS_FILE)
-    settings = ArgParseSettings(prog = "juleana-sync",
-                                description = "Mirror part of a remote LEGEND data production into a local " *
-                                              "directory that LegendDataManagement can open unchanged.")
-    @add_arg_table! settings begin
+function Options(s::SyncSettings; from::Union{Nothing,AbstractString} = nothing, dry_run::Bool = false, yes::Bool = false,
+                 cli::Bool = false)
+    errors = settings_errors(s; cli)
+    isempty(errors) || throw(ArgumentError(last(first(errors))))
+    remote_root = isempty(s.remote_root) ? host_remote_root(s.hosts_file, s.host) : s.remote_root
+    helper = isfile(s.hosts_file) ? host_helper_config(s.hosts_file, s.host) : HelperConfig()
+    isempty(s.staging) || (helper = HelperConfig(helper.julia, helper.julia_project, s.staging))
+    mount = isempty(s.mount_root) ? nothing : abspath(expanduser(s.mount_root))
+    return Options(s.host, abspath(remote_root), abspath(expanduser(s.local_root)), mount, s.production, selection_path(s),
+                   from === nothing ? nothing : String(from), dry_run, yes, parse(Int, s.jobs), helper)
+end
+
+"""
+    SyncSettings(o::Options; hosts_file = default_hosts_file())
+
+The settings that `o` came from. The default selection path of the production is not stored as an
+explicit one.
+"""
+function SyncSettings(o::Options; hosts_file::AbstractString = default_hosts_file())
+    explicit = isempty(o.production) || o.out != default_selection_path(o.production) ? o.out : ""
+    return SyncSettings(; host = o.host, remote_root = o.remote_root, production = o.production, local_root = o.local_root,
+                        mount_root = something(o.mount_root, ""), staging = something(o.helper.staging, ""), jobs = string(o.jobs),
+                        selection = explicit, hosts_file)
+end
+
+"""
+    parse_settings(args::AbstractVector{<:AbstractString}; hosts_file = default_hosts_file())
+
+Parse the command line into `(; settings, from, dry_run, yes)`, where `settings` is a [`SyncSettings`](@ref)
+whose empty fields keep their meaning (host default, no mount). The default Local root is
+[`default_local_root`](@ref), empty without a `local_root` key in the user's `settings.yaml`.
+"""
+function parse_settings(args::AbstractVector{<:AbstractString}; hosts_file::AbstractString = default_hosts_file())
+    parser = ArgParseSettings(prog = "juleana-sync",
+                              description = "Mirror part of a remote LEGEND data production into a local " *
+                                            "directory that LegendDataManagement can open unchanged.")
+    @add_arg_table! parser begin
         "--host"
         help = "ssh alias of the machine holding the production"
         arg_type = String
-        default = "cslg4"
+        default = DEFAULT_HOST
         "--remote-root"
-        help = "remote directory holding the productions (default: the host's entry in config/sync/hosts.yaml)"
+        help = "remote directory holding the productions (default: the host's entry in the hosts file of the configuration directory)"
         dest_name = "remote_root"
         arg_type = String
         default = ""
         "--local-root"
-        help = "local directory mirroring the remote root"
+        help = "local directory mirroring the remote root (default: local_root in settings.yaml of the configuration directory)"
         dest_name = "local_root"
         arg_type = String
-        default = DEFAULT_LOCAL_ROOT
+        default = default_local_root()
         "--mount-root"
         help = "where the remote root is mounted; enables link mode"
         dest_name = "mount_root"
@@ -105,7 +97,7 @@ function parse_options(args::AbstractVector{<:AbstractString}; hosts_file::Abstr
         arg_type = String
         default = "0"
         "--staging"
-        help = "directory on the host where extracted files are staged (default: the host's entry in config/sync/hosts.yaml, else \$TMPDIR/juleana-sync-\$USER)"
+        help = "directory on the host where extracted files are staged (default: the host's entry in the hosts file, else \$TMPDIR/juleana-sync-\$USER)"
         arg_type = String
         default = ""
         "--production"
@@ -113,7 +105,7 @@ function parse_options(args::AbstractVector{<:AbstractString}; hosts_file::Abstr
         arg_type = String
         default = ""
         "--out"
-        help = "where the interface saves the selection (a .yaml file)"
+        help = "where the interface saves the selection (a .yaml file; default: <configuration directory>/<production>.yaml)"
         arg_type = String
         default = ""
         "--from"
@@ -128,33 +120,28 @@ function parse_options(args::AbstractVector{<:AbstractString}; hosts_file::Abstr
         help = "with --from: transfer without asking"
         action = :store_true
     end
-    parsed = parse_args(args, settings)
+    parsed = parse_args(args, parser)
 
     from = isempty(parsed["from"]) ? nothing : parsed["from"]
     (from === nothing && (parsed["dry_run"] || parsed["yes"])) &&
         throw(ArgumentError("--dry-run and --yes only mean something together with --from"))
-    mount = isempty(parsed["mount_root"]) ? nothing : abspath(parsed["mount_root"])
-    out = !isempty(parsed["out"]) ? parsed["out"] :
-          isempty(parsed["production"]) ? "" : default_selection_path(parsed["production"])
-    isempty(out) || endswith(out, ".yaml") || throw(ArgumentError("--out must end in .yaml, got $out"))
-    remote_root = isempty(parsed["remote_root"]) ?
-                  host_remote_root(hosts_file, parsed["host"]) : parsed["remote_root"]
+    settings = SyncSettings(; host = parsed["host"], remote_root = parsed["remote_root"], production = parsed["production"],
+                            local_root = parsed["local_root"], mount_root = parsed["mount_root"], staging = parsed["staging"],
+                            jobs = parsed["jobs"], selection = parsed["out"], hosts_file)
+    return (; settings, from, dry_run = parsed["dry_run"], yes = parsed["yes"])
+end
 
-    jobs = tryparse(Int, parsed["jobs"])
-    jobs === nothing && throw(ArgumentError("--jobs must be an integer, got $(parsed["jobs"])"))
-    jobs >= 0 || throw(ArgumentError("--jobs must not be negative, got $jobs"))
-    helper = isfile(hosts_file) ? host_helper_config(hosts_file, parsed["host"]) : HelperConfig()
-    staging = parsed["staging"]
-    isempty(staging) || isabspath(staging) || startswith(staging, "~") ||
-        throw(ArgumentError("--staging must be an absolute path or start with ~, got $staging"))
-    isempty(staging) || (helper = HelperConfig(helper.julia, helper.julia_project, staging))
+"""
+    parse_options(args::AbstractVector{<:AbstractString}; hosts_file = default_hosts_file())::Options
 
-    # check_mount compares a path's device with its parent's, which only works
-    # for an absolute path; --remote-root feeds path arithmetic that assumes
-    # the same.
-    return Options(parsed["host"], abspath(remote_root), abspath(parsed["local_root"]),
-                   mount, parsed["production"], out, from, parsed["dry_run"], parsed["yes"],
-                   jobs, helper)
+Without `--remote-root`, the root of `--host` is read from `hosts_file`. The helper
+settings come from the host's entry in `hosts_file`; `--staging` replaces its staging
+directory and is a path on the host: absolute or starting with `~`. Invalid values are an
+`ArgumentError` that names the option.
+"""
+function parse_options(args::AbstractVector{<:AbstractString}; hosts_file::AbstractString = default_hosts_file())
+    (; settings, from, dry_run, yes) = parse_settings(args; hosts_file)
+    return Options(settings; from, dry_run, yes, cli = true)
 end
 
 """

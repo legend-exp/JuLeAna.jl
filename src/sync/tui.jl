@@ -538,8 +538,8 @@ tells the files apart (the name under the default selection directory), because
 """
 function status_bar(m::SyncModel)
     out = m.options.out
-    name = startswith(out, DEFAULT_SELECTION_DIR * "/") ?
-           relpath(out, DEFAULT_SELECTION_DIR) : basename(out)
+    name = startswith(out, default_selection_dir() * "/") ?
+           relpath(out, default_selection_dir()) : basename(out)
     return StatusBar(left = [Span(format_estimate(running_estimate(m.root)), tstyle(:text_bright)),
                              Span(isempty(m.status) ? "" : "   " * m.status)],
                      right = [Span((m.saved === nothing ? "unsaved: " : "saved: ") * name)])

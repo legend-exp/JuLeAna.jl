@@ -180,8 +180,8 @@
     end
 
     @testset "hosts.yaml keys" begin
-        @test basename(DEFAULT_HOSTS_FILE) == "hosts.yaml"
-        @test isfile(DEFAULT_HOSTS_FILE)
+        @test basename(default_hosts_file()) == "hosts.yaml"
+        @test isfile(default_hosts_file())
         file = joinpath(work, "hosts.yaml")
         write(file, """
         alpha:

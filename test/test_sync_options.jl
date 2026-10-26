@@ -6,7 +6,7 @@
         @test o.host == "cslg4"
         @test o.remote_root == "/mnt/scratch/projects/legend/data/l200"
         @test o.production == ""
-        @test o.local_root == DEFAULT_LOCAL_ROOT
+        @test o.local_root == default_local_root()
         @test o.mount_root === nothing
         @test o.from === nothing
         @test o.dry_run == false
@@ -16,9 +16,9 @@
 
     @testset "the selection file is named after the production" begin
         @test parse_options(["--production", "test"]).out ==
-              joinpath(DEFAULT_SELECTION_DIR, "test.yaml")
+              joinpath(default_selection_dir(), "test.yaml")
         @test parse_options(["--production", "juleana/tmp/jl-v0.7.0dev1"]).out ==
-              joinpath(DEFAULT_SELECTION_DIR, "juleana-tmp-jl-v0.7.0dev1.yaml")
+              joinpath(default_selection_dir(), "juleana-tmp-jl-v0.7.0dev1.yaml")
     end
 
     @testset "remote roots per host" begin
@@ -49,7 +49,7 @@
         @test o.mount_root == "/Volumes/cslg4"
         @test o.from == "/tmp/sel.yaml"
         @test o.dry_run && o.yes
-        @test o.out == joinpath(DEFAULT_SELECTION_DIR, "preprod.yaml")
+        @test o.out == joinpath(default_selection_dir(), "preprod.yaml")
         @test parse_options(["--out", "/tmp/x.yaml"]).out == "/tmp/x.yaml"
         @test_throws "--out must end in .yaml, got /tmp/x.json" parse_options(["--out", "/tmp/x.json"])
     end

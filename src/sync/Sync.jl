@@ -42,9 +42,11 @@ include("inventory.jl")
 include("selection.jl")
 include("estimate.jl")
 include("transfer.jl")
+include("settings.jl")
 include("options.jl")
 include("tui.jl")
 
-public main, Options, parse_options, run_headless, SyncModel, run_tui, StepProgress, Steps, StepPrinter, format_step
+public main, Options, SyncSettings, parse_options, parse_settings, run_headless, SyncModel, run_tui, StepProgress, Steps, StepPrinter,
+       format_step
 
 end # module

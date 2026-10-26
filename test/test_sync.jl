@@ -38,7 +38,8 @@ using JuLeAna.Sync: main, RemoteHost, SSHHost, LocalHost, DirEntry,
                     Progress, TransferResult, check_rsync, check_mount, rsync_command,
                     parse_progress, rsync_dry_run, remove_stale_links!, create_links!,
                     apply!, summary_text,
-                    Options, parse_options, run_headless, DEFAULT_LOCAL_ROOT, DEFAULT_SELECTION_DIR, DEFAULT_HOSTS_FILE,
+                    Options, parse_options, run_headless, default_local_root, default_selection_dir, default_hosts_file, config_dir,
+                    default_selection_path,
                     SyncModel, checkbox, node_label, build_tree, rebuild_tree!, current_node,
                     request_expand!, attach_listing!, show_error!, save!, details, status_bar,
                     render_sync, run_tui, task_queue,
@@ -58,7 +59,9 @@ using JuLeAna.Sync: main, RemoteHost, SSHHost, LocalHost, DirEntry,
                     ExtractProgress, STAGING_MARGIN, check_staging_space, reduced_groups, reconcile_local, rsync_listed,
                     with_environment!, start_bootstrap!, environment_ready!, request_detectors!, run_estimate!, toggle_extract!,
                     StepProgress, Steps, NO_STEPS, format_step, StepPrinter, failed_step, with_failed_step, apply_steps, estimate_selection,
-                    detector_steps
+                    detector_steps,
+                    SyncSettings, SETTINGS_FIELDS, user_settings, field_error, settings_errors, hosts_choices, selection_path,
+                    parse_settings
 
 const SYNC_FIXTURES = joinpath(@__DIR__, "sync", "fixtures")
 
@@ -111,6 +114,7 @@ withenv("XDG_CONFIG_HOME" => TEST_CONFIG_HOME) do
         run_file("test_sync_estimate.jl")
         run_file("test_sync_transfer.jl")
         run_file("test_sync_options.jl")
+        run_file("test_sync_settings.jl")
         run_file("test_sync_extract_options.jl")
         run_file("test_sync_tui.jl")
         run_file("test_sync_extract_tui.jl")
