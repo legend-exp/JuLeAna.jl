@@ -134,7 +134,7 @@ function process_aoe_calibration_cut_cal(processing_config, l200::LegendData, pe
         e_cal, hit_cal, e_unit = @process_step "hit data loading" begin
             if !all([haskey(processed_dict, aoe_type) for aoe_type in aoe_types]) ||
                !all([haskey(processed_dict, aoe_classifier) for aoe_classifier in aoe_classifiers])
-                hit_cal = read_hit_cal(l200, det, [(period, run)], e_type,
+                hit_cal = read_hit_cal(l200, det, [(period, run)], [e_type],
                                        vcat(collect(values(aoe_funcs)), aoe_config_det.apply_ctc ? [qdrift_expression] : []))
                 e_cal = collect(getproperty(hit_cal, e_type))
                 e_unit = unit(eltype(e_cal))
