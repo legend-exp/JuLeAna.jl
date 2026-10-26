@@ -197,3 +197,8 @@ This is the log for the event level. The algorithm iterates through each file ea
 const skm_log_text = """## SKM
 This is the log for the SKM. The algorithm iterates through each file and generates the SKM level table for each subsystem including correct calibrations and cut generation.
 """
+
+const qc_ml_sampling_log_text = """## QC ML sampling
+This is the log for the QC machine-learning sampling. The algorithm scans the raw files of all analysis runs of the period for the configured detectors, draws the training sample by the selection rules of the QC ML config and clusters its waveforms with affinity propagation.
+The sample is written to the `jlqml` tier, the unlabeled parameter entry with the cluster exemplars to `rpars/ml`.
+"""
