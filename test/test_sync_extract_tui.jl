@@ -3,13 +3,13 @@
 @testset "extract: interface" begin
     h = LocalHost()
 
-    function draw(m::SyncModel; width = 120, height = 30)
+    function draw(m::SyncPage; width = 120, height = 30)
         tb = TestBackend(width, height)
         reset!(tb.buf)
         view(m, Frame(tb.buf, Rect(1, 1, width, height), GraphicsRegion[], PixelSnapshot[]))
         tb
     end
-    function settle!(m::SyncModel)
+    function settle!(m::SyncPage)
         timedwait(() -> m.tasks.active[] == 0 && isready(m.tasks.channel), 60.0) == :ok ||
             error("the background task did not finish within 60 s")
         drain_tasks!(e -> update!(m, e), m.tasks)
@@ -18,12 +18,12 @@
                    mount_root = nothing)
         local_root = mktempdir()
         p = Production(h, "xprod", EXTRACT_ROOT, local_root; mount_root)
-        SyncModel(h, p,
-                  Options("local", EXTRACT_ROOT, local_root, mount_root, "xprod",
-                          joinpath(mktempdir(), "x.yaml"), nothing, false, false, 0, helper))
+        SyncPage(h, p,
+                 Options("local", EXTRACT_ROOT, local_root, mount_root, "xprod",
+                         joinpath(mktempdir(), "x.yaml"), nothing, false, false, 0, helper))
     end
     # Move the cursor onto the row labeled `label` and expand it.
-    function open!(m::SyncModel, label)
+    function open!(m::SyncPage, label)
         for _ in 1:40
             current_node(m).label == label && break
             update!(m, KeyEvent(:down))
@@ -34,7 +34,7 @@
         # A detectors row needs the environment check first, then the listing.
         (m.tasks.active[] > 0 || isready(m.tasks.channel)) && settle!(m)
     end
-    function to_run!(m::SyncModel, tier, category)
+    function to_run!(m::SyncPage, tier, category)
         for label in ("tier", tier, category, "p18", "r000")
             open!(m, label)
         end
@@ -180,12 +180,12 @@
             update!(m, key)
         end
         @test m.modal_kind == :checking && m.modal === nothing && m.input === nothing
-        @test m.continuation === pending && !m.quit
+        @test m.continuation === pending
         events = TaskEvent[]
         timedwait(() -> m.tasks.active[] == 0 && isready(m.tasks.channel), 60.0) == :ok ||
             error("the environment check did not finish within 60 s")
         drain_tasks!(e -> (push!(events, e); update!(m, e)), m.tasks)
-        @test [e.id for e in events] == [:environment]
+        @test [e.id for e in events] == [Symbol("sync:environment")]
         (m.tasks.active[] > 0 || isready(m.tasks.channel)) && settle!(m)
         @test m.modal_kind == :none && isempty(m.status)
         @test any(c -> c.label == "B00000C", current_node(m).children)

@@ -32,7 +32,8 @@ using Tachikoma: Tachikoma, Model, Frame, Buffer, Rect, Span, KeyEvent, MouseEve
                  spawn_task!, TreeView, TreeNode, selected_node, tree_visible_count, handle_key!, Block, StatusBar, Paragraph, Modal,
                  TextInput, Gauge, SelectableList, Layout, Constraint, Vertical, Horizontal, Fill, Fixed, Percent, split_layout, render,
                  tstyle, center, word_wrap, BOX_HEAVY, app
-import Tachikoma: view, update!, should_quit, task_queue
+import Tachikoma: view, update!, should_quit, task_queue, init!, cleanup!
+using ..JuLeAna: tui_theme, load_theme_name
 
 include("remote.jl")
 include("steps.jl")
@@ -44,9 +45,10 @@ include("estimate.jl")
 include("transfer.jl")
 include("settings.jl")
 include("options.jl")
-include("tui.jl")
+include("page.jl")
+include("app.jl")
 
-public main, Options, SyncSettings, parse_options, parse_settings, run_headless, SyncModel, run_tui, StepProgress, Steps, StepPrinter,
-       format_step
+public main, Options, SyncSettings, parse_options, parse_settings, run_headless, SyncPage, SyncApp, sync_key!, sync_mouse!, sync_task!,
+       render_sync, sync_hints, sync_dirty, sync_busy, sync_text_input, run_tui, StepProgress, Steps, StepPrinter, format_step
 
 end # module

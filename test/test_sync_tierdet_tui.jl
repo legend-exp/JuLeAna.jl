@@ -6,13 +6,13 @@
     p18 = joinpath(tier, "jlpks", "cal", "p18")
     r001 = joinpath(p18, "r001")
 
-    function draw(m::SyncModel; width = 120, height = 30)
+    function draw(m::SyncPage; width = 120, height = 30)
         tb = TestBackend(width, height)
         reset!(tb.buf)
         view(m, Frame(tb.buf, Rect(1, 1, width, height), GraphicsRegion[], PixelSnapshot[]))
         tb
     end
-    function settle!(m::SyncModel)
+    function settle!(m::SyncPage)
         timedwait(() -> m.tasks.active[] == 0 && isready(m.tasks.channel), 60.0) == :ok ||
             error("the background task did not finish within 60 s")
         drain_tasks!(e -> update!(m, e), m.tasks)
@@ -20,11 +20,11 @@
     function model(; helper = HelperConfig(; staging = joinpath(mktempdir(), "stage")))
         local_root = mktempdir()
         p = Production(h, "tprod", TIER_DET_ROOT, local_root)
-        SyncModel(h, p,
-                  Options("local", TIER_DET_ROOT, local_root, nothing, "tprod",
-                          joinpath(mktempdir(), "x.yaml"), nothing, false, false, 0, helper))
+        SyncPage(h, p,
+                 Options("local", TIER_DET_ROOT, local_root, nothing, "tprod",
+                         joinpath(mktempdir(), "x.yaml"), nothing, false, false, 0, helper))
     end
-    function open!(m::SyncModel, label)
+    function open!(m::SyncPage, label)
         for _ in 1:40
             current_node(m).label == label && break
             update!(m, KeyEvent(:down))
@@ -34,13 +34,13 @@
         settle!(m)
         (m.tasks.active[] > 0 || isready(m.tasks.channel)) && settle!(m)
     end
-    function to_period!(m::SyncModel, tier_name, category)
+    function to_period!(m::SyncPage, tier_name, category)
         for label in ("tier", tier_name, category, "p18")
             open!(m, label)
         end
     end
     # Move the cursor onto `node` from the top of the tree.
-    function goto!(m::SyncModel, node)
+    function goto!(m::SyncPage, node)
         update!(m, KeyEvent(:home))
         for _ in 1:80
             current_node(m) === node && return

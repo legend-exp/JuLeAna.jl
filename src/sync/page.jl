@@ -1,10 +1,10 @@
 # This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
 
 """
-    SyncModel(host, production, options)
-    SyncModel(host, options)
+    SyncPage(host, production, options; queue = TaskQueue())
+    SyncPage(host, options; queue = TaskQueue())
 
-The interface's state. The second form starts on the production picker: it lists
+The state of the sync screen. The second form starts on the production picker: it lists
 the productions of `options.remote_root` in the background, and choosing one
 builds the production and switches to the tree screen. `screen` is `:pick` or
 `:tree`; `production` and `root` are `nothing` on the picker.
@@ -19,18 +19,22 @@ reason. `pending` holds the remote paths of listings in flight.
 `extracting` is set while the remote helper reduces files, `environment` caches a
 ready helper environment, and `continuation` is what to do once an environment
 check or creation finishes.
+
+The page is given a `TaskQueue` and starts its tasks with ids prefixed `sync:`; the host routes events with that
+prefix to [`sync_task!`](@ref). `running` counts the page's own unanswered tasks, because the queue may be shared.
 """
-mutable struct SyncModel <: Model
+mutable struct SyncPage
     host::RemoteHost
     production::Union{Nothing,Production}
     options::Options
+    settings::SyncSettings
+    running::Int
     root::Union{Nothing,Node}
     collapsed::Set{String}
     pending::Set{String}
     tree::TreeView
     tasks::TaskQueue
     dirty::Bool
-    quit::Bool
     status::String
     saved::Union{Nothing,String}
     modal::Union{Nothing,Modal}
@@ -46,41 +50,52 @@ mutable struct SyncModel <: Model
     continuation::Union{Nothing,Function}
 end
 
-function SyncModel(host::RemoteHost, production::Production, options::Options)
-    m = SyncModel(host, production, options, production_tree(host, production),
-                  Set{String}(), Set{String}(),
-                  # Replaced immediately: rebuild_tree! needs the model to exist.
-                  TreeView(TreeNode("")), TaskQueue(),
-                  false, false, "", nothing,
-                  nothing, :none, nothing, nothing, nothing,
-                  :tree, nothing, nothing, nothing, nothing, nothing)
+function SyncPage(host::RemoteHost, production::Production, options::Options; queue::TaskQueue = TaskQueue())
+    m = SyncPage(host, production, options, SyncSettings(options), 0, production_tree(host, production),
+                 Set{String}(), Set{String}(),
+                 # Replaced immediately: rebuild_tree! needs the model to exist.
+                 TreeView(TreeNode("")), queue,
+                 false, "", nothing,
+                 nothing, :none, nothing, nothing, nothing,
+                 :tree, nothing, nothing, nothing, nothing, nothing)
     rebuild_tree!(m)
     m.tree.selected = 1
     return m
 end
 
-function SyncModel(host::RemoteHost, options::Options)
-    m = SyncModel(host, nothing, options, nothing,
-                  Set{String}(), Set{String}(),
-                  TreeView(TreeNode("")), TaskQueue(),
-                  false, false, "", nothing,
-                  nothing, :none, nothing, nothing, nothing,
-                  :pick, nothing, nothing, nothing, nothing, nothing)
+function SyncPage(host::RemoteHost, options::Options; queue::TaskQueue = TaskQueue())
+    m = SyncPage(host, nothing, options, SyncSettings(options), 0, nothing,
+                 Set{String}(), Set{String}(),
+                 TreeView(TreeNode("")), queue,
+                 false, "", nothing,
+                 nothing, :none, nothing, nothing, nothing,
+                 :pick, nothing, nothing, nothing, nothing, nothing)
     return request_productions!(m)
 end
 
 """
-    request_productions!(m::SyncModel)::SyncModel
+    spawn!(f, page::SyncPage, id)
+
+Run `f()` in the background; its result arrives as a `TaskEvent` with the id `sync:<id>` and is
+handled by [`sync_task!`](@ref).
+"""
+function spawn!(f, m::SyncPage, id)
+    m.running += 1
+    return spawn_task!(f, m.tasks, Symbol("sync:", id))
+end
+
+"""
+    request_productions!(m::SyncPage)::SyncPage
 
 List the productions of the remote root in the background; the picker shows
 `listing…` until the result arrives.
 """
-function request_productions!(m::SyncModel)
+function request_productions!(m::SyncPage)
     host = m.host
     remote_root = m.options.remote_root
     m.productions = nothing
     m.picker = nothing
-    spawn_task!(() -> list_productions(host, remote_root), m.tasks, :productions)
+    spawn!(() -> list_productions(host, remote_root), m, :productions)
     return m
 end
 
@@ -113,12 +128,12 @@ node_label(node::Node) = string(checkbox(node), " ", rpad(node.label, 28), " ",
                                 node.size === nothing ? "…" : format_bytes(node.size))
 
 """
-    build_tree(m::SyncModel, node::Node = m.root)::TreeNode
+    build_tree(m::SyncPage, node::Node = m.root)::TreeNode
 
 The `TreeNode` mirror of the inventory. An unlisted directory gets one
 placeholder child so that `TreeView` draws an expand arrow for it.
 """
-function build_tree(m::SyncModel, node::Node = m.root)
+function build_tree(m::SyncPage, node::Node = m.root)
     children = if node.children !== nothing
         [build_tree(m, child) for child in node.children]
     elseif node.kind in (:section, :dir, :detectors)
@@ -132,13 +147,13 @@ function build_tree(m::SyncModel, node::Node = m.root)
 end
 
 """
-    rebuild_tree!(m::SyncModel)::SyncModel
+    rebuild_tree!(m::SyncPage)::SyncPage
 
 Rebuild the `TreeView` from the inventory, keeping the cursor where it was. The
 cursor is pulled back to the last row when the tree shrank under it, because a
 `TreeView` whose `selected` points past the rows has no selected node at all.
 """
-function rebuild_tree!(m::SyncModel)
+function rebuild_tree!(m::SyncPage)
     selected = m.tree.selected
     offset = m.tree.offset
     m.tree = TreeView(build_tree(m); selected, offset, focused = true,
@@ -148,18 +163,18 @@ function rebuild_tree!(m::SyncModel)
 end
 
 """
-    current_node(m::SyncModel)::Union{Nothing,Node}
+    current_node(m::SyncPage)::Union{Nothing,Node}
 
 The inventory node under the cursor, or `nothing` on a placeholder row.
 """
-function current_node(m::SyncModel)
+function current_node(m::SyncPage)
     row = selected_node(m.tree)
     row === nothing && return nothing
     return row.content isa Node ? row.content : nothing
 end
 
 """
-    request_expand!(m::SyncModel, node::Node)::SyncModel
+    request_expand!(m::SyncPage, node::Node)::SyncPage
 
 Start listing `node` in the background. The listing is built on a detached node
 and linked in by [`attach_listing!`](@ref) on the main thread, so nothing the
@@ -173,13 +188,13 @@ The background task carries `node.remote_path` in its own id, `listing:<path>`,
 so that a listing which fails only clears its own entry from `m.pending` and
 never disturbs a second listing still in flight.
 """
-function request_expand!(m::SyncModel, node::Node)
+function request_expand!(m::SyncPage, node::Node)
     (node.children !== nothing || node.remote_path in m.pending) && return m
     node.kind in (:section, :dir) || return m
     push!(m.pending, node.remote_path)
     host = m.host
     production = m.production
-    spawn_task!(m.tasks, Symbol("listing:", node.remote_path)) do
+    spawn!(m, "listing:" * node.remote_path) do
         scratch = Node(node.label, node.remote_path, node.kind)
         expand!(host, production, scratch; detectors = true, sizes = false)
         return (node, scratch.children)
@@ -189,9 +204,9 @@ function request_expand!(m::SyncModel, node::Node)
 end
 
 """
-    attach_listing!(m::SyncModel, listing)::SyncModel
+    attach_listing!(m::SyncPage, listing)::SyncPage
 """
-function attach_listing!(m::SyncModel, listing::Tuple{Node,Vector{Node}})
+function attach_listing!(m::SyncPage, listing::Tuple{Node,Vector{Node}})
     node, children = listing
     for child in children
         child.parent = node
@@ -205,14 +220,14 @@ function attach_listing!(m::SyncModel, listing::Tuple{Node,Vector{Node}})
 end
 
 """
-    with_environment!(m::SyncModel, continue_with)::SyncModel
+    with_environment!(m::SyncPage, continue_with)::SyncPage
 
 Call `continue_with()` once the remote helper environment is ready. A ready
 environment is remembered; otherwise it is checked in the background, and a missing
 or incomplete one opens a dialog that shows the command that would create it. While
 the check runs the model is in the `:checking` state and accepts no key.
 """
-function with_environment!(m::SyncModel, continue_with)
+function with_environment!(m::SyncPage, continue_with)
     if m.environment !== nothing
         continue_with()
         return m
@@ -222,16 +237,16 @@ function with_environment!(m::SyncModel, continue_with)
     m.continuation = continue_with
     m.modal_kind = :checking
     m.status = "checking the helper environment on $(m.options.host)…"
-    spawn_task!(() -> ensure_environment(host, helper), m.tasks, :environment)
+    spawn!(() -> ensure_environment(host, helper), m, :environment)
     return m
 end
 
 """
-    environment_ready!(m::SyncModel, status::EnvironmentStatus)::SyncModel
+    environment_ready!(m::SyncPage, status::EnvironmentStatus)::SyncPage
 
 Remember the ready environment, close any dialog, and run what was waiting for it.
 """
-function environment_ready!(m::SyncModel, status::EnvironmentStatus)
+function environment_ready!(m::SyncPage, status::EnvironmentStatus)
     m.environment = status
     m.status = ""
     m.modal = nothing
@@ -243,24 +258,24 @@ function environment_ready!(m::SyncModel, status::EnvironmentStatus)
 end
 
 """
-    start_bootstrap!(m::SyncModel)::SyncModel
+    start_bootstrap!(m::SyncPage)::SyncPage
 
 Create the helper environment in the background. The dialog accepts no key until it
 finishes.
 """
-function start_bootstrap!(m::SyncModel)
+function start_bootstrap!(m::SyncPage)
     host = m.host
     helper = m.options.helper
     m.modal = Modal(title = "Creating the helper environment",
                     message = "running Pkg.add on $(m.options.host); this can take several minutes…",
                     confirm_label = "", cancel_label = "")
     m.modal_kind = :busy
-    spawn_task!(() -> bootstrap_environment!(host, helper), m.tasks, :bootstrap)
+    spawn!(() -> bootstrap_environment!(host, helper), m, :bootstrap)
     return m
 end
 
 """
-    request_detectors!(m::SyncModel, node::Node)::SyncModel
+    request_detectors!(m::SyncPage, node::Node)::SyncPage
 
 Inspect, in the background, the first file of the run below `node` (a `:detectors`
 row of a run) or the first file of each run of the period below it (a `:detectors`
@@ -268,14 +283,14 @@ row of a period). The `:detectors` row of a period of per-detector files is list
 from the directory listings of its runs instead, without the helper. The rows are
 built on detached nodes and linked in by the event handler, like a directory listing.
 """
-function request_detectors!(m::SyncModel, node::Node)
+function request_detectors!(m::SyncPage, node::Node)
     (node.children !== nothing || node.remote_path in m.pending) && return m
     push!(m.pending, node.remote_path)
     host = m.host
     helper = m.options.helper
     jobs = m.options.jobs
     run = node.parent
-    spawn_task!(m.tasks, Symbol("detectors:", node.remote_path)) do
+    spawn!(m, "detectors:" * node.remote_path) do
         return (node, detector_nodes(host, helper, run; jobs))
     end
     m.status = node.whole_files ? "listing the detector files of $(run.label)…" :
@@ -284,12 +299,12 @@ function request_detectors!(m::SyncModel, node::Node)
 end
 
 """
-    toggle_extract!(m::SyncModel, node::Node)::SyncModel
+    toggle_extract!(m::SyncPage, node::Node)::SyncPage
 
 Mark the detector row `node` for extraction, or unmark it. A refused mark leaves the
 tree unchanged and puts the reason, which names both marks, into the status line.
 """
-function toggle_extract!(m::SyncModel, node::Node)
+function toggle_extract!(m::SyncPage, node::Node)
     target = node.mode == :extract ? :none : :extract
     try
         set_mode!(node, target)
@@ -304,13 +319,13 @@ function toggle_extract!(m::SyncModel, node::Node)
 end
 
 """
-    open_estimate!(m::SyncModel; confirm::Bool)::SyncModel
+    open_estimate!(m::SyncPage; confirm::Bool)::SyncPage
 
 Ask what the selection would actually move, in the background. `confirm` decides
 which button the modal opens on: `e` looks, `t` intends to sync. A selection with
 extract entries first needs the helper environment.
 """
-function open_estimate!(m::SyncModel; confirm::Bool)
+function open_estimate!(m::SyncPage; confirm::Bool)
     selection = Selection(m.production, m.options.host, m.root)
     m.modal_kind = :estimating
     m.status = "estimating…"
@@ -319,19 +334,19 @@ function open_estimate!(m::SyncModel; confirm::Bool)
 end
 
 """
-    run_estimate!(m::SyncModel, selection::Selection, confirm::Bool)::SyncModel
+    run_estimate!(m::SyncPage, selection::Selection, confirm::Bool)::SyncPage
 
 The dry run behind [`open_estimate!`](@ref). With extract entries it also asks the
 host how much room the staging directory has.
 """
-function run_estimate!(m::SyncModel, selection::Selection, confirm::Bool)
+function run_estimate!(m::SyncPage, selection::Selection, confirm::Bool)
     host = m.host
     production = m.production
     helper = m.options.helper
     jobs = m.options.jobs
     m.modal_kind = :estimating
     m.status = "estimating…"
-    spawn_task!(m.tasks, :estimate) do
+    spawn!(m, :estimate) do
         estimate = apply!(host, production, selection; dry_run = true, helper, jobs)
         staging = isempty(selection.extract) ? nothing : staging_dir(host, helper)
         # The staging directory may not exist yet; the estimate creates nothing and
@@ -350,12 +365,12 @@ function run_estimate!(m::SyncModel, selection::Selection, confirm::Bool)
 end
 
 """
-    start_transfer!(m::SyncModel)::SyncModel
+    start_transfer!(m::SyncPage)::SyncPage
 
 Run the transfer in the background. The progress callbacks run on that task and
 never touch the model: they push a `TaskEvent` like every other result.
 """
-function start_transfer!(m::SyncModel)
+function start_transfer!(m::SyncPage)
     host = m.host
     production = m.production
     helper = m.options.helper
@@ -367,20 +382,20 @@ function start_transfer!(m::SyncModel)
     m.modal_kind = :transfer
     m.progress = Progress(0, 0.0, "", "")
     m.extracting = isempty(selection.extract) ? nothing : ExtractProgress(0, 0, 0)
-    spawn_task!(queue, :transfer) do
+    spawn!(m, :transfer) do
         return apply!(host, production, selection; helper, jobs,
-                      progress = reading -> put!(queue.channel, TaskEvent(:progress, reading)),
-                      extract_progress = reading -> put!(queue.channel, TaskEvent(:extract_progress, reading)))
+                      progress = reading -> put!(queue.channel, TaskEvent(Symbol("sync:progress"), reading)),
+                      extract_progress = reading -> put!(queue.channel, TaskEvent(Symbol("sync:extract_progress"), reading)))
     end
     return m
 end
 
 """
-    open_prompt!(m::SyncModel, node::Node)::SyncModel
+    open_prompt!(m::SyncPage, node::Node)::SyncPage
 
 Open the "first N filekeys" prompt for a listed run directory.
 """
-function open_prompt!(m::SyncModel, node::Node)
+function open_prompt!(m::SyncPage, node::Node)
     isempty(filekey_groups(node)) &&
         return show_error!(m, ArgumentError("$(node.label) has no filekey groups; expand a run directory first"))
     m.input = TextInput(label = "N: ", text = "")
@@ -390,11 +405,11 @@ function open_prompt!(m::SyncModel, node::Node)
 end
 
 """
-    open_message!(m::SyncModel, title, message)::SyncModel
+    open_message!(m::SyncPage, title, message)::SyncPage
 
 Show a dialog that only has to be dismissed.
 """
-function open_message!(m::SyncModel, title::AbstractString, message::AbstractString)
+function open_message!(m::SyncPage, title::AbstractString, message::AbstractString)
     m.modal = Modal(; title, message, confirm_label = "", cancel_label = "Close")
     m.modal_kind = :message
     m.status = ""
@@ -402,19 +417,19 @@ function open_message!(m::SyncModel, title::AbstractString, message::AbstractStr
 end
 
 """
-    show_error!(m::SyncModel, err)::SyncModel
+    show_error!(m::SyncPage, err)::SyncPage
 
 Report a failure and leave the tool usable.
 """
-show_error!(m::SyncModel, err) = (open_message!(m, "Error", sprint(showerror, err)); m.modal_kind = :error; m)
+show_error!(m::SyncPage, err) = (open_message!(m, "Error", sprint(showerror, err)); m.modal_kind = :error; m)
 
 """
-    apply_prompt!(m::SyncModel)::SyncModel
+    apply_prompt!(m::SyncPage)::SyncPage
 
 Read the number from the prompt and mark that many filekeys. A number that
 cannot be used is reported and the prompt stays open.
 """
-function apply_prompt!(m::SyncModel)
+function apply_prompt!(m::SyncPage)
     node = current_node(m)
     typed = strip(Tachikoma.text(m.input))
     count = tryparse(Int, typed)
@@ -431,12 +446,12 @@ function apply_prompt!(m::SyncModel)
 end
 
 """
-    refresh_local_state!(m::SyncModel, node::Node = m.root)::SyncModel
+    refresh_local_state!(m::SyncPage, node::Node = m.root)::SyncPage
 
 Recompute what is on disk for every listed node, children first so a directory
 sees its children's final states.
 """
-function refresh_local_state!(m::SyncModel, node::Node = m.root)
+function refresh_local_state!(m::SyncPage, node::Node = m.root)
     if node.children !== nothing
         for child in node.children
             refresh_local_state!(m, child)
@@ -447,11 +462,11 @@ function refresh_local_state!(m::SyncModel, node::Node = m.root)
 end
 
 """
-    save!(m::SyncModel)::String
+    save!(m::SyncPage)::String
 
 Write the selection to the configured path and return it.
 """
-function save!(m::SyncModel)
+function save!(m::SyncPage)
     path = save_selection(m.options.out, Selection(m.production, m.options.host, m.root))
     m.saved = path
     m.dirty = false
@@ -460,7 +475,7 @@ function save!(m::SyncModel)
 end
 
 """
-    toggle_mode!(m::SyncModel, node::Node, mode::Symbol)::SyncModel
+    toggle_mode!(m::SyncPage, node::Node, mode::Symbol)::SyncPage
 
 Turn `mode` on or off for `node`. A node that carries `mode` itself loses it; one
 that only inherits it is excluded from the ancestor's choice by
@@ -468,7 +483,7 @@ that only inherits it is excluded from the ancestor's choice by
 which is why the selection is dirty afterwards. A mark that would cover a run already
 marked for extraction, or the reverse, is refused with the reason in the status line.
 """
-function toggle_mode!(m::SyncModel, node::Node, mode::Symbol)
+function toggle_mode!(m::SyncPage, node::Node, mode::Symbol)
     inherited = node.mode != mode && effective_mode(node) == mode
     try
         node.mode == mode ? set_mode!(node, :none) : inherited ? exclude!(node) : set_mode!(node, mode)
@@ -483,11 +498,11 @@ function toggle_mode!(m::SyncModel, node::Node, mode::Symbol)
 end
 
 """
-    details(m::SyncModel)::Paragraph
+    details(m::SyncPage)::Paragraph
 
 The right-hand pane: what the cursor is on, and the keys.
 """
-function details(m::SyncModel)
+function details(m::SyncPage)
     node = current_node(m)
     lines = node === nothing ? String[] :
             node.kind == :detector && node.whole_files ?
@@ -529,14 +544,14 @@ function details(m::SyncModel)
 end
 
 """
-    status_bar(m::SyncModel)::StatusBar
+    status_bar(m::SyncPage)::StatusBar
 
 The running estimate and whatever the tool last had to say on the left, and the
 selection file on the right. The right span keeps only the part of the path that
 tells the files apart (the name under the default selection directory), because
 `StatusBar` gives the left span priority and clips the right one away.
 """
-function status_bar(m::SyncModel)
+function status_bar(m::SyncPage)
     out = m.options.out
     name = startswith(out, default_selection_dir() * "/") ?
            relpath(out, default_selection_dir()) : basename(out)
@@ -546,12 +561,12 @@ function status_bar(m::SyncModel)
 end
 
 """
-    render_prompt(m::SyncModel, area::Rect, buf::Buffer)
+    render_prompt(m::SyncPage, area::Rect, buf::Buffer)
 
 The "first N filekeys" prompt. `Modal` holds static text and cannot host a
 widget, so the prompt is a `Block` with a `TextInput` drawn inside it.
 """
-function render_prompt(m::SyncModel, area::Rect, buf::Buffer)
+function render_prompt(m::SyncPage, area::Rect, buf::Buffer)
     rect = center(area, 46, 5)
     inner = render(Block(title = "First N filekeys",
                          border_style = tstyle(:accent, bold = true),
@@ -561,12 +576,12 @@ function render_prompt(m::SyncModel, area::Rect, buf::Buffer)
 end
 
 """
-    render_pick(m::SyncModel, area::Rect, buf::Buffer)
+    render_pick(m::SyncPage, area::Rect, buf::Buffer)
 
 The production picker: the productions found under the remote root, or a
 placeholder while the search runs.
 """
-function render_pick(m::SyncModel, area::Rect, buf::Buffer)
+function render_pick(m::SyncPage, area::Rect, buf::Buffer)
     rows = split_layout(Layout(Vertical, Constraint[Fill(1), Fixed(1)]), area)
     block = Block(title = "Productions on $(m.options.host)")
     if m.picker === nothing
@@ -582,12 +597,12 @@ function render_pick(m::SyncModel, area::Rect, buf::Buffer)
 end
 
 """
-    render_sync(m::SyncModel, area::Rect, buf::Buffer)
+    render_sync(m::SyncPage, area::Rect, buf::Buffer)
 
 Draw the interface into `area`. The area is explicit and nothing assumes it owns
 the terminal, so the future Juleana app can host this as one screen.
 """
-function render_sync(m::SyncModel, area::Rect, buf::Buffer)
+function render_sync(m::SyncPage, area::Rect, buf::Buffer)
     m.screen == :pick && return render_pick(m, area, buf)
     rows = split_layout(Layout(Vertical, Constraint[Fill(1), Fixed(1)]), area)
     panes = split_layout(Layout(Horizontal, Constraint[Percent(55), Fill(1)]), rows[1])
@@ -608,17 +623,24 @@ function render_sync(m::SyncModel, area::Rect, buf::Buffer)
     return nothing
 end
 
-view(m::SyncModel, f::Frame) = render_sync(m, f.area, f.buffer)
-should_quit(m::SyncModel) = m.quit
-task_queue(m::SyncModel) = m.tasks
+"""
+    sync_hints(page::SyncPage)::Tuple
+
+The keys for a one-line hint bar, as `(key, description)` pairs.
+"""
+function sync_hints(m::SyncPage)
+    m.screen == :pick && return (("↑↓", "move"), ("Enter", "open"), ("r", "reload"))
+    sync_text_input(m) && return (("Enter", "apply"), ("Esc", "cancel"))
+    return (("Space", "copy"), ("l", "link"), ("x", "extract"), ("n", "first N"), ("e", "estimate"), ("t", "sync"), ("s", "save"))
+end
 
 # Builds the tree of the picked production in the background.
-function open_production!(m::SyncModel)
+function open_production!(m::SyncPage)
     name = m.productions[m.picker.selected]
     host = m.host
     options = m.options
     m.status = "opening $name…"
-    spawn_task!(m.tasks, :open) do
+    spawn!(m, :open) do
         production = Production(host, name, options.remote_root, options.local_root;
                                 mount_root = options.mount_root)
         return (production, production_tree(host, production))
@@ -627,9 +649,8 @@ end
 
 # Keys on the picker screen. Input is ignored while the production is being opened,
 # so that a second enter cannot start a second build.
-function update_pick!(m::SyncModel, e::KeyEvent)
-    (e.key == :ctrl_c || (e.key == :char && e.char == 'q')) && (m.quit = true; return m)
-    m.tasks.active[] > 0 && return m
+function update_pick!(m::SyncPage, e::KeyEvent)
+    m.running > 0 && return m
     (e.key == :char && e.char == 'r') && return request_productions!(m)
     m.picker === nothing && return m
     if e.key in (:up, :down, :home, :end_key)
@@ -642,7 +663,7 @@ end
 
 # Lists an unlisted directory, collapses an open row when `collapse` is set, and
 # otherwise reopens a collapsed one.
-function expand_or_collapse!(m::SyncModel, node::Node; collapse::Bool)
+function expand_or_collapse!(m::SyncPage, node::Node; collapse::Bool)
     if node.children === nothing
         node.kind != :detectors ? request_expand!(m, node) :
         node.whole_files ? request_detectors!(m, node) :
@@ -689,10 +710,10 @@ end
 
 # Mouse input is ignored while a dialog is up or work is pending, so a click can
 # never answer a dialog. Clicks on the tree go through the same code as enter.
-function update!(m::SyncModel, e::MouseEvent)
+function mouse!(m::SyncPage, e::MouseEvent)
     m.modal_kind == :none || return m
     if m.screen == :pick
-        (m.tasks.active[] > 0 || m.picker === nothing) && return m
+        (m.running > 0 || m.picker === nothing) && return m
         mouse_list!(m.picker, length(m.productions), e) && open_production!(m)
         return m
     end
@@ -703,7 +724,7 @@ function update!(m::SyncModel, e::MouseEvent)
     return m
 end
 
-function update!(m::SyncModel, e::KeyEvent)
+function key!(m::SyncPage, e::KeyEvent)
     # The transfer dialog has no buttons to answer, and Modal.handle_key!
     # returns :cancel on :escape unconditionally regardless of what labels
     # the modal carries; letting any key reach it would dismiss the dialog
@@ -735,10 +756,6 @@ function update!(m::SyncModel, e::KeyEvent)
             answer == :confirm && return start_bootstrap!(m)
             m.continuation = nothing
         end
-        if m.modal_kind == :quit
-            answer == :confirm && save!(m)
-            m.quit = true
-        end
         m.modal = nothing
         m.modal_kind = :none
         return m
@@ -747,10 +764,6 @@ function update!(m::SyncModel, e::KeyEvent)
     m.modal_kind == :estimating && return m   # waiting on the dry run
 
     m.screen == :pick && return update_pick!(m, e)
-
-    # Ctrl+C is the terminal's own way of asking to leave, and leaves the same
-    # way q does, unsaved-selection question included.
-    e.key == :ctrl_c && (e = KeyEvent('q'))
 
     node = current_node(m)
 
@@ -811,25 +824,95 @@ function update!(m::SyncModel, e::KeyEvent)
         open_estimate!(m; confirm = true)
     elseif e.char == 's'
         save!(m)
-    elseif e.char == 'q'
-        if m.dirty
-            # Opens on "Save and quit": Modal defaults to :cancel, which here
-            # means leaving the selection behind.
-            m.modal = Modal(title = "Unsaved selection",
-                            message = "Save the selection to\n$(m.options.out)\nbefore leaving?",
-                            confirm_label = "Save and quit",
-                            cancel_label = "Quit without saving",
-                            selected = :confirm)
-            m.modal_kind = :quit
-        else
-            m.quit = true
-        end
     end
     return m
 end
 
-function update!(m::SyncModel, e::TaskEvent)
-    id = String(e.id)
+sync_text_input(m::SyncPage) = m.modal_kind == :firstn
+
+ctrl_c(e::KeyEvent) = e.key == :ctrl_c || (e.key == :ctrl && e.char == 'c')
+
+host_key(e::KeyEvent) = ctrl_c(e) || (e.key == :char && (e.char in ('q', '?', 'T') || isdigit(e.char)))
+
+sync_modal_open(m::SyncPage) = m.modal !== nothing || m.modal_kind != :none
+
+"""
+    shielded(f, page, fallback)
+
+Run `f()`. Any exception but an interrupt goes to the page's error dialog and `fallback` is returned, so a fault in
+the page is loud and never ends a host interface that embeds the page.
+"""
+function shielded(f, m::SyncPage, fallback)
+    try
+        return f()
+    catch err
+        err isa InterruptException && rethrow()
+        if m.modal_kind in (:transfer, :busy)
+            # The transfer dialog stays; the fault goes to the status line. `show_error!` below is not shielded: a fault in
+            # it propagates, so reporting a fault can never loop.
+            message = first(split(sprint(showerror, err), '\n'))
+            m.status = isempty(m.status) ? message : m.status * "; " * message
+        else
+            show_error!(m, err)
+        end
+        return fallback
+    end
+end
+
+"""
+    sync_key!(page::SyncPage, evt::KeyEvent)::Bool
+
+Handle a key. Returns `false` without acting for Ctrl-C, and for the other keys the host owns (`q`, `?`, `T` and
+digits) unless a text prompt or a dialog is open (a dialog takes every key but Ctrl-C), and `true` for every
+other key it handles; a key it does not know also returns `true`, so no other component reacts to it. An
+exception is shown in the error dialog and the key counts as handled.
+"""
+function sync_key!(m::SyncPage, e::KeyEvent)
+    ctrl_c(e) && return false
+    return shielded(m, true) do
+        # Only while nothing modal is open do the host's keys reach the host; a dialog takes everything but Ctrl-C.
+        (host_key(e) && !sync_text_input(m) && !sync_modal_open(m)) && return false
+        key!(m, e)
+        return true
+    end
+end
+
+"""
+    sync_mouse!(page::SyncPage, evt::MouseEvent)::Bool
+
+Handle a mouse event; `false` while a dialog is open, `true` otherwise.
+"""
+function sync_mouse!(m::SyncPage, e::MouseEvent)
+    m.modal_kind == :none && m.modal === nothing || return false
+    return shielded(m, true) do
+        mouse!(m, e)
+        return true
+    end
+end
+
+"""
+    sync_task!(page::SyncPage, evt::TaskEvent)::Bool
+
+Handle the result of a background task of the page. Returns `false` for an id without the prefix `sync:`.
+A result that arrives while no task of the page runs is a mixed-up task id and is shown in the error dialog.
+"""
+function sync_task!(m::SyncPage, e::TaskEvent)
+    startswith(String(e.id), "sync:") || return false
+    return shielded(m, true) do
+        id = chopprefix(String(e.id), "sync:")
+        if !(id in ("progress", "extract_progress"))
+            m.running > 0 || error("the result :$id arrived while no sync task runs; a task id was mixed up")
+            m.running -= 1
+        end
+        task!(m, id, e)
+        return true
+    end
+end
+
+sync_dirty(m::SyncPage) = m.dirty
+sync_busy(m::SyncPage) = m.modal_kind in (:transfer, :busy)
+
+function task!(m::SyncPage, id::AbstractString, e::TaskEvent)
     if startswith(id, "listing:")
         path = chopprefix(id, "listing:")
         if e.value isa Exception
@@ -841,7 +924,7 @@ function update!(m::SyncModel, e::TaskEvent)
         dirs = [c.remote_path for c in children if c.kind == :dir]
         if !isempty(dirs)
             host = m.host
-            spawn_task!(m.tasks, Symbol("sizes:", node.remote_path)) do
+            spawn!(m, "sizes:" * node.remote_path) do
                 return (node, Dict(zip(dirs, dir_sizes(host, dirs))))
             end
         end
@@ -885,17 +968,17 @@ function update!(m::SyncModel, e::TaskEvent)
         m.continuation = nothing
         if m.screen == :pick
             m.status = ""
-            e.id == :productions && (m.productions = String[])
+            id == "productions" && (m.productions = String[])
         end
         return show_error!(m, e.value)
     end
 
-    if e.id == :productions
+    if id == "productions"
         m.productions = e.value
         isempty(e.value) || (m.picker = SelectableList(e.value; focused = true,
                                                        block = Block(title = "Productions on $(m.options.host)")))
         return m
-    elseif e.id == :open
+    elseif id == "open"
         m.production, m.root = e.value
         o = m.options
         name = m.production.name
@@ -909,7 +992,7 @@ function update!(m::SyncModel, e::TaskEvent)
         return m
     end
 
-    if e.id == :environment
+    if id == "environment"
         status = e.value
         environment_ready(status) && return environment_ready!(m, status)
         m.status = ""
@@ -920,11 +1003,11 @@ function update!(m::SyncModel, e::TaskEvent)
                         confirm_label = "Create", cancel_label = "Cancel", selected = :confirm)
         m.modal_kind = :bootstrap
         return m
-    elseif e.id == :bootstrap
+    elseif id == "bootstrap"
         return environment_ready!(m, e.value)
     end
 
-    if e.id == :estimate
+    if id == "estimate"
         estimate, confirm, staging, free = e.value
         m.estimate = estimate
         m.modal = Modal(title = "Estimate",
@@ -940,37 +1023,19 @@ function update!(m::SyncModel, e::TaskEvent)
         m.modal_kind = :estimate
         m.status = ""
         return m
-    elseif e.id == :progress
+    elseif id == "progress"
         m.extracting = nothing
         m.progress = e.value
         return m
-    elseif e.id == :extract_progress
+    elseif id == "extract_progress"
         m.extracting = e.value
         return m
-    elseif e.id == :transfer
+    elseif id == "transfer"
         m.progress = nothing
         m.extracting = nothing
         refresh_local_state!(m)
         rebuild_tree!(m)
         return open_message!(m, "Transfer complete", summary_text(e.value))
     end
-    return error("unexpected background result :$(e.id); every task this model spawns " *
-                 "must be handled here")
-end
-
-"""
-    run_tui(options::Options, host::RemoteHost)::Int
-
-Open the interface for `options` and return the exit code once it closes. It
-starts on the production picker when `options` names no production.
-"""
-function run_tui(options::Options, host::RemoteHost)
-    if isempty(options.production)
-        app(SyncModel(host, options))
-    else
-        production = Production(host, options.production, options.remote_root,
-                                options.local_root; mount_root = options.mount_root)
-        app(SyncModel(host, production, options))
-    end
-    return 0
+    return error("unexpected background result :$id; every task this page starts must be handled here")
 end

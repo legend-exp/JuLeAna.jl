@@ -16,7 +16,9 @@ using JuLeAna: Sync
 using Tachikoma: TestBackend, Frame, Rect, KeyEvent, MouseEvent, mouse_left, mouse_right, mouse_press, mouse_release, mouse_drag,
                  mouse_scroll_up, mouse_scroll_down, tree_visible_count, TaskEvent, TaskQueue, GraphicsRegion, PixelSnapshot, reset!,
                  row_text,
-                 find_text, drain_tasks!, render_widget!, view, update!, should_quit
+                 find_text, drain_tasks!, render_widget!
+import Tachikoma
+import Tachikoma: view, update!, should_quit
 
 include(joinpath(@__DIR__, "sync", "fixture_lh5.jl"))
 include(joinpath(@__DIR__, "sync", "fixture_extract_remote.jl"))
@@ -40,7 +42,8 @@ using JuLeAna.Sync: main, RemoteHost, SSHHost, LocalHost, DirEntry,
                     apply!, summary_text,
                     Options, parse_options, run_headless, default_local_root, default_selection_dir, default_hosts_file, config_dir,
                     default_selection_path,
-                    SyncModel, checkbox, node_label, build_tree, rebuild_tree!, current_node,
+                    SyncPage, SyncApp, sync_key!, sync_mouse!, sync_task!, sync_hints, sync_dirty, sync_busy, sync_text_input, spawn!,
+                    checkbox, node_label, build_tree, rebuild_tree!, current_node,
                     request_expand!, attach_listing!, show_error!, save!, details, status_bar,
                     render_sync, run_tui, task_queue,
                     open_estimate!, start_transfer!, open_prompt!, open_message!,
@@ -62,6 +65,41 @@ using JuLeAna.Sync: main, RemoteHost, SSHHost, LocalHost, DirEntry,
                     detector_steps,
                     SyncSettings, SETTINGS_FIELDS, user_settings, field_error, settings_errors, hosts_choices, selection_path,
                     parse_settings
+
+# `update!` and `view` on a page deliver an event to it the way its host does.
+update!(p::SyncPage, e::KeyEvent) = (sync_key!(p, e); p)
+update!(p::SyncPage, e::MouseEvent) = (sync_mouse!(p, e); p)
+update!(p::SyncPage, e::TaskEvent) = (sync_task!(p, e) || error("not a sync event: $(e.id)"); p)
+view(p::SyncPage, f::Frame) = render_sync(p, f.area, f.buffer)
+
+queue_of(m::SyncPage) = m.tasks
+queue_of(m::SyncApp) = m.queue
+
+function draw(m; width = 100, height = 30)
+    tb = TestBackend(width, height)
+    reset!(tb.buf)
+    view(m, Frame(tb.buf, Rect(1, 1, width, height), GraphicsRegion[], PixelSnapshot[]))
+    return tb
+end
+
+# Deliver the background results exactly as the app loop does, until no task is running and no event waits.
+function settle!(m)
+    queue = queue_of(m)
+    t_end = time() + 30
+    while time() < t_end
+        drain_tasks!(e -> update!(m, e), queue)
+        queue.active[] == 0 && !isready(queue.channel) && return nothing
+        sleep(0.01)
+    end
+    return error("the background tasks did not finish within 30 s")
+end
+
+# Deliver exactly the next background event, so a test can look at the model between a listing and the sizes that follow it.
+function deliver_next!(m)
+    queue = queue_of(m)
+    timedwait(() -> isready(queue.channel), 30.0) == :ok || error("no background event within 30 s")
+    return update!(m, take!(queue.channel))
+end
 
 const SYNC_FIXTURES = joinpath(@__DIR__, "sync", "fixtures")
 
@@ -117,6 +155,7 @@ withenv("XDG_CONFIG_HOME" => TEST_CONFIG_HOME) do
         run_file("test_sync_settings.jl")
         run_file("test_sync_extract_options.jl")
         run_file("test_sync_tui.jl")
+        run_file("test_sync_app.jl")
         run_file("test_sync_extract_tui.jl")
         run_file("test_sync_tierdet_tui.jl")
         run_file("test_sync_perdet_tui.jl")

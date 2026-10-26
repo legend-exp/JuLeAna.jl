@@ -6,13 +6,13 @@
     # A helper that cannot run: these rows never need the environment dialog.
     broken = HelperConfig(; julia = "/nonexistent/julia", staging = mktempdir())
 
-    function draw(m::SyncModel; width = 120, height = 30)
+    function draw(m::SyncPage; width = 120, height = 30)
         tb = TestBackend(width, height)
         reset!(tb.buf)
         view(m, Frame(tb.buf, Rect(1, 1, width, height), GraphicsRegion[], PixelSnapshot[]))
         tb
     end
-    function settle!(m::SyncModel)
+    function settle!(m::SyncPage)
         timedwait(() -> m.tasks.active[] == 0 && isready(m.tasks.channel), 60.0) == :ok ||
             error("the background task did not finish within 60 s")
         drain_tasks!(e -> update!(m, e), m.tasks)
@@ -20,11 +20,11 @@
     function model(; mount_root = "/")
         local_root = mktempdir()
         p = Production(h, "dprod", PERDET_ROOT, local_root; mount_root)
-        SyncModel(h, p,
-                  Options("local", PERDET_ROOT, local_root, mount_root, "dprod",
-                          joinpath(mktempdir(), "x.yaml"), nothing, false, false, 0, broken))
+        SyncPage(h, p,
+                 Options("local", PERDET_ROOT, local_root, mount_root, "dprod",
+                         joinpath(mktempdir(), "x.yaml"), nothing, false, false, 0, broken))
     end
-    function open!(m::SyncModel, label)
+    function open!(m::SyncPage, label)
         for _ in 1:40
             current_node(m).label == label && break
             update!(m, KeyEvent(:down))
@@ -34,12 +34,12 @@
         settle!(m)
         (m.tasks.active[] > 0 || isready(m.tasks.channel)) && settle!(m)
     end
-    function to_period!(m::SyncModel)
+    function to_period!(m::SyncPage)
         for label in ("tier", "jlqcs", "cal", "p16")
             open!(m, label)
         end
     end
-    function goto!(m::SyncModel, node)
+    function goto!(m::SyncPage, node)
         update!(m, KeyEvent(:home))
         for _ in 1:80
             current_node(m) === node && return

@@ -3,43 +3,13 @@
 @testset "tui.jl" begin
     h = LocalHost()
 
-    # Render the model the way the app loop does: its own Frame over a TestBackend
-    # buffer, so row_text and find_text can read the result back.
-    function draw(m::SyncModel; width = 100, height = 30)
-        tb = TestBackend(width, height)
-        reset!(tb.buf)
-        view(m, Frame(tb.buf, Rect(1, 1, width, height),
-                      GraphicsRegion[], PixelSnapshot[]))
-        tb
-    end
-
-    # Wait for the background work and deliver its results exactly as the app
-    # loop does. TaskQueue offers no predicate for "an event is waiting", so this
-    # reads the channel drain_tasks! itself reads: a change to that field would
-    # break the public reader with it and surface here. Waiting for `active` to
-    # fall back to zero is what makes a transfer settle as one unit: it pushes
-    # progress readings long before it pushes its result.
-    function settle!(m::SyncModel)
-        timedwait(() -> m.tasks.active[] == 0 && isready(m.tasks.channel), 30.0) == :ok ||
-            error("the background task did not finish within 30 s")
-        drain_tasks!(e -> update!(m, e), m.tasks)
-    end
-
-    # Deliver exactly the next background event, so a test can look at the model
-    # between the listing and the sizes that follow it.
-    function deliver_next!(m::SyncModel)
-        timedwait(() -> isready(m.tasks.channel), 30.0) == :ok ||
-            error("no background event within 30 s")
-        update!(m, take!(m.tasks.channel))
-    end
-
     function model(; mount_root = nothing, out = joinpath(mktempdir(), "test.yaml"),
                    root = FIXTURE_ROOT)
         local_root = mktempdir()
         p = Production(h, "test", root, local_root; mount_root)
         options = Options("local", root, local_root, mount_root, "test",
                           out, nothing, false, false)
-        SyncModel(h, p, options)
+        SyncPage(h, p, options)
     end
 
     @testset "initial render" begin
@@ -221,14 +191,6 @@
         @test joinpath("test", "legend-metadata") in back.copy
     end
 
-    @testset "q quits" begin
-        m = model()
-        @test !should_quit(m)
-        update!(m, KeyEvent('q'))
-        @test should_quit(m)
-        @test task_queue(m) === m.tasks
-    end
-
     @testset "e shows the exact estimate" begin
         m = model()
         update!(m, KeyEvent(:down))
@@ -343,7 +305,9 @@
 
     @testset "an unexpected background result is an error" begin
         m = model()
-        @test_throws "unexpected background result :nonsense" update!(m, TaskEvent(:nonsense, 1))
+        m.running += 1
+        update!(m, TaskEvent(Symbol("sync:nonsense"), 1))
+        @test m.modal_kind == :error && occursin("unexpected background result :nonsense", m.modal.message)
     end
 
     @testset "n selects the first N filekeys" begin
@@ -393,37 +357,6 @@
         @test [c.mode for c in filekey_groups(run_node)] == [:copy, :none]
     end
 
-    @testset "q asks to save when the selection changed" begin
-        out = joinpath(mktempdir(), "test.yaml")
-        m = model(; out)
-        update!(m, KeyEvent(:down))
-        update!(m, KeyEvent(' '))
-        update!(m, KeyEvent('q'))
-        @test m.modal_kind == :quit
-        @test !should_quit(m)
-        update!(m, KeyEvent(:enter))       # confirm: save and quit
-        @test should_quit(m)
-        @test isfile(out)
-
-        # With nothing changed, q leaves at once.
-        m2 = model()
-        update!(m2, KeyEvent('q'))
-        @test should_quit(m2)
-    end
-
-    @testset "ctrl-c leaves the way q does" begin
-        m = model()
-        update!(m, KeyEvent(:ctrl_c))
-        @test should_quit(m)
-
-        changed = model()
-        update!(changed, KeyEvent(:down))
-        update!(changed, KeyEvent(' '))
-        update!(changed, KeyEvent(:ctrl_c))
-        @test changed.modal_kind == :quit
-        @test !should_quit(changed)
-    end
-
     @testset "space on an inherited mode excludes that node" begin
         m = model()
         for _ in 1:4
@@ -459,18 +392,18 @@
         nested = Production(h, "temp/jl-dev", FIXTURE_ROOT, local_root)
         options = Options("local", FIXTURE_ROOT, local_root, nothing, "temp/jl-dev",
                           joinpath(mktempdir(), "sel.yaml"), nothing, false, false)
-        tb = draw(SyncModel(h, nested, options); width = 160)
+        tb = draw(SyncPage(h, nested, options); width = 160)
         @test find_text(tb, "overlays: config_fixture.json, temp/config_site.yaml") !== nothing
 
         bare = Production(nested.name, nested.remote_root, nested.local_root, nothing,
                           nested.config, nested.roots, String[])
-        @test find_text(draw(SyncModel(h, bare, options); width = 160), "overlays: none") !== nothing
+        @test find_text(draw(SyncPage(h, bare, options); width = 160), "overlays: none") !== nothing
     end
 
     @testset "production picker" begin
         local_root = mktempdir()
         options = Options("local", FIXTURE_ROOT, local_root, nothing, "", "", nothing, false, false)
-        m = SyncModel(h, options)
+        m = SyncPage(h, options)
         @test find_text(draw(m), "Productions on local") !== nothing
         @test find_text(draw(m), "listing…") !== nothing
         settle!(m)
@@ -495,27 +428,19 @@
         @test load_selection(m.options.out, m.production).production == "temp/jl-dev"
     end
 
-    @testset "picker: arrows move, q and ctrl-c quit, errors open the modal" begin
+    @testset "picker: arrows move, errors open the modal" begin
         local_root = mktempdir()
         options = Options("local", FIXTURE_ROOT, local_root, nothing, "", "", nothing, false, false)
-        m = SyncModel(h, options)
+        m = SyncPage(h, options)
         settle!(m)
         update!(m, KeyEvent(:down))
         update!(m, KeyEvent(:enter))
         settle!(m)
         @test m.production.name == "test"
 
-        m2 = SyncModel(h, options)
-        settle!(m2)
-        update!(m2, KeyEvent('q'))
-        @test should_quit(m2)
-        m3 = SyncModel(h, options)
-        update!(m3, KeyEvent(:ctrl_c))
-        @test should_quit(m3)
-
         missing_root = Options("local", joinpath(FIXTURE_ROOT, "nosuch"), local_root, nothing,
                                "", "", nothing, false, false)
-        m4 = SyncModel(h, missing_root)
+        m4 = SyncPage(h, missing_root)
         settle!(m4)
         @test m4.modal_kind == :error
         @test find_text(draw(m4), "not a directory") !== nothing
@@ -614,7 +539,7 @@
 
         @testset "picker" begin
             options = Options("local", FIXTURE_ROOT, mktempdir(), nothing, "", "", nothing, false, false)
-            m = SyncModel(h, options)
+            m = SyncPage(h, options)
             settle!(m)
             draw(m)
             area = m.picker.last_area
@@ -624,10 +549,10 @@
             update!(m, click(area.x + 200, area.y + 1))
             @test m.picker.selected == 2
             # A click is ignored while a background task is active.
-            m.tasks.active[] += 1
+            m.running += 1
             update!(m, click(area.x + 1, area.y + 2))
             @test m.picker.selected == 2 && m.screen == :pick
-            m.tasks.active[] -= 1
+            m.running -= 1
             update!(m, click(area.x + 1, area.y + 1))
             settle!(m)
             @test m.production.name == m.productions[2]
