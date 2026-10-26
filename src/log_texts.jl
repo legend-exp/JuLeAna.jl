@@ -191,6 +191,12 @@ After a mini DSP, the calibration is performed by fitting the 1 p.e. and 2 p.e. 
 The calibration constant and offset are extracted from the fit.
 """
 
+const pmts_calibration_log_text = """## PMT calibration
+This is the log for the calibration of the muon-veto PMTs with the LED calibration (MVC) runs. For each MVC file of the run, the
+`pulse_height` spectrum of each PMT is fitted with an exponential and the 1 p.e. and 2 p.e. peaks above the pedestal. The 1 p.e.
+position gives the calibration constant. A PMT without a good fit keeps the calibration of the latest earlier run.
+"""
+
 const evt_log_text = """## Evt
 This is the log for the event level. The algorithm iterates through each file each file and generates the event level table for each subsystem including correct calibrations and cut generation."""
 

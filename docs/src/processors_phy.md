@@ -9,6 +9,12 @@ JuLeAna.process_sipm_calibration_phy
 JuLeAna.p_process_sipm_calibration_phy
 ```
 
+## PMT calibration
+
+```@docs
+JuLeAna.process_pmts_calibration_cal
+```
+
 ## Events and skims
 
 ```@docs
