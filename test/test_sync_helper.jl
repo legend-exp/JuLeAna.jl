@@ -27,7 +27,7 @@
     @testset "stream_remote kills a child that ignores SIGTERM" begin
         # The callback fails while the child ignores SIGTERM: the call must still return, with the callback's error.
         task = Threads.@spawn try
-            stream_remote(h, `sh -c 'trap "" TERM; echo one; sleep 600'`, line -> error("stop here"))
+            stream_remote(h, `sh -c 'trap "" TERM; echo one; exec sleep 600'`, line -> error("stop here"))
         catch err
             err
         end

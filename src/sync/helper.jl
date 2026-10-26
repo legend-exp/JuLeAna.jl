@@ -205,7 +205,7 @@ function run_helper(h::RemoteHost, c::HelperConfig, command::AbstractString,
 end
 
 """
-    inspect_files(h, c, files; groups = nothing, jobs = 0)::Vector{Tuple{Vector{String},Vector{Int},String}}
+    inspect_files(h, c, files; groups = nothing, jobs = 0, on_record = Returns(nothing))::Vector{Tuple{Vector{String},Vector{Int},String}}
 
 For each file in `files`, in order: the detector names, the stored size in bytes, and
 the layout. The layout is the name of the tier group that holds the detectors
@@ -219,7 +219,7 @@ order; only those groups are read. A group a file lacks, or a record whose sized
 names differ from the request, is an error.
 """
 function inspect_files(h::RemoteHost, c::HelperConfig, files::AbstractVector{<:AbstractString};
-                       groups::Union{Nothing,AbstractVector} = nothing, jobs::Integer = 0)
+                       groups::Union{Nothing,AbstractVector} = nothing, jobs::Integer = 0, on_record = Returns(nothing))
     if groups !== nothing
         length(groups) == length(files) || throw(DimensionMismatch("$(length(groups)) group lists for $(length(files)) files"))
         seen = Set{String}()
@@ -231,7 +231,7 @@ function inspect_files(h::RemoteHost, c::HelperConfig, files::AbstractVector{<:A
     spec = groups === nothing ? Dict("files" => collect(String, files)) :
            Dict("job" => [Dict("file" => String(f), "groups" => collect(String, g))
                           for (f, g) in zip(files, groups)])
-    records = run_helper(h, c, "inspect", spec; jobs)
+    records = run_helper(h, c, "inspect", spec; jobs, on_record)
     found = Dict(r["file"] => (String.(get(r, "sized", r["groups"])), Int.(r["bytes"]), String(r["layout"]))
                  for r in records)
     map(files, groups === nothing ? fill(nothing, length(files)) : groups) do file, requested

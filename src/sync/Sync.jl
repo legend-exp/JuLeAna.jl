@@ -35,6 +35,7 @@ using Tachikoma: Tachikoma, Model, Frame, Buffer, Rect, Span, KeyEvent, MouseEve
 import Tachikoma: view, update!, should_quit, task_queue
 
 include("remote.jl")
+include("steps.jl")
 include("helper.jl")
 include("production.jl")
 include("inventory.jl")
@@ -44,6 +45,6 @@ include("transfer.jl")
 include("options.jl")
 include("tui.jl")
 
-public main, Options, parse_options, run_headless, SyncModel, run_tui
+public main, Options, parse_options, run_headless, SyncModel, run_tui, StepProgress, Steps, StepPrinter, format_step
 
 end # module

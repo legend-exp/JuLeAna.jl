@@ -195,7 +195,7 @@ this directory as its source recreates the mirror layout.
 staging_production_dir(staging::AbstractString, p::Production) = joinpath(staging, replace(p.name, '/' => '-'))
 
 """
-    plan_extraction(h, p, sel, staging; helper = HelperConfig(), jobs = 0)
+    plan_extraction(h, p, sel, staging; helper = HelperConfig(), jobs = 0, steps = NO_STEPS)
 
 The extraction jobs for `sel` and the `(run directory, detector)` pairs left out,
 both ordered. An entry whose directory holds filekey files is a run entry and is
@@ -209,7 +209,8 @@ there is one job per filekey file in name order. A file that `sel.copy` already
 covers, as itself or through a directory above it, is copied whole and left out.
 """
 function plan_extraction(h::RemoteHost, p::Production, sel::Selection, staging::AbstractString;
-                         helper::HelperConfig = HelperConfig(), jobs::Integer = 0)
+                         helper::HelperConfig = HelperConfig(), jobs::Integer = 0, steps::Steps = NO_STEPS)
+    steps("planning extraction")
     covered(rel) = any(c -> rel == c || startswith(rel, c * "/"), sel.copy)
     stage = staging_production_dir(staging, p)
     files_of = Dict{String,Vector{String}}()      # run directory (relative) => its filekey files
@@ -239,8 +240,10 @@ function plan_extraction(h::RemoteHost, p::Production, sel::Selection, staging::
         push!(periods, (entry, runs, empty_runs))
     end
     firsts = unique([first(files_of[run]) for (_, runs, _) in periods for run in runs])
+    seen = 0
     inspected = isempty(firsts) ? Tuple{Vector{String},Vector{Int},String}[] :
-                inspect_files(h, helper, firsts; jobs)
+                inspect_files(h, helper, firsts; jobs,
+                              on_record = _ -> steps("planning extraction"; done = (seen += 1), total = length(firsts)))
     present_in = Dict(file => first(found) for (file, found) in zip(firsts, inspected))
     for (entry, runs, _) in periods
         all(run -> isempty(present_in[first(files_of[run])]), runs) &&
@@ -275,15 +278,18 @@ function plan_extraction(h::RemoteHost, p::Production, sel::Selection, staging::
 end
 
 """
-    plan_bytes(h::RemoteHost, helper::HelperConfig, plan::Vector{ExtractJob}; jobs = 0)::Int
+    plan_bytes(h::RemoteHost, helper::HelperConfig, plan::Vector{ExtractJob}; jobs = 0, steps = NO_STEPS)::Int
 
 The summed stored size of the groups the jobs of `plan` take, from inspecting every
 source file with the remote helper, which reads only the groups of its job. A group
 that is not in its file is an error.
 """
-function plan_bytes(h::RemoteHost, helper::HelperConfig, plan::Vector{ExtractJob}; jobs::Integer = 0)
+function plan_bytes(h::RemoteHost, helper::HelperConfig, plan::Vector{ExtractJob}; jobs::Integer = 0, steps::Steps = NO_STEPS)
+    steps("sizing extract groups"; total = length(plan))
     isempty(plan) && return 0
-    inspected = inspect_files(h, helper, [j.source for j in plan]; groups = [j.groups for j in plan], jobs)
+    seen = 0
+    inspected = inspect_files(h, helper, [j.source for j in plan]; groups = [j.groups for j in plan], jobs,
+                              on_record = _ -> steps("sizing extract groups"; done = (seen += 1), total = length(plan)))
     return plan_group_bytes(plan, inspected)
 end
 
@@ -310,18 +316,18 @@ function plan_group_bytes(plan::Vector{ExtractJob}, inspected)
 end
 
 """
-    prepare_extraction(h, p, sel, helper; jobs = 0)
+    prepare_extraction(h, p, sel, helper; jobs = 0, steps = NO_STEPS)
 
 The staging directory, the extraction plan for `sel` and the pairs left out of it
 (see [`plan_extraction`](@ref)), once the helper environment on `h` is known to be
 ready.
 """
 function prepare_extraction(h::RemoteHost, p::Production, sel::Selection, helper::HelperConfig;
-                            jobs::Integer = 0)
+                            jobs::Integer = 0, steps::Steps = NO_STEPS)
     status = ensure_environment(h, helper)
     environment_ready(status) || throw(ErrorException(environment_problem(status, h, helper)))
     staging = staging_dir(h, helper)
-    plan, not_in_run = plan_extraction(h, p, sel, staging; helper, jobs)
+    plan, not_in_run = plan_extraction(h, p, sel, staging; helper, jobs, steps)
     return staging, plan, not_in_run
 end
 
@@ -408,7 +414,7 @@ function reconcile_local(p::Production, plan::Vector{ExtractJob})
 end
 
 """
-    plan_detector_files(h, p, sel)
+    plan_detector_files(h, p, sel; steps = NO_STEPS)
 
 `(copies, links, not_in_run)` for the detector file entries of `sel`, found by listing
 the run directories of each entry's period on `h` (the remote helper and HDF5 are not
@@ -421,7 +427,7 @@ which includes a run directory without per-detector files. An entry whose period
 no per-detector file at all, a run with two files for one detector, and a detector that is in both a copy and a link entry
 for the same period, are an `ArgumentError`.
 """
-function plan_detector_files(h::RemoteHost, p::Production, sel::Selection)
+function plan_detector_files(h::RemoteHost, p::Production, sel::Selection; steps::Steps = NO_STEPS)
     modes = Dict{Tuple{String,String},Symbol}()
     for entry in sel.detector_files, name in entry.detectors
         get!(modes, (entry.dir, name), entry.mode) == entry.mode ||
@@ -431,10 +437,15 @@ function plan_detector_files(h::RemoteHost, p::Production, sel::Selection)
     copies = String[]
     links = String[]
     not_in_run = Tuple{String,String}[]
-    for entry in sel.detector_files
+    per_entry = [(entry,
+                  [e.name
+                   for e in sort!(list_dir(h, joinpath(p.remote_root, entry.dir)); by = e -> e.name)
+                   if e.kind == :dir && occursin(RUN_DIR_EXPR, e.name)]) for entry in sel.detector_files]
+    total = sum(length(runs) for (_, runs) in per_entry; init = 0)
+    done = 0
+    isempty(sel.detector_files) || steps("listing detector files"; total)
+    for (entry, runs) in per_entry
         dir = joinpath(p.remote_root, entry.dir)
-        runs = [e.name for e in sort!(list_dir(h, dir); by = e -> e.name)
-                if e.kind == :dir && occursin(RUN_DIR_EXPR, e.name)]
         found = 0
         for run in runs
             files = Dict{String,String}()                # detector => file name
@@ -460,6 +471,7 @@ function plan_detector_files(h::RemoteHost, p::Production, sel::Selection)
                     covered(rel, sel.copy) || covered(rel, sel.link) || push!(links, rel)
                 end
             end
+            steps("listing detector files"; done = (done += 1), total)
         end
         found == 0 && throw(ArgumentError("detector file entry $(entry.dir): no run directory holds per-detector files"))
     end
@@ -546,7 +558,8 @@ end
 
 """
     apply!(h, p, sel; dry_run = false, progress = nothing,
-           helper = HelperConfig(), jobs = 0, extract_progress = nothing)
+           helper = HelperConfig(), jobs = 0, extract_progress = nothing,
+           report = nothing, steps = Steps(apply_steps(sel; dry_run), report))
 
 Bring the mirror in line with `sel`. With `dry_run` it only asks rsync what would
 move, inspects the files to extract with the remote helper, and returns an
@@ -561,34 +574,45 @@ run it, `jobs` how many workers it may use) into a staging directory, pulled wit
 rsync, and removed from the staging directory again; `extract_progress` is called
 with an [`ExtractProgress`](@ref) after each reduced file. A failure once the
 helper has started keeps the staged files for a resumed run and says where they are.
+
+`report` is called with a [`StepProgress`](@ref) for each reading of each step in
+[`apply_steps`](@ref); `steps` replaces the step list when the caller reports more
+steps around the apply.
 """
 function apply!(h::RemoteHost, p::Production, sel::Selection;
                 dry_run::Bool = false, progress = nothing,
                 helper::HelperConfig = HelperConfig(), jobs::Integer = 0,
-                extract_progress = nothing)
+                extract_progress = nothing, report = nothing, steps::Steps = Steps(apply_steps(sel; dry_run), report))
     check_rsync()
     isdir(p.local_root) || error("local root $(p.local_root) does not exist")
     # Find out now, not halfway through a transfer, whether the mirror is writable.
     probe, io = mktemp(p.local_root)
     close(io)
     rm(probe)
-    detector_copies, detector_links, detector_absent = plan_detector_files(h, p, sel)
+    detector_copies, detector_links, detector_absent = plan_detector_files(h, p, sel; steps)
     resolved = Selection(sel.host, sel.production, sel.remote_root, sel.local_root, sel.mount_root,
                          sort!(union(sel.copy, detector_copies)), sort!(union(sel.link, detector_links)),
                          sel.created, sel.extract, sel.detector_files)
     isempty(resolved.link) || check_mount(p)
     staging, plan, extract_absent = isempty(sel.extract) ?
-                                    ("", ExtractJob[], Tuple{String,String}[]) : prepare_extraction(h, p, sel, helper; jobs)
+                                    ("", ExtractJob[], Tuple{String,String}[]) : prepare_extraction(h, p, sel, helper; jobs, steps)
     not_in_run = sort!(unique!(vcat(extract_absent, detector_absent)))
     if dry_run
+        extract_bytes = isempty(sel.extract) ? 0 : plan_bytes(h, helper, plan; jobs, steps)
+        steps("checking files to copy")
         estimate = rsync_dry_run(h, p, resolved)
-        return Estimate(estimate.bytes, estimate.files, estimate.links, true,
-                        plan_bytes(h, helper, plan; jobs), length(plan), true, not_in_run)
+        return Estimate(estimate.bytes, estimate.files, estimate.links, true, extract_bytes, length(plan), true, not_in_run)
     end
 
     plan, conflicts = reconcile_local(p, plan)
     isempty(plan) || check_staging_space(staging, free_bytes(h, make_dir(h, staging)),
-                                         plan_bytes(h, helper, plan; jobs))
+                                         plan_bytes(h, helper, plan; jobs, steps))
+    # rsync readings reach the caller's callback and the step report
+    rsync_reading(name) = reading -> begin
+        progress === nothing || progress(reading)
+        return steps(name; done = round(Int, 100 * reading.fraction), total = 100, bytes = reading.bytes,
+                     detail = string(reading.rate, "  ETA ", reading.eta))
+    end
     warnings = String[]
     pulled = Estimate(0, 0, 0, true)
     replaced = 0
@@ -600,35 +624,39 @@ function apply!(h::RemoteHost, p::Production, sel::Selection;
                                        "destination" => j.destination) for j in plan])
             done = 0
             staged_bytes = 0
+            steps("extracting on the host"; total = length(plan))
             run_helper(h, helper, "extract", spec; jobs, warn = text -> push!(warnings, text),
                        on_record = function (record)
                            record["event"] == "file" || return
                            done += 1
                            staged_bytes += record["bytes"]
-                           return extract_progress === nothing ||
-                                  extract_progress(ExtractProgress(done, length(plan), staged_bytes))
+                           extract_progress === nothing || extract_progress(ExtractProgress(done, length(plan), staged_bytes))
+                           return steps("extracting on the host"; done, total = length(plan), bytes = staged_bytes)
                        end)
         end
         replaced = remove_stale_links!(p, resolved)
+        steps("copying"; total = 100)
         out, copy_warnings = rsync_listed(path -> rsync_command(h, p, path; dry_run = false),
-                                          resolved.copy, progress)
+                                          resolved.copy, rsync_reading("copying"))
         push!(warnings, copy_warnings)
         if !isempty(plan)
             # The helper phase can be long; the mirror may have changed since the plan was checked.
             again, changed = reconcile_local(p, plan)
             isempty(changed) || error("the local mirror changed during the extraction; ",
                                       "full copy or symlink now at: ", join(changed, ", "))
+            steps("pulling extracted files"; total = 100)
             pull_out, pull_warnings = rsync_listed(path -> rsync_command(h, staging_production_dir(staging, p), p.local_root, path;
                                                                          dry_run = false),
-                                                   [j.relative for j in again], progress)
+                                                   [j.relative for j in again], rsync_reading("pulling extracted files"))
             pulled = parse_rsync_stats(pull_out, 0)
             push!(warnings, pull_warnings)
         end
         in_mirror = true
         moved = parse_rsync_stats(out, length(resolved.link))
+        steps("creating links")
         created, skipped = create_links!(h, p, resolved)
         config = write_local_config(p)
-        isempty(plan) || remove_staged!(h, staging, [j.destination for j in plan])
+        isempty(plan) || (steps("cleaning up staging"); remove_staged!(h, staging, [j.destination for j in plan]))
         result = TransferResult(moved.bytes, moved.files, created, replaced, skipped,
                                 config, join(filter(!isempty, warnings), "\n"),
                                 length(plan), sum(j -> length(j.groups), plan; init = 0),
@@ -640,6 +668,50 @@ function apply!(h::RemoteHost, p::Production, sel::Selection;
                                                        "\nreduced files already staged were kept in $staging; running the same selection again resumes from them")))
     end
     return result
+end
+
+"""
+    apply_steps(sel::Selection; dry_run::Bool)::Vector{String}
+
+The step names [`apply!`](@ref) reports for `sel`, in execution order. Steps that do not apply to the
+selection are absent, so the count shown to the user is the real one.
+"""
+function apply_steps(sel::Selection; dry_run::Bool)
+    names = String[]
+    isempty(sel.detector_files) || push!(names, "listing detector files")
+    isempty(sel.extract) || append!(names, ["planning extraction", "sizing extract groups"])
+    if dry_run
+        push!(names, "checking files to copy")
+    else
+        isempty(sel.extract) || push!(names, "extracting on the host")
+        push!(names, "copying")
+        isempty(sel.extract) || push!(names, "pulling extracted files")
+        push!(names, "creating links")
+        isempty(sel.extract) || push!(names, "cleaning up staging")
+    end
+    return names
+end
+
+"""
+    estimate_selection(h, p, sel; helper = HelperConfig(), jobs = 0, report = nothing)
+
+The dry run of [`apply!`](@ref) and, when `sel` has extract entries, the free space of the staging
+directory. Returns `(; estimate, staging, free)`; the last two are `nothing` without extract entries.
+"""
+function estimate_selection(h::RemoteHost, p::Production, sel::Selection; helper::HelperConfig = HelperConfig(), jobs::Integer = 0,
+                            report = nothing)
+    extract = !isempty(sel.extract)
+    steps = Steps(vcat(apply_steps(sel; dry_run = true), extract ? ["staging free space"] : String[]), report)
+    estimate = apply!(h, p, sel; dry_run = true, helper, jobs, steps)
+    extract || return (; estimate, staging = nothing, free = nothing)
+    steps("staging free space")
+    staging = staging_dir(h, helper)
+    # The estimate creates nothing: ask about the nearest existing ancestor.
+    existing = staging
+    while !dir_exists(h, existing)
+        existing = dirname(existing)
+    end
+    return (; estimate, staging, free = free_bytes(h, existing))
 end
 
 """

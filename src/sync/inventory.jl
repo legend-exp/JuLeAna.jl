@@ -272,7 +272,7 @@ function ensure_detectors!(dir::Node; whole_files::Bool = false)
 end
 
 """
-    detector_nodes(h::RemoteHost, helper::HelperConfig, dir::Node; jobs = 0)::Vector{Node}
+    detector_nodes(h::RemoteHost, helper::HelperConfig, dir::Node; jobs = 0, steps = NO_STEPS)::Vector{Node}
 
 Detached `:detector` rows for the listed directory `dir`. For a run directory, the
 first filekey file is inspected and each detector is sized by its stored bytes in
@@ -282,20 +282,21 @@ is not used then). A file without a detector axis (`jlevt`, `jlskm`, `jlpmt`) gi
 empty vector; whether a tier has detectors is decided by looking, never by a list of
 tier names.
 """
-function detector_nodes(h::RemoteHost, helper::HelperConfig, dir::Node; jobs::Integer = 0)
+function detector_nodes(h::RemoteHost, helper::HelperConfig, dir::Node; jobs::Integer = 0, steps::Steps = NO_STEPS)
     if period_level(dir)
         i = dir.children === nothing ? nothing : findfirst(c -> c.kind == :detectors, dir.children)
-        i !== nothing && dir.children[i].whole_files && return period_file_nodes(h, dir)
-        return period_detector_nodes(h, helper, dir; jobs)
+        i !== nothing && dir.children[i].whole_files && return period_file_nodes(h, dir; steps)
+        return period_detector_nodes(h, helper, dir; jobs, steps)
     end
     file = only(first(filekey_groups(dir)).children)
+    steps("reading first file")
     names, bytes = only(inspect_files(h, helper, [file.remote_path]; jobs))
     return [Node(names[i], joinpath(dir.remote_path, "detectors", names[i]), :detector; size = bytes[i])
             for i in eachindex(names, bytes)]
 end
 
 """
-    period_detector_nodes(h, helper, period::Node; jobs = 0)::Vector{Node}
+    period_detector_nodes(h, helper, period::Node; jobs = 0, steps = NO_STEPS)::Vector{Node}
 
 Detached `:detector` rows for the listed period directory `period`: the union, sorted
 by name, of the detectors of the first filekey file of each of its run directories,
@@ -305,14 +306,17 @@ filekey files, and its `holders` name those runs. A run whose first file has no
 detector axis contributes nothing. A period without a run directory that holds
 filekey files is an error.
 """
-function period_detector_nodes(h::RemoteHost, helper::HelperConfig, period::Node; jobs::Integer = 0)
+function period_detector_nodes(h::RemoteHost, helper::HelperConfig, period::Node; jobs::Integer = 0, steps::Steps = NO_STEPS)
     held = Tuple{Node,Vector{String}}[]
     for run in run_dirs(period)
         files = filekey_files(h, run.remote_path)
         isempty(files) || push!(held, (run, files))
     end
     isempty(held) && throw(ArgumentError("$(period.label) has no run directory with filekey files to inspect"))
-    inspected = inspect_files(h, helper, [first(files) for (_, files) in held]; jobs)
+    seen = 0
+    steps("reading first files"; total = length(held))
+    inspected = inspect_files(h, helper, [first(files) for (_, files) in held]; jobs,
+                              on_record = _ -> steps("reading first files"; done = (seen += 1), total = length(held)))
     rows = Dict{String,Node}()
     for ((run, files), (names, bytes, _)) in zip(held, inspected)
         for i in eachindex(names, bytes)
@@ -327,7 +331,7 @@ function period_detector_nodes(h::RemoteHost, helper::HelperConfig, period::Node
 end
 
 """
-    period_file_nodes(h::RemoteHost, period::Node)::Vector{Node}
+    period_file_nodes(h::RemoteHost, period::Node; steps = NO_STEPS)::Vector{Node}
 
 Detached `:detector` rows for the listed period directory `period` of per-detector
 files: the union, sorted by name, of the detectors with a file in any of its run
@@ -337,9 +341,11 @@ the sizes of the detector's files and its `holders` name the runs that have the
 file, each with 1. A period without a run directory that holds per-detector files
 is an error.
 """
-function period_file_nodes(h::RemoteHost, period::Node)
+function period_file_nodes(h::RemoteHost, period::Node; steps::Steps = NO_STEPS)
     rows = Dict{String,Node}()
-    for run in run_dirs(period)
+    runs = run_dirs(period)
+    steps("listing runs"; total = length(runs))
+    for (i, run) in pairs(runs)
         seen = Dict{String,String}()                     # detector => its file in this run
         entries = list_dir(h, run.remote_path)
         check_tier_kinds(run.remote_path, entries)
@@ -356,6 +362,7 @@ function period_file_nodes(h::RemoteHost, period::Node)
             row.size += entry.size
             push!(row.holders, run.remote_path => 1)
         end
+        steps("listing runs"; done = i, total = length(runs))
     end
     isempty(rows) && throw(ArgumentError("$(period.label) holds no per-detector files in any of its run directories"))
     return [rows[name] for name in sort!(collect(keys(rows)))]
@@ -376,14 +383,14 @@ function attach_detectors!(node::Node, children::Vector{Node})
 end
 
 """
-    expand_detectors!(h::RemoteHost, helper::HelperConfig, node::Node; jobs = 0)::Node
+    expand_detectors!(h::RemoteHost, helper::HelperConfig, node::Node; jobs = 0, steps = NO_STEPS)::Node
 
 List the detectors of the run that `node` belongs to, once. Returns `node`.
 """
-function expand_detectors!(h::RemoteHost, helper::HelperConfig, node::Node; jobs::Integer = 0)
+function expand_detectors!(h::RemoteHost, helper::HelperConfig, node::Node; jobs::Integer = 0, steps::Steps = NO_STEPS)
     node.kind == :detectors || throw(ArgumentError("not a detectors node: $(node.label)"))
     node.children === nothing || return node
-    return attach_detectors!(node, detector_nodes(h, helper, node.parent; jobs))
+    return attach_detectors!(node, detector_nodes(h, helper, node.parent; jobs, steps))
 end
 
 """
@@ -393,3 +400,13 @@ end
 `true` for one that has detectors or has not been inspected yet.
 """
 has_detectors(node::Node) = node.children === nothing || !isempty(node.children)
+
+"""
+    detector_steps(report, node::Node)::Steps
+
+The steps of listing the detectors below the `:detectors` row `node`: the first files of the runs of a
+period, the first file of a run, or the run directories of a period of per-detector files.
+"""
+function detector_steps(report, node::Node)
+    return Steps([node.whole_files ? "listing runs" : period_level(node.parent) ? "reading first files" : "reading first file"], report)
+end

@@ -64,7 +64,7 @@
         helper = HelperConfig(; staging = joinpath(mktempdir(), "stage"))
         code, text = headless(local_root, helper; dry_run = false, yes = true)
         @test code == 0
-        @test occursin("extracting 2/2 files", text)
+        @test occursin("extracting on the host 2/2", text)
         @test occursin("extracted 2 files, 2 groups", text)
         run_dir = joinpath(local_root, "xprod", "generated", "tier", "jldsp", "cal", "p18", "r000")
         for file in readdir(run_dir; join = true)

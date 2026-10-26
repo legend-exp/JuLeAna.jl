@@ -493,7 +493,7 @@ end
 
 """
     apply_selection!(h::RemoteHost, p::Production, root::Node, sel::Selection;
-                     helper = HelperConfig(), jobs = 0)::Node
+                     helper = HelperConfig(), jobs = 0, steps = NO_STEPS)::Node
 
 Expand `root` along every path in `sel` and set the modes it records, including
 the detectors of every extract entry (which are listed with the remote helper) and the
@@ -504,13 +504,18 @@ in no run of its period, is an error, and so is a detector recorded as both copi
 linked.
 """
 function apply_selection!(h::RemoteHost, p::Production, root::Node, sel::Selection;
-                          helper::HelperConfig = HelperConfig(), jobs::Integer = 0)
+                          helper::HelperConfig = HelperConfig(), jobs::Integer = 0, steps::Steps = NO_STEPS)
+    total = length(sel.link) + length(sel.copy) + length(sel.extract) + length(sel.detector_files)
+    done = 0
+    tick() = steps("listing directories"; done = (done += 1), total)
+    steps("listing directories"; total)
     for rel in sel.link
         set_mode!(find_node!(h, p, root, rel), :link)
+        tick()
     end
     for rel in sel.copy
-        rel in p.overlays && continue
-        set_mode!(find_node!(h, p, root, rel), :copy)
+        rel in p.overlays || set_mode!(find_node!(h, p, root, rel), :copy)
+        tick()
     end
     for entry in sel.extract
         dir = find_node!(h, p, root, entry.dir)
@@ -521,6 +526,7 @@ function apply_selection!(h::RemoteHost, p::Production, root::Node, sel::Selecti
                                                  (period_level(dir) ? "any run of the period" : "the first file of the run")))
             set_mode!(detectors.children[i], :extract)
         end
+        tick()
     end
     for entry in sel.detector_files
         period = find_node!(h, p, root, entry.dir)
@@ -533,6 +539,7 @@ function apply_selection!(h::RemoteHost, p::Production, root::Node, sel::Selecti
                 throw(ArgumentError("detector $name of $(entry.dir) is marked both :$(row.mode) and :$(entry.mode)"))
             set_mode!(row, entry.mode)
         end
+        tick()
     end
     return root
 end

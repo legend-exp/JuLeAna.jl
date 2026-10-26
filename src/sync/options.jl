@@ -191,20 +191,24 @@ function run_headless(options::Options, host::RemoteHost)
                             options.local_root; mount_root = options.mount_root)
     selection = load_selection(options.from, production)
 
-    estimate = apply!(host, production, selection; dry_run = true,
-                      helper = options.helper, jobs = options.jobs)
-    println(format_estimate(estimate))
-    isempty(estimate.not_in_run) ||
-        println("not in run: ", format_not_in_run(estimate.not_in_run))
-    if !isempty(selection.extract)
-        staging = staging_dir(host, options.helper)
-        # The estimate creates nothing: ask about the nearest existing ancestor.
-        existing = staging
-        while !dir_exists(host, existing)
-            existing = dirname(existing)
+    # An error leaves its step on the screen; the step is named so the failure can be placed.
+    function failing(f, printer)
+        try
+            return f()
+        catch
+            println(printer.io)
+            isempty(failed_step(printer)) || println(stderr, "failed in step \"", failed_step(printer), "\"")
+            rethrow()
         end
-        println("staging ", staging, ": ", format_bytes(free_bytes(host, existing)), " free")
     end
+    printer = StepPrinter()
+    (; estimate, staging, free) = failing(printer) do
+        return estimate_selection(host, production, selection; helper = options.helper, jobs = options.jobs, report = printer)
+    end
+    println()
+    println(format_estimate(estimate))
+    isempty(estimate.not_in_run) || println("not in run: ", format_not_in_run(estimate.not_in_run))
+    staging === nothing || println("staging ", staging, ": ", format_bytes(free), " free")
     options.dry_run && return 0
 
     if !options.yes
@@ -212,13 +216,10 @@ function run_headless(options::Options, host::RemoteHost)
         startswith(lowercase(readline()), "y") || return 1
     end
 
-    result = apply!(host, production, selection; helper = options.helper, jobs = options.jobs,
-                    extract_progress = e -> print("\rextracting ", e.done, "/", e.total, " files  ",
-                                                  format_bytes(e.bytes), "   "),
-                    progress = function (p)
-                        return print("\r", format_bytes(p.bytes), "  ", round(Int, 100 * p.fraction), "%  ",
-                                     p.rate, "  ETA ", p.eta, "   ")
-                    end)
+    printer = StepPrinter()
+    result = failing(printer) do
+        return apply!(host, production, selection; helper = options.helper, jobs = options.jobs, report = printer)
+    end
     println()
     println(summary_text(result))
     return 0

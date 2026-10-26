@@ -56,7 +56,8 @@ using JuLeAna.Sync: main, RemoteHost, SSHHost, LocalHost, DirEntry,
                     ExtractJob, staging_production_dir, plan_extraction, plan_detector_files, plan_bytes, plan_group_bytes,
                     prepare_extraction,
                     ExtractProgress, STAGING_MARGIN, check_staging_space, reduced_groups, reconcile_local, rsync_listed,
-                    with_environment!, start_bootstrap!, environment_ready!, request_detectors!, run_estimate!, toggle_extract!
+                    with_environment!, start_bootstrap!, environment_ready!, request_detectors!, run_estimate!, toggle_extract!,
+                    StepProgress, Steps, NO_STEPS, format_step, StepPrinter, failed_step, apply_steps, estimate_selection, detector_steps
 
 const SYNC_FIXTURES = joinpath(@__DIR__, "sync", "fixtures")
 
@@ -93,6 +94,7 @@ withenv("XDG_CONFIG_HOME" => TEST_CONFIG_HOME) do
         run_file("test_sync_extract_helper.jl")
         run_file("test_sync_remote.jl")
         run_file("test_sync_helper.jl")
+        run_file("test_sync_steps.jl")
         run_file("test_sync_production.jl")
         run_file("test_sync_inventory.jl")
         run_file("test_sync_selection.jl")
