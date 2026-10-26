@@ -33,6 +33,8 @@ Test.@testset "ExplicitImports" begin
                                                     # PropDicts' variable substitution and dictionary view, which resolve the `$_` of a
                                                     # production's config.json (Sync).
                                                     :substitute_vars!, :_dict,
+                                                    # YAML's parse errors, caught to name the broken configuration file (Sync).
+                                                    :ScannerError, :ParserError, :ComposerError, :ConstructorError,
                                                     # Non-public names of the LEGEND and utility packages used by the processors.
                                                     :fast_flatten, :set_timelimit, :_fix_vov, :AchatBlue, :BEGeOrange, :CoaxGreen,
                                                     :add_watermarks!, :parameterplot!, :tottime, :totallocated, :format_bytes))
