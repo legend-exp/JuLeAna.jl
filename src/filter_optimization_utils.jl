@@ -13,62 +13,6 @@ const DEP_PEAKNAME = :Tl208DEP_Bi212FEP
 const SEP_PEAKNAME = :Tl208SEP
 
 """
-    single_site_aoe_cut(a_fit::AbstractVector, e_fit::AbstractVector, a::AbstractVector, e::AbstractVector; aoe_cut_sigma::Real)
-
-Coarse in-situ single-site selection. The single-site A/E band is fitted on the A/E values
-`a_fit ./ e_fit` (units stripped) of a nearly pure single-site sample, the DEP: a truncated
-Gaussian is fitted to the high side of its A/E peak with `fit_half_trunc_gauss`. Events of
-`a ./ e`, the FEP, above `μ - aoe_cut_sigma * σ` are kept. The band is not energy-corrected
-between the two samples, and this is not the calibrated A/E cut.
-
-Returns the selection mask, which has the axes of `a`, and the report
-`(h, f_fit, μ, σ, cut_value, n_sigma, sf)`, where `h` and `f_fit` describe the fitted
-`a_fit ./ e_fit` distribution and `sf` is the kept fraction of the `a ./ e` events with finite
-A/E. Throws an `ArgumentError` with fewer than 100 finite positive fit values, and an
-`ErrorException` if the fit yields a non-finite `μ`, a non-positive or non-finite `σ`, or a
-`μ` outside the range of the A/E peak given by `cut_single_peak`.
-"""
-function single_site_aoe_cut(a_fit::AbstractVector, e_fit::AbstractVector, a::AbstractVector, e::AbstractVector; aoe_cut_sigma::Real)
-    axes(a_fit) == axes(e_fit) || throw(DimensionMismatch("a_fit and e_fit must share axes: $(axes(a_fit)) vs $(axes(e_fit))"))
-    axes(a) == axes(e) || throw(DimensionMismatch("a and e must share axes: $(axes(a)) vs $(axes(e))"))
-    aoe_fit = collect(filter(x -> isfinite(x) && x > 0, ustrip.(a_fit) ./ ustrip.(e_fit)))
-    # At least 100 events keep the quantile bounds and the fit meaningful.
-    length(aoe_fit) >= 100 || throw(ArgumentError("The A/E selection needs at least 100 finite positive A/E values to fit, got $(length(aoe_fit))"))
-    # The 1% and 99.5% quantiles exclude the low-A/E multi-site tail and high outliers from the
-    # fit range; relative_cut = 0.5 restricts the fit to the region above half the peak height.
-    cuts = cut_single_peak(aoe_fit, quantile(aoe_fit, 0.01), quantile(aoe_fit, 0.995); relative_cut = 0.5)
-    (; result, report) = fit_half_trunc_gauss(aoe_fit, cuts; left = false, uncertainty = false)
-    μ, σ = mvalue(result.μ), mvalue(result.σ)
-    isfinite(μ) && isfinite(σ) && σ > 0 || error("The A/E fit is degenerate: μ = $μ, σ = $σ")
-    cuts.low <= μ <= cuts.high || error("The A/E fit is implausible: μ = $μ outside the fit range $(cuts.low) .. $(cuts.high)")
-    cut_value = μ - aoe_cut_sigma * σ
-    aoe = ustrip.(a) ./ ustrip.(e)
-    mask = map(x -> isfinite(x) && x > cut_value, aoe)
-    return mask, (h = report.h, f_fit = report.f_fit, μ = μ, σ = σ, cut_value = cut_value, n_sigma = aoe_cut_sigma, sf = count(mask) / count(isfinite, aoe))
-end
-
-
-"""
-    select_single_site(a_fit, e_fit, a, e; aoe_cut_sigma::Real)
-
-`single_site_aoe_cut` with its fit failures recorded instead of thrown. Returns
-`(mask, report, failure)` with `failure == ""` on success. An `ErrorException` or
-`ArgumentError` (a degenerate fit, too few events) yields `(nothing, nothing, failure)` with a
-description of the error; every other exception, such as a `MethodError` or a
-`DimensionMismatch`, propagates.
-"""
-function select_single_site(a_fit, e_fit, a, e; aoe_cut_sigma::Real)
-    try
-        return (single_site_aoe_cut(a_fit, e_fit, a, e; aoe_cut_sigma)..., "")
-    catch err
-        err isa Union{ErrorException, ArgumentError} || rethrow()
-        @warn "Single-site A/E selection failed: $(truncate_error(err))"
-        return nothing, nothing, "A/E selection failed: $(truncate_error(err, 200))"
-    end
-end
-
-
-"""
     crosscheck_warning(legacy::NamedTuple, new::NamedTuple; max_shift_sigma::Real)
 
 Warning text for a new optimum that degrades the reconstruction relative to the legacy optimum,
@@ -247,7 +191,7 @@ end
 
 
 """
-    crosscheck_optimum(sets::NamedTuple, pulse::NamedTuple, aoe::AbstractVector, aoe_mask,
+    crosscheck_optimum(sets::NamedTuple, pulse::NamedTuple, aoe::AbstractVector,
                        dsp_config::DSPConfig, opt_config::PropDict, flt_config::PropDict,
                        flt::Symbol, rt::Unitful.Time, ft::Unitful.Time)
 
@@ -255,9 +199,8 @@ Reconstruction crosscheck of filter `flt` at `(rt, ft)`.
 
 The FEP set is evaluated with `evaluate_energy_point`; its qdrift slope `fct` and simple
 calibration `m_cal_simple` are applied unchanged to the DEP and SEP sets (present in `sets` if
-enabled) and to the FEP events selected by `aoe_mask` (`nothing` disables this check). Every
-peak is fitted with `fit_crosscheck_peak`. A failing FEP fit throws; DEP, SEP and single-site
-FEP fits that fail with an `ErrorException` or `ArgumentError` are recorded in the `status` of
+enabled). Every peak is fitted with `fit_crosscheck_peak`. A failing FEP fit throws; DEP and SEP
+fits that fail with an `ErrorException` or `ArgumentError` are recorded in the `status` of
 their row and left out of `fits` and `shifts`.
 
 Per-event FEP residuals `(e - μ) / σ` cover the events inside the FEP window with finite
@@ -265,13 +208,13 @@ Per-event FEP residuals `(e - μ) / σ` cover the events inside the FEP window w
 
 Returns `(fep_row, fits, rows, shifts, slow_mean_residual, residuals, ctc_report)`:
 - `fep_row`: `evaluate_energy_point` row of the FEP
-- `fits`: `fit_crosscheck_peak` results by peak (`:FEP`, `:DEP`, `:SEP`, `:FEP_SSE`)
+- `fits`: `fit_crosscheck_peak` results by peak (`:FEP`, `:DEP`, `:SEP`)
 - `rows`: one crosscheck table row per attempted peak
 - `shifts`: `(shift, σ)` of `:DEP` and `:SEP`, scaled so that the FEP sits at its line
 - `residuals`: `(residual, qdrift, rise_time, aoe, slow_mean)`
 - `ctc_report`: `ctc_energy` report of the FEP energies if `opt_config.apply_ctc`, else `nothing`
 """
-function crosscheck_optimum(sets::NamedTuple, pulse::NamedTuple, aoe::AbstractVector, aoe_mask::Union{Nothing, AbstractVector{Bool}},
+function crosscheck_optimum(sets::NamedTuple, pulse::NamedTuple, aoe::AbstractVector,
         dsp_config::DSPConfig, opt_config::PropDict, flt_config::PropDict, flt::Symbol, rt::Unitful.Time, ft::Unitful.Time)
     peak = opt_config.peak
     window = (opt_config.left_window_size, opt_config.right_window_size)
@@ -292,7 +235,6 @@ function crosscheck_optimum(sets::NamedTuple, pulse::NamedTuple, aoe::AbstractVe
         push!(checks, (name = :SEP, e_cal = calibrate(dsp_energy_rtft(sets.sep.prep, dsp_config, rt, ft, flt), sets.sep.qdrift),
                        line = peak - ELECTRON_MASS_ENERGY, window = window))
     end
-    isnothing(aoe_mask) || push!(checks, (name = :FEP_SSE, e_cal = e_cal_fep[aoe_mask], line = peak, window = window))
 
     fit_names, fit_values, statuses = Symbol[], NamedTuple[], String[]
     for c in checks
@@ -372,22 +314,26 @@ end
 Optimization of energy filter `flt` of one detector on the prepared peak sets `sets` (see
 `run_filter_optimization_channel`) and the FEP pulse shapes `pulse`:
 1. noise scan with `dsp_<flt>_rt_optimization` and `fit_enc_sigmas`, giving `rt_enc`;
-2. flat-top scan at `rt_enc` with `fit_fwhm_ft`, giving the seed `ft0` for the configured
-   objective and the legacy optimum `(rt_enc, legacy_ft)`;
-3. joint lattice search from `(rt_enc, ft0)` with `optimize_rtft`;
-4. crosschecks at the legacy and the new optimum (`crosscheck_optimum`, `crosscheck_warning`),
-   with the single-site A/E band fitted on the DEP and applied to the FEP, both with the
-   energies at the new optimum; a failing A/E selection drops the FEP_SSE crosscheck and its
-   figure and is reported in the warning;
+2. flat-top scan at `rt_enc` with `fit_fwhm_ft`, giving `ft0`, the optimum of the configured
+   objective, and the legacy optimum `(rt_enc, legacy_ft)`;
+3. if `opt_config.joint_search`, a joint lattice search from `(rt_enc, ft0)` with
+   `optimize_rtft` gives the optimum; otherwise the optimum is `(rt_enc, ft0)` with the
+   metrics of the flat-top scan;
+4. crosschecks at the legacy and the new optimum (`crosscheck_optimum`, `crosscheck_warning`);
 5. figures through `f_save(fig, name)` with titles `f_title(label, flt)`, and tables written
    to `f_tablepath(flt)` with `write_fltopt_tables`.
 
-Returns `(pars, log)`: the fltopt pars of the filter and the extra log table fields.
+The objective is `opt_config.objective`; `:fwhm_ct` uses `opt_config.ctc_rel_uncertainty`, the
+assumed relative error of the charge-trapping correction.
+
+Returns `(pars, log)`: the fltopt pars of the filter and the extra log table fields. `pars`
+holds `n_evals` and `converged` of the joint search only if it ran.
 """
 function optimize_channel_filter(sets::NamedTuple, pulse::NamedTuple, flt::Symbol, dsp_config::DSPConfig, opt_config::PropDict,
         τ::Unitful.Time, sg_wl::Unitful.Time, sg_wl_source::AbstractString; f_title::Function, f_save::Function, f_tablepath::Function)
     flt_config = opt_config.e_filter[flt]
     objective = Symbol(opt_config.objective)
+    (; joint_search, ctc_rel_uncertainty) = opt_config
     e_grid_rt = getproperty(dsp_config, Symbol("e_grid_rt_$(flt)"))
     e_grid_ft = getproperty(dsp_config, Symbol("e_grid_ft_$(flt)"))
     window = (opt_config.left_window_size, opt_config.right_window_size)
@@ -433,40 +379,41 @@ function optimize_channel_filter(sets::NamedTuple, pulse::NamedTuple, flt::Symbo
     e_grid = permutedims(reduce(hcat, [f_energy(rt_enc, ft) for ft in e_grid_ft]))
     result_ft, report_ft = fit_fwhm_ft(e_grid, e_grid_ft, sets.fep.qdrift, rt_enc, flt_config.min_e_fep, flt_config.max_e_fep,
         flt_config.rel_cut_fit_e_fep, opt_config.apply_ctc; n_bins = flt_config.nbins_e_fep, peak = opt_config.peak, window,
-        objective, containment = opt_config.containment, rel_tol = opt_config.rel_tol, ft_fwhm_tol = opt_config.ft_fwhm_tol)
+        objective, ctc_rel_uncertainty, containment = opt_config.containment, rel_tol = opt_config.rel_tol, ft_fwhm_tol = opt_config.ft_fwhm_tol)
     e_grid = nothing
     enc_grid = nothing
     ft0, legacy_ft = mvalue(result_ft.ft), mvalue(result_ft.legacy_ft)
     @debug "Filter $flt: seed flat-top time $ft0, legacy flat-top time $legacy_ft"
     f_save(LegendMakie.lplot(report_ft, title = f_title("FEP FT Scan", flt), figsize = (600, 900)), Symbol("ft_scan_$(flt)"))
 
-    # joint lattice search from the seed (rt_enc, ft0) moved onto the lattice, inside the bounds and into the feasible region
-    rt_seed, ft_seed = snap_seed(rt_enc, ft0, extrema(e_grid_rt), extrema(e_grid_ft), prep.sampling_period, feasible, flt)
-    result_rtft, report_rtft = optimize_rtft(f_energy, sets.fep.qdrift, rt_seed, ft_seed;
-        rt_bounds = extrema(e_grid_rt), ft_bounds = extrema(e_grid_ft), feasible,
-        step0 = (step(e_grid_rt), step(e_grid_ft)), lattice = prep.sampling_period,
-        objective, rel_tol = opt_config.rel_tol, max_evals = opt_config.max_evals,
-        peak = opt_config.peak, window, min_e = flt_config.min_e_fep, max_e = flt_config.max_e_fep,
-        rel_cut_fit = flt_config.rel_cut_fit_e_fep, n_bins = flt_config.nbins_e_fep,
-        apply_ctc = opt_config.apply_ctc, containment = opt_config.containment)
-    rt_new, ft_new = uconvert(u"µs", mvalue(result_rtft.rt)), uconvert(u"µs", mvalue(result_rtft.ft))
-    @debug "Filter $flt: optimum rt = $rt_new, ft = $ft_new after $(result_rtft.n_evals) evaluations"
-    f_save(LegendMakie.lplot(report_rtft, legacy = (rt_enc, legacy_ft), title = f_title("RT-FT Search", flt), figsize = (700, 550)),
-        Symbol("rtft_landscape_$(flt)"))
+    # the optimum: joint lattice search from the seed (rt_enc, ft0) moved onto the lattice, inside
+    # the bounds and into the feasible region, or the flat-top scan optimum at rt_enc
+    if joint_search
+        rt_seed, ft_seed = snap_seed(rt_enc, ft0, extrema(e_grid_rt), extrema(e_grid_ft), prep.sampling_period, feasible, flt)
+        result_rtft, report_rtft = optimize_rtft(f_energy, sets.fep.qdrift, rt_seed, ft_seed;
+            rt_bounds = extrema(e_grid_rt), ft_bounds = extrema(e_grid_ft), feasible,
+            step0 = (step(e_grid_rt), step(e_grid_ft)), lattice = prep.sampling_period,
+            objective, ctc_rel_uncertainty, rel_tol = opt_config.rel_tol, max_evals = opt_config.max_evals,
+            peak = opt_config.peak, window, min_e = flt_config.min_e_fep, max_e = flt_config.max_e_fep,
+            rel_cut_fit = flt_config.rel_cut_fit_e_fep, n_bins = flt_config.nbins_e_fep,
+            apply_ctc = opt_config.apply_ctc, containment = opt_config.containment)
+        optimum = result_rtft
+        @debug "Filter $flt: optimum rt = $(optimum.rt), ft = $(optimum.ft) after $(result_rtft.n_evals) evaluations"
+        f_save(LegendMakie.lplot(report_rtft, legacy = (rt_enc, legacy_ft), title = f_title("RT-FT Search", flt), figsize = (700, 550)),
+            Symbol("rtft_landscape_$(flt)"))
+    else
+        i_scan = only(findall(==(ft0), report_ft.table.ft))
+        optimum = merge(report_ft.table[i_scan], (rt = rt_enc, ft = ft0, min_objective = result_ft.min_objective))
+        @debug "Filter $flt: optimum rt = $rt_enc, ft = $ft0 from the flat-top scan"
+    end
+    rt_new, ft_new = uconvert(u"µs", mvalue(optimum.rt)), uconvert(u"µs", mvalue(optimum.ft))
 
-    # crosschecks at both optima; A/E and the single-site selection use the energies at the new optimum
+    # crosschecks at both optima; A/E uses the energies at the new optimum
     e_new = f_energy(rt_new, ft_new)
     aoe = ustrip.(pulse.a) ./ e_new
-    # A failing A/E selection drops the FEP_SSE crosscheck and is reported in the crosscheck warning.
-    aoe_mask, report_aoe, aoe_failure = if opt_config.crosscheck.aoe_cut
-        e_dep_new = dsp_energy_rtft(sets.dep.prep, dsp_config, rt_new, ft_new, flt)
-        select_single_site(sets.dep.a, e_dep_new, pulse.a, e_new; aoe_cut_sigma = opt_config.crosscheck.aoe_cut_sigma)
-    else
-        nothing, nothing, ""
-    end
-    cc_legacy = crosscheck_optimum(sets, pulse, aoe, aoe_mask, dsp_config, opt_config, flt_config, flt, rt_enc, legacy_ft)
-    cc_new = crosscheck_optimum(sets, pulse, aoe, aoe_mask, dsp_config, opt_config, flt_config, flt, rt_new, ft_new)
-    warning = join(filter(!isempty, [crosscheck_warning(cc_legacy, cc_new; max_shift_sigma = opt_config.crosscheck.max_shift_sigma), aoe_failure]), "; ")
+    cc_legacy = crosscheck_optimum(sets, pulse, aoe, dsp_config, opt_config, flt_config, flt, rt_enc, legacy_ft)
+    cc_new = crosscheck_optimum(sets, pulse, aoe, dsp_config, opt_config, flt_config, flt, rt_new, ft_new)
+    warning = crosscheck_warning(cc_legacy, cc_new; max_shift_sigma = opt_config.crosscheck.max_shift_sigma)
     isempty(warning) || @warn "Filter $flt crosscheck: $warning"
 
     if opt_config.apply_ctc
@@ -478,7 +425,6 @@ function optimize_channel_filter(sets::NamedTuple, pulse::NamedTuple, flt::Symbo
         figsize = (700, 300 * length(peaks)), title = f_title("Crosscheck Peaks", flt)), Symbol("peaks_$(flt)"))
     f_save(LegendMakie.lplot((legacy = cc_legacy.residuals, new = cc_new.residuals); figsize = (900, 900),
         title = f_title("FEP Residuals", flt)), Symbol("residuals_$(flt)"))
-    isnothing(report_aoe) || f_save(LegendMakie.lplot(report_aoe, figsize = (800, 500), title = f_title("Single-Site A/E Selection", flt)), Symbol("aoe_cut_$(flt)"))
 
     # example waveforms: fastest, slowest and highest-A/E events
     n_class = opt_config.n_example_wvfs
@@ -510,9 +456,9 @@ function optimize_channel_filter(sets::NamedTuple, pulse::NamedTuple, flt::Symbo
         fwhm_before = uconvert.(u"keV", mvalue.(t.fwhm_before)), fwhm = uconvert.(u"keV", mvalue.(t.fwhm)),
         w90 = uconvert.(u"keV", mvalue.(t.w90)), asym = mvalue.(t.asym), tail_fraction = mvalue.(t.tail_fraction),
         tail_scale = uconvert.(u"keV", mvalue.(t.tail_scale)), centroid = uconvert.(u"keV", mvalue.(t.centroid)),
-        fct = mvalue.(t.fct), m_cal_simple = uconvert.(u"keV", mvalue.(t.m_cal_simple)),
+        fct = mvalue.(t.fct), ct_spread = uconvert.(u"keV", mvalue.(t.ct_spread)), m_cal_simple = uconvert.(u"keV", mvalue.(t.m_cal_simple)),
         ctc_converged = t.ctc_converged, n_events = t.n_events)
-    n_rt, n_ft, n_lat = length(report_rt.enc), length(report_ft.table), length(report_rtft.table)
+    n_rt, n_ft = length(report_rt.enc), length(report_ft.table)
     evaluation = vcat(
         Table(scan = fill("noise", n_rt), rt = uconvert.(u"µs", collect(report_rt.enc_grid_rt)),
             ft = fill(uconvert(u"µs", flt_config.ft_fixed), n_rt), stage = fill("", n_rt),
@@ -520,17 +466,17 @@ function optimize_channel_filter(sets::NamedTuple, pulse::NamedTuple, flt::Symbo
             enc = mvalue.(report_rt.enc), fwhm_before = fill(NaN * u"keV", n_rt), fwhm = fill(NaN * u"keV", n_rt),
             w90 = fill(NaN * u"keV", n_rt), asym = fill(NaN, n_rt), tail_fraction = fill(NaN, n_rt),
             tail_scale = fill(NaN * u"keV", n_rt), centroid = fill(NaN * u"keV", n_rt), fct = fill(NaN, n_rt),
-            m_cal_simple = fill(NaN * u"keV", n_rt), ctc_converged = fill(false, n_rt), n_events = fill(0, n_rt)),
+            ct_spread = fill(NaN * u"keV", n_rt), m_cal_simple = fill(NaN * u"keV", n_rt), ctc_converged = fill(false, n_rt), n_events = fill(0, n_rt)),
         Table(merge((scan = fill("ft_scan", n_ft), rt = fill(uconvert(u"µs", rt_enc), n_ft),
             ft = uconvert.(u"µs", report_ft.table.ft), stage = fill("", n_ft), step_rt = fill(NaN * u"µs", n_ft),
             step_ft = fill(uconvert(u"µs", step(e_grid_ft)), n_ft)), metric_columns(report_ft.table))),
-        Table(merge((scan = fill("lattice", n_lat), rt = uconvert.(u"µs", report_rtft.table.rt),
+        (joint_search ? [Table(merge((scan = fill("lattice", length(report_rtft.table)), rt = uconvert.(u"µs", report_rtft.table.rt),
             ft = uconvert.(u"µs", report_rtft.table.ft), stage = string.(report_rtft.table.stage),
             step_rt = uconvert.(u"µs", report_rtft.table.step_rt), step_ft = uconvert.(u"µs", report_rtft.table.step_ft)),
-            metric_columns(report_rtft.table))))
+            metric_columns(report_rtft.table)))] : Table[])...)
     crosscheck = Table(vcat(map(((:legacy, rt_enc, legacy_ft, cc_legacy), (:new, rt_new, ft_new, cc_new))) do (optimum, rt, ft, cc)
         [merge((optimum = String(optimum), rt = uconvert(u"µs", rt), ft = uconvert(u"µs", ft), fct = mvalue(cc.fep_row.fct),
-                sg_wl = uconvert(u"ns", sg_wl), sg_wl_source = String(sg_wl_source), slow_mean_residual = cc.slow_mean_residual), row)
+                ct_spread = uconvert(u"keV", mvalue(cc.fep_row.ct_spread)), sg_wl = uconvert(u"ns", sg_wl), sg_wl_source = String(sg_wl_source), slow_mean_residual = cc.slow_mean_residual), row)
          for row in cc.rows]
     end...))
     write_fltopt_tables(f_tablepath(flt), (evaluation = evaluation, crosscheck = crosscheck,
@@ -540,43 +486,43 @@ function optimize_channel_filter(sets::NamedTuple, pulse::NamedTuple, flt::Symbo
     pars = (
         rt = rt_new, ft = ft_new,
         min_enc = result_rt.min_enc, rt_enc = result_rt.rt,
-        objective = string(objective), containment = opt_config.containment,
-        min_objective = result_rtft.min_objective, fwhm = result_rtft.fwhm, w90 = result_rtft.w90,
-        asym = result_rtft.asym, fct = result_rtft.fct,
-        legacy = (rt = rt_enc, ft = legacy_ft, fwhm = cc_legacy.fep_row.fwhm),
-        n_evals = result_rtft.n_evals, converged = result_rtft.converged
+        objective = string(objective), ctc_rel_uncertainty, joint_search, containment = opt_config.containment,
+        min_objective = optimum.min_objective, fwhm = optimum.fwhm, w90 = optimum.w90,
+        asym = optimum.asym, fct = optimum.fct, ct_spread = optimum.ct_spread,
+        legacy = (rt = rt_enc, ft = legacy_ft, fwhm = cc_legacy.fep_row.fwhm)
     )
+    joint_search && (pars = merge(pars, (n_evals = result_rtft.n_evals, converged = result_rtft.converged)))
     return (; pars, log = (objective = pars.objective, legacy_rt = rt_enc, legacy_ft, crosscheck_warning = isempty(warning) ? "-" : warning))
 end
 
 
 """
-    run_filter_optimization_channel(f_load::Function, filter_types::AbstractVector, dsp_config::DSPConfig,
+    run_filter_optimization_channel(f_load::Function, filter_types::AbstractVector, dsp_config,
                                     opt_config::PropDict, τ::Unitful.Time, f_evaluate_qc, sg_wl::Unitful.Time,
                                     sg_wl_source::AbstractString; f_title::Function, f_save::Function, f_tablepath::Function)
 
 Filter optimization of one detector. Loads the FEP waveforms and, if enabled in
 `opt_config.crosscheck`, the DEP and SEP waveforms with `f_load(peakname)` (as returned by
 `load_peak_waveforms`), applies the QC, computes qdrift and prepares every set once
-(`prepare_peak_set`), computes the FEP pulse shapes (and, for the single-site A/E selection,
-the DEP current amplitudes `sets.dep.a`) on the windowed waveforms with the SG window length
-`sg_wl`, and runs `optimize_channel_filter` for every filter in `filter_types`, a vector of
+(`prepare_peak_set`), computes the FEP pulse shapes on the windowed waveforms with the SG window
+length `sg_wl`, and runs `optimize_channel_filter` for every filter in `filter_types`, a vector of
 filter `Symbol`s (the keys of a `PropDict`, whose eltype is wider than `Symbol`). Throws an
-`ArgumentError` if `opt_config.crosscheck.aoe_cut` is enabled without `crosscheck.dep`.
+`ArgumentError` if `opt_config.joint_search` is not a `Bool` or `opt_config.ctc_rel_uncertainty`
+is not a `Real` (including a missing key).
 
 Returns a `Dict` from filter to its `(pars, log)`, or to the exception that stopped that
 filter. Errors while loading or preparing a peak set propagate.
 """
-function run_filter_optimization_channel(f_load::Function, filter_types::AbstractVector, dsp_config::DSPConfig,
+function run_filter_optimization_channel(f_load::Function, filter_types::AbstractVector, dsp_config,
         opt_config::PropDict, τ::Unitful.Time, f_evaluate_qc, sg_wl::Unitful.Time, sg_wl_source::AbstractString;
         f_title::Function, f_save::Function, f_tablepath::Function)
-    opt_config.crosscheck.aoe_cut && !opt_config.crosscheck.dep && throw(ArgumentError(
-        "The single-site A/E selection (crosscheck.aoe_cut) is fitted on the DEP and needs crosscheck.dep"))
+    opt_config.joint_search isa Bool || throw(ArgumentError("flt_optimization.joint_search must be a Bool, got $(typeof(opt_config.joint_search))"))
+    opt_config.ctc_rel_uncertainty isa Real || throw(ArgumentError("flt_optimization.ctc_rel_uncertainty must be a Real, got $(typeof(opt_config.ctc_rel_uncertainty))"))
     peaknames = (fep = Symbol(opt_config.peakname),)
     opt_config.crosscheck.dep && (peaknames = merge(peaknames, (dep = DEP_PEAKNAME,)))
     opt_config.crosscheck.sep && (peaknames = merge(peaknames, (sep = SEP_PEAKNAME,)))
     sets = NamedTuple{keys(peaknames)}(map(keys(peaknames)) do key
-        pulse_wvfs = key == :fep || (key == :dep && opt_config.crosscheck.aoe_cut)
+        pulse_wvfs = key == :fep
         set = try
             prepare_peak_set(f_load(peaknames[key]), dsp_config, τ, f_evaluate_qc, opt_config.qc; pulse_wvfs)
         catch e
@@ -584,12 +530,10 @@ function run_filter_optimization_channel(f_load::Function, filter_types::Abstrac
             throw(ErrorException("$(peaknames[key]): $(truncate_error(e))"))
         end
         # the raw presummed waveforms serve only the FEP noise scan, the windowed ones only the
-        # FEP pulse shapes and the DEP A/E of the single-site selection
+        # FEP pulse shapes
         pulse_wvfs && isnothing(set.wvfs_wdw_pz) && throw(ErrorException("$(peaknames[key]): the windowed waveforms for the pulse shapes were not prepared"))
-        if key == :fep
+        if pulse_wvfs
             set
-        elseif pulse_wvfs
-            (prep = set.prep, qdrift = set.qdrift, a = dsp_pulse_shape_flt_optimization((wvfs_pz = set.wvfs_wdw_pz,), dsp_config, sg_wl).a)
         else
             (prep = set.prep, qdrift = set.qdrift)
         end
