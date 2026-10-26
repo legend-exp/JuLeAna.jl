@@ -16,7 +16,10 @@ these columns; they are not read from `jldsp`.
 """
 function read_hit_cal(l200::LegendData, det, runs, e_types::AbstractVector{Symbol}, expressions)
     e_types_uncal = [Symbol(first(split(string(e_type), "_cal"))) for e_type in e_types]
-    cal_funcs = [[ljl_propfunc(l200.par.rpars.ecal[period, run][det][e_type].cal.func) for e_type in e_types_uncal]
+    # `rpars.ecal[period, run]` parses the parameter file of all detectors, once per run
+    cal_funcs = [let pars_det = l200.par.rpars.ecal[period, run][det]
+                     [ljl_propfunc(pars_det[e_type].cal.func) for e_type in e_types_uncal]
+                 end
                  for (period, run) in runs]
     pfs = vcat(reduce(vcat, cal_funcs), [ljl_propfunc(expr) for expr in expressions])
     dsp_columns = Tuple(setdiff(unique(vcat(:timestamp,
