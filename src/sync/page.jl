@@ -44,7 +44,8 @@ check or creation finishes.
 
 `settings` holds the text of every panel field; `errors` the reasons the invalid ones are unusable. `focus` is
 `:panel` or `:tree`, `cursor` indexes `PANEL_ITEMS`, `edit` is the field being edited and `picking` says the
-production list is open. `panel_open` is the wish of the user, `panel_shown` what the last render could fit;
+production list is open. `panel_open` is the wish of the user, `panel_shown` what the last render could fit (it starts `true` until the first
+render); `guarded` is the action waiting for the answer of the discard dialog;
 `panel_rects` and `summary_rect` are the screen cells of the last render, which mouse handling uses.
 
 The page is given a `TaskQueue` and starts its tasks with ids prefixed `sync:`; the host routes events with that
@@ -84,6 +85,7 @@ mutable struct SyncPage
     panel_rects::Vector{Pair{Symbol,Rect}}
     summary_rect::Rect
     picking::Bool
+    guarded::Union{Nothing,Function}
 end
 
 function SyncPage(host::RemoteHost, production::Production, options::Options; queue::TaskQueue = TaskQueue())
@@ -94,7 +96,7 @@ function SyncPage(host::RemoteHost, production::Production, options::Options; qu
                  false, "", nothing,
                  nothing, :none, nothing, nothing, nothing,
                  nothing, nothing, nothing, nothing, nothing,
-                 :tree, 1, nothing, false, true, Dict{Symbol,String}(), "", Pair{Symbol,Rect}[], Rect(1, 1, 0, 0), false)
+                 :tree, 1, nothing, false, true, Dict{Symbol,String}(), "", Pair{Symbol,Rect}[], Rect(1, 1, 0, 0), false, nothing)
     rebuild_tree!(m)
     m.tree.selected = 1
     return revalidate!(m)
@@ -107,7 +109,7 @@ function SyncPage(host::RemoteHost, options::Options; queue::TaskQueue = TaskQue
                  false, "", nothing,
                  nothing, :none, nothing, nothing, nothing,
                  nothing, nothing, nothing, nothing, nothing,
-                 :tree, 1, nothing, true, true, Dict{Symbol,String}(), "", Pair{Symbol,Rect}[], Rect(1, 1, 0, 0), false)
+                 :tree, 1, nothing, true, true, Dict{Symbol,String}(), "", Pair{Symbol,Rect}[], Rect(1, 1, 0, 0), false, nothing)
     return revalidate!(m)
 end
 
@@ -740,7 +742,7 @@ function render_panel(m::SyncPage, area::Rect, buf::Buffer, shown::Bool, wide::B
             editing = m.edit !== nothing && m.edit.field == name
             value = getfield(s, name)
             dim = isempty(value) && !editing
-            shown_text = editing ? m.edit.text * "▏" : !isempty(value) ? value : empty_text(m, name)
+            shown_text = editing ? last(m.edit.text * "▏", max(rect.width - 12, 1)) : !isempty(value) ? value : empty_text(m, name)
             style = haskey(m.errors, name) ? tstyle(:error) : editing ? tstyle(:accent) : dim ? tstyle(:text_dim) : tstyle(:text)
             set_string!(buf, rect.x, rect.y, rpad(FIELD_LABELS[name], 12), focused ? tstyle(:accent, bold = true) : tstyle(:text_dim);
                         max_x = Tachikoma.right(rect))
@@ -977,20 +979,23 @@ after a confirmation.
 function choose_production!(m::SyncPage)
     name = m.productions[m.picker.selected]
     m.picking = false
-    return discard_guard!(m, () -> open_production!(m, name))
+    blocked(m) && return m
+    return discard_guard!(m, () -> "Discard the marks on $(m.production.name)?", () -> open_production!(m, name))
 end
 
 """
-    discard_guard!(page, proceed)
+    discard_guard!(page, question, action; confirm = "Discard")
 
-Call `proceed()`, after a confirmation when the tree has unsaved marks.
+Run `action()` now, or after the user confirms `question()` when the loaded tree has unsaved marks.
 """
-function discard_guard!(m::SyncPage, proceed)
-    m.dirty || return proceed()
-    m.modal = Modal(title = "Unsaved selection", message = "Discard the marks on $(m.production.name)?",
-                    confirm_label = "Discard", cancel_label = "Keep", selected = :cancel)
-    m.modal_kind = :discard
-    m.continuation = proceed
+function discard_guard!(m::SyncPage, question, action; confirm::AbstractString = "Discard")
+    if m.dirty && m.root !== nothing
+        m.guarded = action
+        m.modal = Modal(title = "Unsaved marks", message = question(), confirm_label = confirm, cancel_label = "Keep", selected = :cancel)
+        m.modal_kind = :discard
+    else
+        action()
+    end
     return m
 end
 
@@ -1092,8 +1097,8 @@ function key!(m::SyncPage, e::KeyEvent)
             m.continuation = nothing
         end
         if m.modal_kind == :discard
-            proceed = m.continuation
-            m.continuation = nothing
+            proceed = m.guarded
+            m.guarded = nothing
             m.modal = nothing
             m.modal_kind = :none
             answer == :confirm && proceed()
@@ -1353,10 +1358,13 @@ function task!(m::SyncPage, id::AbstractString, e::TaskEvent)
         end
         return m
     elseif id == "open"
-        m.production, m.root = e.value
-        m.settings.production = m.production.name
+        production, root = e.value
+        # Everything that can fail is built before the page changes, so a refused open leaves the page as it was.
+        settings = deepcopy(m.settings)
+        settings.production = production.name
+        options = Options(settings; from = m.options.from, dry_run = m.options.dry_run, yes = m.options.yes)
+        m.production, m.root, m.settings, m.options = production, root, settings, options
         revalidate!(m)
-        m.options = Options(m.settings; from = m.options.from, dry_run = m.options.dry_run, yes = m.options.yes)
         m.status = ""
         rebuild_tree!(m)
         m.tree.selected = 1

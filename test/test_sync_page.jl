@@ -200,7 +200,7 @@
         @test m.edit.text == "" && occursin("alpha", m.edit.hint) && occursin("beta", m.edit.hint)
     end
 
-    @testset "mouse: fields start an edit, buttons act, the wheel scrolls the picker" begin
+    @testset "mouse: fields start an edit and buttons act" begin
         out = joinpath(mktempdir(), "test.yaml")
         m = model(; out)
         draw(m)
@@ -235,6 +235,59 @@
         @test find_text(draw(m), "Production: $(m.productions[1])") !== nothing
     end
 
+    @testset "a pending bootstrap continuation survives the discard dialog" begin
+        m = model()
+        draw(m)
+        sync_key!(m, KeyEvent(' '))
+        marker = () -> nothing
+        m.continuation = marker
+        tab_to!(m, :production)
+        sync_key!(m, KeyEvent(:enter))
+        settle!(m)
+        sync_key!(m, KeyEvent(:enter))
+        @test m.modal_kind == :discard && m.continuation === marker
+        sync_key!(m, KeyEvent(:enter))
+        @test m.continuation === marker && m.guarded === nothing
+    end
+
+    @testset "an invalid setting or a failed open leaves the page unchanged" begin
+        m = model()
+        draw(m)
+        tab_to!(m, :production)
+        sync_key!(m, KeyEvent(:enter))
+        settle!(m)
+        sync_key!(m, KeyEvent(:escape))
+        tab_to!(m, :jobs)
+        sync_key!(m, KeyEvent(:enter))
+        sync_key!(m, KeyEvent(:backspace))
+        type!(m, "x")
+        sync_key!(m, KeyEvent(:enter))
+        production, root, options, settings_production = m.production, m.root, m.options, m.settings.production
+        open_picker!(m)
+        sync_key!(m, KeyEvent(:enter))
+        @test !m.picking && m.running == 0 && occursin("Jobs must be an integer", m.status)
+        @test m.production === production && m.root === root && m.options === options && m.settings.production == settings_production
+        # An open that fails in the task changes nothing either.
+        change_setting!(m, :jobs, "0")
+        m.options = Options("local", joinpath(FIXTURE_ROOT, "nosuch"), m.options.local_root, nothing, "test", m.options.out, nothing, false,
+                            false)
+        options = m.options
+        open_picker!(m)
+        sync_key!(m, KeyEvent(:enter))
+        settle!(m)
+        @test m.modal_kind == :error && m.production === production && m.root === root && m.options === options
+        @test m.settings.production == settings_production
+    end
+
+    @testset "a long edit keeps the cursor visible" begin
+        m = model()
+        draw(m)
+        tab_to!(m, :selection)
+        sync_key!(m, KeyEvent(:enter))
+        type!(m, "x"^200 * "tail.yaml")
+        @test find_text(draw(m), "tail.yaml▏") !== nothing
+    end
+
     @testset "choosing a production asks before dropping unsaved marks" begin
         m = model()
         draw(m)
@@ -249,6 +302,7 @@
         @test m.modal_kind == :none && m.running == 0 && sync_dirty(m)
         sync_key!(m, KeyEvent(:enter))
         sync_key!(m, KeyEvent(:enter))
+        @test m.guarded !== nothing
         sync_key!(m, KeyEvent(:left))
         sync_key!(m, KeyEvent(:enter))   # Discard
         @test m.running == 1
