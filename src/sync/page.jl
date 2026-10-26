@@ -1,7 +1,7 @@
 # This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
 
 const PANEL_FIELDS = SETTINGS_FIELDS
-const PANEL_BUTTONS = (:save, :estimate, :transfer)
+const PANEL_BUTTONS = (:connect, :load, :save, :estimate, :transfer)
 const PANEL_ITEMS = (PANEL_FIELDS..., PANEL_BUTTONS...)
 const FIELD_LABELS = (host = "Host", remote_root = "Remote root", production = "Production", local_root = "Local root",
                       mount_root = "Mount root", staging = "Staging", jobs = "Jobs", selection = "Selection")
@@ -25,11 +25,13 @@ end
 """
     SyncPage(host, production, options; queue = TaskQueue())
     SyncPage(host, options; queue = TaskQueue())
+    SyncPage(settings, queue; host_factory = SSHHost)
 
-The state of the sync screen: a settings panel above the production tree. The second form has no production
-yet: [`sync_start!`](@ref) lists the productions of `options.remote_root` in the background, and choosing one
-(Enter on the Production field opens the list) builds the production and its tree. `production` and `root` are
-`nothing` until then.
+The state of the sync screen: a settings panel above the production tree. The first form opens `production`
+on `host`. The second has a host but no production yet, and the third has no connection at all (`host`,
+`options`, `production` and `root` are `nothing`): [`sync_start!`](@ref) connects to `host_factory(settings.host)`
+in the background, lists the productions of the remote root and opens the one the settings name, or the
+picker. The first two forms reconnect through a factory that returns their host.
 
 The `Node` tree is the source of truth; the `TreeView` is
 rebuilt from it whenever anything changes, because `TreeView` caches its
@@ -38,9 +40,10 @@ flattened rows and mutating its nodes in place would leave that cache stale.
 Which nodes are open lives in `collapsed`, not in the `TreeNode`s, for the same
 reason. `pending` holds the remote paths of listings in flight.
 
-`extracting` is set while the remote helper reduces files, `environment` caches a
-ready helper environment, and `continuation` is what to do once an environment
-check or creation finishes.
+`environment` caches a ready helper environment, and `continuation` is what to do once an environment
+check or creation finishes. `step` is the latest progress reading of the running operation and `step_started`
+the time it began; `connecting` says a Connect task runs, and `suggested` that the production named in the
+settings came from outside the panel, so a production missing on the host is dropped instead of reported.
 
 `settings` holds the text of every panel field; `errors` the reasons the invalid ones are unusable. `focus` is
 `:panel` or `:tree`, `cursor` indexes `PANEL_ITEMS`, `edit` is the field being edited and `picking` says the
@@ -52,9 +55,9 @@ The page is given a `TaskQueue` and starts its tasks with ids prefixed `sync:`; 
 prefix to [`sync_task!`](@ref). `running` counts the page's own unanswered tasks, because the queue may be shared.
 """
 mutable struct SyncPage
-    host::RemoteHost
+    host::Union{Nothing,RemoteHost}
     production::Union{Nothing,Production}
-    options::Options
+    options::Union{Nothing,Options}
     settings::SyncSettings
     running::Int
     root::Union{Nothing,Node}
@@ -69,10 +72,8 @@ mutable struct SyncPage
     modal_kind::Symbol
     input::Union{Nothing,TextInput}
     estimate::Union{Nothing,Estimate}
-    progress::Union{Nothing,Progress}
     productions::Union{Nothing,Vector{String}}
     picker::Union{Nothing,SelectableList}
-    extracting::Union{Nothing,ExtractProgress}
     environment::Union{Nothing,EnvironmentStatus}
     continuation::Union{Nothing,Function}
     focus::Symbol
@@ -86,42 +87,79 @@ mutable struct SyncPage
     summary_rect::Rect
     picking::Bool
     guarded::Union{Nothing,Function}
+    host_factory::Any
+    step::Union{Nothing,StepProgress}
+    step_started::Float64
+    connecting::Bool
+    suggested::Bool
+end
+
+# Every constructor starts from the same blank state; `root` and `panel_open` are what they differ in.
+function blank_page(host, production, options, settings, root, queue, host_factory, panel_open)
+    return SyncPage(host, production, options, settings, 0, root, Set{String}(), Set{String}(),
+                    # Replaced by rebuild_tree! when there is a production: that needs the page to exist.
+                    TreeView(TreeNode("")), queue, false, "", nothing, nothing, :none, nothing, nothing, nothing, nothing, nothing,
+                    nothing, :tree, 1, nothing, panel_open, true, Dict{Symbol,String}(), "", Pair{Symbol,Rect}[], Rect(1, 1, 0, 0), false,
+                    nothing, host_factory, nothing, 0.0, false, false)
 end
 
 function SyncPage(host::RemoteHost, production::Production, options::Options; queue::TaskQueue = TaskQueue())
-    m = SyncPage(host, production, options, SyncSettings(options), 0, production_tree(host, production),
-                 Set{String}(), Set{String}(),
-                 # Replaced immediately: rebuild_tree! needs the model to exist.
-                 TreeView(TreeNode("")), queue,
-                 false, "", nothing,
-                 nothing, :none, nothing, nothing, nothing,
-                 nothing, nothing, nothing, nothing, nothing,
-                 :tree, 1, nothing, false, true, Dict{Symbol,String}(), "", Pair{Symbol,Rect}[], Rect(1, 1, 0, 0), false, nothing)
+    m = blank_page(host, production, options, SyncSettings(options), production_tree(host, production), queue, _ -> host, false)
     rebuild_tree!(m)
     m.tree.selected = 1
     return revalidate!(m)
 end
 
 function SyncPage(host::RemoteHost, options::Options; queue::TaskQueue = TaskQueue())
-    m = SyncPage(host, nothing, options, SyncSettings(options), 0, nothing,
-                 Set{String}(), Set{String}(),
-                 TreeView(TreeNode("")), queue,
-                 false, "", nothing,
-                 nothing, :none, nothing, nothing, nothing,
-                 nothing, nothing, nothing, nothing, nothing,
-                 :tree, 1, nothing, true, true, Dict{Symbol,String}(), "", Pair{Symbol,Rect}[], Rect(1, 1, 0, 0), false, nothing)
-    return revalidate!(m)
+    return revalidate!(blank_page(host, nothing, options, SyncSettings(options), nothing, queue, _ -> host, true))
+end
+
+function SyncPage(settings::SyncSettings, queue::TaskQueue; host_factory = SSHHost)
+    return revalidate!(blank_page(nothing, nothing, nothing, settings, nothing, queue, host_factory, true))
 end
 
 """
     sync_start!(page::SyncPage)::SyncPage
 
-Start the work the page needs on its first display: without a production, list the productions. Calling it again
-while the listing runs or after it arrived does nothing.
+Connect when no production is open and nothing is listed or running, and the settings are valid; otherwise leave the
+first reason in the status line. Calling it again while the connection is made or after it was made does nothing.
 """
 function sync_start!(m::SyncPage)
-    m.production === nothing && m.productions === nothing && m.running == 0 && request_productions!(m)
+    (m.root === nothing && m.productions === nothing && m.running == 0) || return m
+    blocked(m) && return m
+    return start_connect!(m)
+end
+
+"""
+    start_connect!(page::SyncPage)::SyncPage
+
+Connect in the background: build the host with the page's `host_factory`, check that rsync is installed, derive the
+[`Options`](@ref) from a copy of the settings and list the productions. The result is handled by [`sync_task!`](@ref).
+"""
+function start_connect!(m::SyncPage)
+    m.connecting && (m.status = "busy: connecting to $(m.settings.host); change the setting again when it is done"; return m)
+    s = copy(m.settings)
+    factory = m.host_factory
+    m.connecting = true
+    m.status = "connecting to $(s.host)…"
+    spawn!(m, :connect) do
+        host = factory(s.host)
+        check_rsync()
+        options = Options(s)
+        return (host, options, list_productions(host, options.remote_root))
+    end
     return m
+end
+
+"""
+    connect!(page::SyncPage)::SyncPage
+
+The Connect button: refuse while a setting is invalid, ask before dropping unsaved marks, then
+[`start_connect!`](@ref).
+"""
+function connect!(m::SyncPage)
+    blocked(m) && return m
+    return discard_guard!(m, () -> "Discard the marks on $(m.production.name)?", () -> start_connect!(m))
 end
 
 """
@@ -134,6 +172,17 @@ function spawn!(f, m::SyncPage, id)
     m.running += 1
     return spawn_task!(f, m.tasks, Symbol("sync:", id))
 end
+
+# The suffix of an error message that names the step it happened in.
+step_note(p::Union{Nothing,StepProgress}) = p === nothing ? "" : "\n(in step \"$(p.step)\", $(p.index) of $(p.count))"
+
+"""
+    report_to(page::SyncPage)
+
+The step callback of an operation started on the page: it queues each [`StepProgress`](@ref) as a `sync:step`
+event, so the page's own state is only touched on its thread.
+"""
+report_to(m::SyncPage) = (queue = m.tasks; p -> put!(queue.channel, TaskEvent(Symbol("sync:step"), p)))
 
 """
     request_productions!(m::SyncPage)::SyncPage
@@ -341,8 +390,9 @@ function request_detectors!(m::SyncPage, node::Node)
     helper = m.options.helper
     jobs = m.options.jobs
     run = node.parent
+    steps = detector_steps(report_to(m), node)
     spawn!(m, "detectors:" * node.remote_path) do
-        return (node, detector_nodes(host, helper, run; jobs))
+        return (node, detector_nodes(host, helper, run; jobs, steps))
     end
     m.status = node.whole_files ? "listing the detector files of $(run.label)…" :
                "inspecting the files of $(run.label)…"
@@ -395,22 +445,12 @@ function run_estimate!(m::SyncPage, selection::Selection, confirm::Bool)
     production = m.production
     helper = m.options.helper
     jobs = m.options.jobs
+    report = report_to(m)
     m.modal_kind = :estimating
     m.status = "estimating…"
     spawn!(m, :estimate) do
-        estimate = apply!(host, production, selection; dry_run = true, helper, jobs)
-        staging = isempty(selection.extract) ? nothing : staging_dir(host, helper)
-        # The staging directory may not exist yet; the estimate creates nothing and
-        # asks about the file system of its nearest existing ancestor.
-        free = nothing
-        if staging !== nothing
-            existing = staging
-            while !dir_exists(host, existing)
-                existing = dirname(existing)
-            end
-            free = free_bytes(host, existing)
-        end
-        return (estimate, confirm, staging, free)
+        result = estimate_selection(host, production, selection; helper, jobs, report)
+        return (result.estimate, confirm, result.staging, result.free)
     end
     return m
 end
@@ -418,8 +458,8 @@ end
 """
     start_transfer!(m::SyncPage)::SyncPage
 
-Run the transfer in the background. The progress callbacks run on that task and
-never touch the model: they push a `TaskEvent` like every other result.
+Run the transfer in the background. The step report runs on that task and
+never touches the model: it pushes a `TaskEvent` like every other result.
 """
 function start_transfer!(m::SyncPage)
     host = m.host
@@ -427,16 +467,12 @@ function start_transfer!(m::SyncPage)
     helper = m.options.helper
     jobs = m.options.jobs
     selection = Selection(production, m.options.host, m.root)
-    queue = m.tasks
+    report = report_to(m)
     m.modal = Modal(title = "Transferring", message = "starting…",
                     confirm_label = "", cancel_label = "")
     m.modal_kind = :transfer
-    m.progress = Progress(0, 0.0, "", "")
-    m.extracting = isempty(selection.extract) ? nothing : ExtractProgress(0, 0, 0)
     spawn!(m, :transfer) do
-        return apply!(host, production, selection; helper, jobs,
-                      progress = reading -> put!(queue.channel, TaskEvent(Symbol("sync:progress"), reading)),
-                      extract_progress = reading -> put!(queue.channel, TaskEvent(Symbol("sync:extract_progress"), reading)))
+        return apply!(host, production, selection; helper, jobs, report)
     end
     return m
 end
@@ -518,7 +554,9 @@ end
 Write the selection to the configured path and return it.
 """
 function save!(m::SyncPage)
-    path = save_selection(m.options.out, Selection(m.production, m.options.host, m.root))
+    path = selection_path(m.settings)
+    isempty(path) && (m.status = "choose a production before saving"; return path)
+    save_selection(path, Selection(m.production, m.settings.host, m.root))
     m.saved = path
     m.dirty = false
     m.status = ""
@@ -591,7 +629,7 @@ function details(m::SyncPage)
              "per-detector tiers: space/l mark a detector's files",
              "enter expand/collapse   mouse: click, wheel",
              "Tab settings and buttons   p panel",
-             "s save   e estimate   t sync   q quit"])
+             "c connect   o load   s save   e estimate   t sync   q quit"])
     return Paragraph(join(lines, "\n"); block = Block(title = "Details"), wrap = word_wrap)
 end
 
@@ -604,7 +642,7 @@ tells the files apart (the name under the default selection directory), because
 `StatusBar` gives the left span priority and clips the right one away.
 """
 function status_bar(m::SyncPage)
-    out = m.options.out
+    out = selection_path(m.settings)
     name = startswith(out, default_selection_dir() * "/") ?
            relpath(out, default_selection_dir()) : basename(out)
     return StatusBar(left = [Span(format_estimate(running_estimate(m.root)), tstyle(:text_bright)),
@@ -627,7 +665,26 @@ function render_prompt(m::SyncPage, area::Rect, buf::Buffer)
     return nothing
 end
 
-panel_rows(wide::Bool) = wide ? 6 : length(PANEL_FIELDS) + 2
+# The buttons left to right as (button, row, column) in rows of at most `width` columns, a button moving to the next row
+# when it would not fit.
+function button_cells(width::Integer)
+    cells = Tuple{Symbol,Int,Int}[]
+    row = 0
+    x = 0
+    for button in PANEL_BUTTONS
+        w = textwidth(BUTTON_LABELS[button]) + 4
+        if x > 0 && x + w > width
+            row += 1
+            x = 0
+        end
+        push!(cells, (button, row, x))
+        x += w + 1
+    end
+    return cells
+end
+
+# The rows of the panel's inner area: the field rows, the button rows and the message row.
+panel_rows(wide::Bool, width::Integer) = (wide ? 4 : length(PANEL_FIELDS)) + maximum(c -> c[2], button_cells(width)) + 2
 
 """
     panel_rects(inner::Rect, wide::Bool)::Vector{Pair{Symbol,Rect}}
@@ -657,11 +714,8 @@ function panel_rects(inner::Rect, wide::Bool)
         end
         row = length(PANEL_FIELDS)
     end
-    x = 0
-    for button in PANEL_BUTTONS
-        width = textwidth(BUTTON_LABELS[button]) + 4
-        cell(row, x, width, button)
-        x += width + 1
+    for (button, button_row, x) in button_cells(w)
+        cell(row + button_row, x, textwidth(BUTTON_LABELS[button]) + 4, button)
     end
     return rects
 end
@@ -690,16 +744,41 @@ function blocked(m::SyncPage)
     return true
 end
 
+const RELOAD_FIELDS = (:host, :remote_root, :production, :local_root, :mount_root)
+
 """
     change_setting!(page, field, text)
 
-Store a committed value. A value that is invalid stays in the field and is shown with its reason.
+Store a committed value. A value that is invalid stays in the field and is shown with its reason. The settings the
+connection or the open production were built from (`RELOAD_FIELDS`) reconnect through [`reload_for!`](@ref), after
+a confirmation when the tree has unsaved marks; Host and Remote root connect even when no tree is loaded.
 """
 function change_setting!(m::SyncPage, field::Symbol, text::AbstractString)
-    setfield!(m.settings, field, String(text))
-    revalidate!(m)
-    refresh_options!(m)
-    return m
+    getfield(m.settings, field) == text && return m
+    apply = function ()
+        setfield!(m.settings, field, String(text))
+        revalidate!(m)
+        field in (:host, :remote_root) || (field in RELOAD_FIELDS && m.host !== nothing) ? reload_for!(m, field) : refresh_options!(m)
+        return nothing
+    end
+    field in RELOAD_FIELDS || return (apply(); m)
+    return discard_guard!(m, () -> "Discard the marks on $(m.production.name)?", apply)
+end
+
+"""
+    reload_for!(page, field)
+
+A setting that the connection or the production was built from changed: forget the productions of the old connection
+and connect again, which reopens the production when the settings name one. Invalid settings put the first reason in
+the status line instead.
+"""
+function reload_for!(m::SyncPage, field::Symbol)
+    m.productions = nothing
+    m.picker = nothing
+    m.picking = false
+    blocked(m) && return m
+    m.suggested = false
+    return start_connect!(m)
 end
 
 """
@@ -772,20 +851,22 @@ function render_picker(m::SyncPage, area::Rect, buf::Buffer)
     return nothing
 end
 
-# The bottom row: the status alone without a tree, else the running estimate or the transfer gauge.
+# The bottom row: the current step of a long operation (a gauge, or a spinner and the elapsed time when its size is unknown),
+# else the status alone without a tree, else the running estimate and the selection file.
 function render_progress(m::SyncPage, area::Rect, buf::Buffer)
-    if m.root === nothing
+    p = m.step
+    if m.root === nothing && p === nothing
         set_string!(buf, area.x, area.y, isempty(m.status) ? "Connect (c) lists the productions" : m.status, tstyle(:text);
                     max_x = Tachikoma.right(area))
-    elseif m.progress === nothing
+    elseif p === nothing
         render(status_bar(m), area, buf)
+    elseif p.total === nothing
+        elapsed = round(Int, time() - m.step_started)
+        glyph = Tachikoma.SPINNER_BRAILLE[mod1(floor(Int, 8 * time()), length(Tachikoma.SPINNER_BRAILLE))]
+        text = string(format_step(p), "  ", glyph, " ", elapsed ÷ 60, ":", lpad(elapsed % 60, 2, '0'))
+        set_string!(buf, area.x, area.y, text, tstyle(:accent); max_x = Tachikoma.right(area))
     else
-        x = m.extracting
-        render(Gauge(x === nothing ? m.progress.fraction : (x.total == 0 ? 0.0 : x.done / x.total);
-                     label = x === nothing ?
-                             string(format_bytes(m.progress.bytes), "  ", m.progress.rate, "  ETA ", m.progress.eta) :
-                             string("extracting ", x.done, "/", x.total, " files  ", format_bytes(x.bytes))),
-               area, buf)
+        render(Gauge(p.total == 0 ? 0.0 : p.done / p.total; label = format_step(p)), area, buf)
     end
     return nothing
 end
@@ -798,10 +879,11 @@ the terminal, so the future Juleana app can host this as one screen.
 """
 function render_sync(m::SyncPage, area::Rect, buf::Buffer)
     wide = area.width >= WIDE_PANEL
-    shown = m.panel_open && area.height >= panel_rows(wide) + 2 + MIN_BODY + 1       # the progress row is the +1
+    rows_needed = panel_rows(wide, area.width - 2)
+    shown = m.panel_open && area.height >= rows_needed + 2 + MIN_BODY + 1       # the progress row is the +1
     m.panel_shown = shown
     shown || m.focus != :panel || (m.focus = :tree)
-    rows = split_layout(Layout(Vertical, Constraint[Fixed(shown ? panel_rows(wide) + 2 : 1), Fill(1), Fixed(1)]), area)
+    rows = split_layout(Layout(Vertical, Constraint[Fixed(shown ? rows_needed + 2 : 1), Fill(1), Fixed(1)]), area)
     render_panel(m, rows[1], buf, shown, wide)
     if m.root === nothing
         render(Paragraph(m.running > 0 ? "working…" : "No production is open. Choose one with Enter on the Production field.";
@@ -875,6 +957,10 @@ function activate!(m::SyncPage, name::Symbol)
     name === :production && return open_picker!(m)
     if name in PANEL_FIELDS
         m.edit = FieldEdit(name, getfield(m.settings, name), "")
+    elseif name === :connect
+        connect!(m)
+    elseif name === :load
+        load_selection!(m)
     elseif name === :save
         needs_production!(m) || save!(m)
     elseif name === :estimate
@@ -893,7 +979,7 @@ Save, Estimate and Transfer call it, so a page without a production never reache
 """
 function needs_production!(m::SyncPage)
     m.production === nothing || return false
-    m.status = "Open a production first (Enter on Production)"
+    m.status = m.host === nothing ? "Connect first (c, or Enter on Production)" : "Open a production first (Enter on Production)"
     return true
 end
 
@@ -945,6 +1031,7 @@ function open_picker!(m::SyncPage)
         m.status = "busy: " * (isempty(m.status) ? "a background task is running" : m.status)
         return m
     end
+    m.host === nothing && return connect!(m)
     if m.productions === nothing || isempty(m.productions)
         request_productions!(m)
         return m
@@ -995,6 +1082,40 @@ function discard_guard!(m::SyncPage, question, action; confirm::AbstractString =
         m.modal_kind = :discard
     else
         action()
+    end
+    return m
+end
+
+"""
+    load_selection!(page)
+
+The Load selection button: read the file at [`selection_path`](@ref), asking first when the tree has unsaved marks.
+"""
+function load_selection!(m::SyncPage)
+    needs_production!(m) && return m
+    blocked(m) && return m
+    path = selection_path(m.settings)
+    isfile(path) || (m.status = "no selection file $path"; return m)
+    return discard_guard!(m, () -> "Replace the marks on $(m.production.name) with\n$path?", () -> start_load!(m, path);
+                          confirm = "Replace")
+end
+
+"""
+    start_load!(page, path)
+
+Apply the selection file `path` to a fresh tree in the background. The page swaps its own tree for the fresh one only
+when the whole file applied, so a failing load leaves no partial marks.
+"""
+function start_load!(m::SyncPage, path::AbstractString)
+    host, production, options = m.host, m.production, m.options
+    report = report_to(m)
+    m.status = "loading $path…"
+    spawn!(m, :load) do
+        selection = load_selection(path, production)
+        fresh = production_tree(host, production)
+        apply_selection!(host, production, fresh, selection; helper = options.helper, jobs = options.jobs,
+                         steps = Steps(["listing directories"], report))
+        return (fresh, String(path))
     end
     return m
 end
@@ -1097,11 +1218,11 @@ function key!(m::SyncPage, e::KeyEvent)
             m.continuation = nothing
         end
         if m.modal_kind == :discard
-            proceed = m.guarded
+            action = m.guarded
             m.guarded = nothing
             m.modal = nothing
             m.modal_kind = :none
-            answer == :confirm && proceed()
+            answer == :confirm && action()
             return m
         end
         m.modal = nothing
@@ -1116,9 +1237,9 @@ function key!(m::SyncPage, e::KeyEvent)
     e.key in (:tab, :backtab) && return move_focus!(m, e.key == :tab ? 1 : -1)
     if m.focus == :panel
         panel_key!(m, e) && return m
-        (e.key == :char && e.char in ('e', 't', 's', 'p')) || return m     # the tree keys need the tree focus
+        (e.key == :char && e.char in ('e', 't', 's', 'p', 'c', 'o')) || return m     # the tree keys need the tree focus
     end
-    m.root === nothing && e.key == :char && e.char in (' ', 'l', 'n', 'x', 's', 'e', 't') && (needs_production!(m); return m)
+    m.root === nothing && e.key == :char && e.char in (' ', 'l', 'n', 'x', 's', 'e', 't', 'o') && (needs_production!(m); return m)
 
     node = current_node(m)
 
@@ -1179,6 +1300,10 @@ function key!(m::SyncPage, e::KeyEvent)
         blocked(m) || open_estimate!(m; confirm = true)
     elseif e.char == 's'
         save!(m)
+    elseif e.char == 'c'
+        connect!(m)
+    elseif e.char == 'o'
+        load_selection!(m)
     elseif e.char == 'p'
         m.panel_open = !m.panel_open
         m.panel_open || m.focus != :panel || (m.focus = :tree)
@@ -1274,7 +1399,7 @@ function sync_task!(m::SyncPage, e::TaskEvent)
     startswith(String(e.id), "sync:") || return false
     return shielded(m, true) do
         id = chopprefix(String(e.id), "sync:")
-        if !(id in ("progress", "extract_progress"))
+        if id != "step"
             m.running > 0 || error("the result :$id arrived while no sync task runs; a task id was mixed up")
             m.running -= 1
         end
@@ -1324,7 +1449,10 @@ function task!(m::SyncPage, id::AbstractString, e::TaskEvent)
     if startswith(id, "detectors:")
         path = chopprefix(id, "detectors:")
         delete!(m.pending, path)
-        e.value isa Exception && return show_error!(m, e.value)
+        failed = m.step
+        m.step = nothing
+        e.value isa Exception &&
+            return show_error!(m, failed === nothing ? e.value : ErrorException(sprint(showerror, e.value) * step_note(failed)))
         node, children = e.value
         attach_detectors!(node, children)
         delete!(m.collapsed, path)
@@ -1337,13 +1465,49 @@ function task!(m::SyncPage, id::AbstractString, e::TaskEvent)
     end
 
     if e.value isa Exception
-        m.progress = nothing
-        m.extracting = nothing
+        failed = m.step
+        id == "connect" && (m.connecting = false)
+        m.step = nothing
         m.continuation = nothing
+        text = sprint(showerror, e.value) * step_note(failed)
         id == "productions" && (m.productions = String[])
-        show_error!(m, e.value)
+        show_error!(m, ErrorException(text))
         # The dialog clears the status; once it is dismissed the page says why it has no production.
         id == "productions" && (m.status = "no productions found in $(m.options.remote_root)")
+        return m
+    end
+
+    if id == "step"
+        (m.step === nothing || m.step.step != e.value.step) && (m.step_started = time())
+        m.step = e.value
+        return m
+    elseif id == "connect"
+        m.connecting = false
+        m.host, m.options, m.productions = e.value
+        name = m.settings.production
+        if isempty(name)
+            return open_picker!(m)
+        elseif name in m.productions
+            return open_production!(m, name)
+        elseif m.suggested
+            m.settings.production = ""
+            m.suggested = false
+            revalidate!(m)
+            m.status = "$name is not a production on $(m.settings.host)"
+            return open_picker!(m)
+        end
+        return show_error!(m, ArgumentError("production $name is not on $(m.options.host) below $(m.options.remote_root)"))
+    elseif id == "load"
+        fresh, path = e.value
+        m.step = nothing
+        m.root = fresh
+        empty!(m.collapsed)
+        empty!(m.pending)
+        m.dirty = false
+        m.saved = path
+        m.status = "loaded $path"
+        rebuild_tree!(m)
+        m.tree.selected = 1
         return m
     end
 
@@ -1365,6 +1529,12 @@ function task!(m::SyncPage, id::AbstractString, e::TaskEvent)
         options = Options(settings; from = m.options.from, dry_run = m.options.dry_run, yes = m.options.yes)
         m.production, m.root, m.settings, m.options = production, root, settings, options
         revalidate!(m)
+        m.step = nothing
+        m.suggested = false
+        m.dirty = false
+        m.saved = nothing
+        empty!(m.collapsed)
+        empty!(m.pending)
         m.status = ""
         rebuild_tree!(m)
         m.tree.selected = 1
@@ -1389,6 +1559,7 @@ function task!(m::SyncPage, id::AbstractString, e::TaskEvent)
     if id == "estimate"
         estimate, confirm, staging, free = e.value
         m.estimate = estimate
+        m.step = nothing
         m.modal = Modal(title = "Estimate",
                         message = string(format_estimate(estimate), "\n",
                                          "from ", m.options.host, ":", m.production.remote_root, "\n",
@@ -1402,16 +1573,8 @@ function task!(m::SyncPage, id::AbstractString, e::TaskEvent)
         m.modal_kind = :estimate
         m.status = ""
         return m
-    elseif id == "progress"
-        m.extracting = nothing
-        m.progress = e.value
-        return m
-    elseif id == "extract_progress"
-        m.extracting = e.value
-        return m
     elseif id == "transfer"
-        m.progress = nothing
-        m.extracting = nothing
+        m.step = nothing
         refresh_local_state!(m)
         rebuild_tree!(m)
         return open_message!(m, "Transfer complete", summary_text(e.value))

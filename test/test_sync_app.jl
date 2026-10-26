@@ -163,4 +163,24 @@
         @test app.page.running == 1
         app.queue.active[] -= 1
     end
+    @testset "SyncApp starts the connection" begin
+        settings = SyncSettings(; host = "local", remote_root = FIXTURE_ROOT, production = "test", local_root = mktempdir())
+        app = SyncApp(SyncPage(settings, TaskQueue(); host_factory = _ -> h))
+        sync_start!(app.page)
+        @test app.page.running == 1
+        settle!(app)                                     # drains until no task runs and no event waits (bounded at 30 s)
+        @test app.page.running == 0 && app.page.production !== nothing && app.page.production.name == "test"
+    end
+
+    @testset "the tick timer starts and stops with the app" begin
+        settings = SyncSettings(; host = "local", remote_root = FIXTURE_ROOT, local_root = mktempdir())
+        app = SyncApp(SyncPage(settings, TaskQueue(); host_factory = _ -> h))
+        @test app.timer === nothing
+        Sync.start!(app)
+        @test app.timer !== nothing
+        Sync.stop!(app)
+        @test app.timer === nothing
+        settle!(app)                                     # a tick that was already queued is answered by update!
+    end
+
 end

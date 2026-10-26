@@ -99,7 +99,7 @@
         settle!(m)
         @test m.modal_kind == :message
         @test occursin("extracted 2 files, 2 groups", m.modal.message)
-        @test m.extracting === nothing && m.progress === nothing
+        @test m.step === nothing
         run_dir = joinpath(m.production.local_root, "xprod", "generated", "tier", "jldsp", "cal", "p18", "r000")
         @test length(readdir(run_dir)) == 2
     end
@@ -185,7 +185,7 @@
         timedwait(() -> m.tasks.active[] == 0 && isready(m.tasks.channel), 60.0) == :ok ||
             error("the environment check did not finish within 60 s")
         drain_tasks!(e -> (push!(events, e); update!(m, e)), m.tasks)
-        @test [e.id for e in events] == [Symbol("sync:environment")]
+        @test [e.id for e in events if e.id != Symbol("sync:step")] == [Symbol("sync:environment")]
         (m.tasks.active[] > 0 || isready(m.tasks.channel)) && settle!(m)
         @test m.modal_kind == :none && isempty(m.status)
         @test any(c -> c.label == "B00000C", current_node(m).children)
@@ -238,14 +238,5 @@
         settle!(m)
         @test continued[] && m.modal === nothing && environment_ready(m.environment)
         @test isfile(joinpath(env, "Project.toml"))
-    end
-
-    @testset "the gauge shows the extracting phase" begin
-        m = model()
-        m.progress = Progress(0, 0.0, "", "")
-        m.extracting = ExtractProgress(3, 20, 4096)
-        row = row_text(draw(m), 30)
-        @test occursin("extracting 3/20 files", row)
-        @test occursin("4.0 K", row)
     end
 end

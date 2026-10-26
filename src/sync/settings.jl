@@ -119,6 +119,8 @@ Base.@kwdef mutable struct SyncSettings
     hosts_file::String = PACKAGED_HOSTS_FILE
 end
 
+Base.copy(s::SyncSettings) = SyncSettings(; (name => getfield(s, name) for name in fieldnames(SyncSettings))...)
+
 """
     user_settings()::SyncSettings
 

@@ -150,10 +150,13 @@ end
 
 Entry point of the `juleana-sync` app and of `julia -m JuLeAna.Sync`; run the tool and return the
 process exit code. Every failure is thrown; a nonzero return means the tool declined the request, not
-that it hid an error.
+that it hid an error. Without `--from` the screen opens with the fields filled from the arguments, whether or not
+they are valid, and connects at once; with `--from` the arguments must be valid.
 """
 function (@main)(args::AbstractVector{<:AbstractString})
-    return main(parse_options(args))
+    (; settings, from, dry_run, yes) = parse_settings(args)
+    from === nothing && return run_tui(settings)
+    return main(Options(settings; from, dry_run, yes, cli = true))
 end
 
 function main(options::Options, host::RemoteHost = SSHHost(options.host))

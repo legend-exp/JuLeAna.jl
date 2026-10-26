@@ -108,6 +108,14 @@ function run_tui(options::Options, host::RemoteHost)
     return 0
 end
 
+"""
+    run_tui(settings::SyncSettings)::Int
+
+Open the screen with the fields filled from `settings` and connect when it starts. Invalid settings are shown
+with their reasons instead of stopping the start.
+"""
+run_tui(settings::SyncSettings) = (run_themed(SyncApp(SyncPage(settings, TaskQueue()))); 0)
+
 # The screen uses the theme of juleana: two calls read the saved name; the previous theme is restored afterwards.
 function run_themed(model)
     previous = Tachikoma.theme()

@@ -229,7 +229,7 @@
         @test occursin("LEGEND_DATA_CONFIG=", m.modal.message)
         @test isfile(joinpath(m.production.local_root, "test", "config.json"))
         @test isfile(joinpath(m.production.local_root, "test", "config_local.yaml"))
-        @test m.progress === nothing
+        @test m.step === nothing
         # Local state is refreshed, so the details pane no longer says missing.
         update!(m, KeyEvent(:enter))       # close the summary
         @test m.modal_kind == :none
@@ -252,15 +252,6 @@
         settle!(m)
         @test m.modal_kind == :message
         @test occursin("transferred", m.modal.message)
-    end
-
-    @testset "a progress reading drives the gauge" begin
-        m = model()
-        m.progress = Progress(4096, 0.5, "1.2MB/s", "0:00:03")
-        row = row_text(draw(m), 30)
-        @test occursin("4.0 K", row)
-        @test occursin("ETA 0:00:03", row)
-        @test occursin('█', row)
     end
 
     @testset "an error opens a modal and the tool stays usable" begin
@@ -422,10 +413,9 @@
         @test m.production.name == "temp/jl-dev"
 
         # The tree screen behaves as before: save writes the chosen file.
-        m.options = Options("local", FIXTURE_ROOT, local_root, nothing, "temp/jl-dev",
-                            joinpath(mktempdir(), "sel.yaml"), nothing, false, false)
+        m.settings.selection = joinpath(mktempdir(), "sel.yaml")
         update!(m, KeyEvent('s'))
-        @test load_selection(m.options.out, m.production).production == "temp/jl-dev"
+        @test load_selection(m.settings.selection, m.production).production == "temp/jl-dev"
     end
 
     @testset "picker: arrows move, errors open the modal" begin
@@ -445,11 +435,11 @@
         @test m4.modal_kind == :error
         @test find_text(draw(m4), "not a directory") !== nothing
 
-        # After the error is dismissed the page says so and opening the picker again retries.
+        # The listing failed: after the error is dismissed the page asks to connect again, and opening the picker retries.
         update!(m4, KeyEvent(:escape))
-        @test m4.modal === nothing
+        @test m4.modal === nothing && m4.root === nothing
         tb = draw(m4)
-        @test find_text(tb, "no productions found") !== nothing
+        @test find_text(tb, "Connect (c) lists the productions") !== nothing
         @test find_text(tb, "working…") === nothing
         m4.options = options
         open_picker!(m4)

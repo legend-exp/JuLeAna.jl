@@ -309,4 +309,288 @@
         settle!(m)
         @test !m.picking && m.production.name == m.productions[1]
     end
+    # A page without a connection, as juleana-sync and juleana build it.
+    function fresh(; production = "", mount_root = "", hosts = nothing)
+        local_root = mktempdir()
+        settings = SyncSettings(; host = "local", remote_root = FIXTURE_ROOT, production, local_root, mount_root,
+                                selection = joinpath(mktempdir(), "sel.yaml"))
+        hosts === nothing || (settings.hosts_file = hosts)
+        return SyncPage(settings, TaskQueue(); host_factory = alias -> h)
+    end
+
+    @testset "a page without a connection renders and refuses actions politely" begin
+        m = fresh()
+        tb = draw(m; width = 120, height = 30)
+        @test find_text(tb, "Settings") !== nothing && occursin("Connect (c) lists the productions", row_text(tb, 30))
+        for key in (' ', 'l', 'n', 'x', 's', 'e', 't', 'o')
+            m.status = ""
+            @test sync_key!(m, KeyEvent(key))
+            @test occursin("Connect first", m.status) && m.modal_kind == :none
+        end
+        @test m.running == 0
+        tab_to!(m, :production)
+        sync_key!(m, KeyEvent(:enter))                  # no connection yet: Enter connects
+        @test m.running == 1 && m.connecting
+        sync_key!(m, KeyEvent(:enter))                  # busy: the status says so and nothing else starts
+        @test m.running == 1 && occursin("busy:", m.status)
+        settle!(m)
+        @test !m.connecting && m.picking
+    end
+
+    @testset "an exception in a handler opens the error dialog" begin
+        m = fresh()
+        m.picker = Tachikoma.SelectableList(["a"])
+        m.productions = nothing
+        m.picking = true                                 # a corrupt state: choosing from the list fails on it
+        @test sync_key!(m, KeyEvent(:enter))
+        @test m.modal_kind == :error && !isempty(m.modal.message)
+    end
+
+    @testset "host and remote root connect by themselves when no tree is loaded" begin
+        m = fresh()
+        draw(m)
+        tab_to!(m, :host)
+        sync_key!(m, KeyEvent(:enter))
+        foreach(_ -> sync_key!(m, KeyEvent(:backspace)), 1:length(m.edit.text))
+        type!(m, "local2")
+        sync_key!(m, KeyEvent(:enter))
+        @test m.settings.host == "local2" && m.running == 1 && m.connecting
+        settle!(m)
+        @test m.host === h && m.picking
+    end
+
+    @testset "sync_start! connects when the settings are valid" begin
+        m = fresh()
+        sync_start!(m)
+        @test m.running == 1
+        settle!(m)
+        @test m.host === h && m.options.remote_root == FIXTURE_ROOT
+        @test m.picking && m.root === nothing && "test" in m.productions
+        sync_key!(m, KeyEvent(:enter))                 # the first row of the picker
+        settle!(m)
+        @test m.root !== nothing && m.production.name == m.productions[1] && m.settings.production == m.productions[1]
+
+        m2 = fresh(; production = "test")
+        sync_start!(m2)
+        settle!(m2)
+        @test !m2.picking && m2.production.name == "test" && !sync_dirty(m2)
+        m3 = SyncPage(SyncSettings(; host = "x", remote_root = "/x", local_root = mktempdir()), TaskQueue();
+                      host_factory = _ -> error("unknown host x"))
+        sync_start!(m3)
+        settle!(m3)
+        @test m3.modal_kind == :error && occursin("unknown host x", m3.modal.message) && m3.host === nothing
+        bad = SyncPage(SyncSettings(; host = "x", remote_root = "/x", local_root = joinpath(tempdir(), "no-such-sync-dir")), TaskQueue())
+        sync_start!(bad)
+        @test bad.running == 0 && occursin("is not an existing directory", bad.status)
+        empty_root = SyncPage(SyncSettings(; host = "x", remote_root = "/x", local_root = ""), TaskQueue())
+        sync_start!(empty_root)
+        @test empty_root.running == 0 && empty_root.status == "Local root must be set"
+        @test blocked(empty_root)                     # Connect, Estimate and Transfer refuse with the same text
+    end
+
+    @testset "a production that is not on the host is an error, a suggested one is dropped" begin
+        m = fresh(; production = "nope")
+        sync_start!(m)
+        settle!(m)
+        @test m.modal_kind == :error && occursin("production nope is not on", m.modal.message) && m.root === nothing
+        s = fresh(; production = "nope")
+        s.suggested = true
+        sync_start!(s)
+        settle!(s)
+        @test s.modal_kind == :none && s.settings.production == "" && occursin("nope", s.status) && s.picking
+    end
+
+    @testset "Save, Load: marks come back" begin
+        m = fresh(; production = "test")
+        sync_start!(m)
+        settle!(m)
+        tier = findfirst(c -> c.label == "tier", m.root.children)
+        set_mode!(m.root.children[tier], :copy)
+        sync_key!(m, KeyEvent('s'))
+        saved = Selection(m.production, "local", m.root)
+        @test isfile(selection_path(m.settings)) && !sync_dirty(m)
+        other = fresh(; production = "test")
+        other.settings.selection = selection_path(m.settings)
+        other.settings.local_root = m.settings.local_root
+        sync_start!(other)
+        settle!(other)
+        draw(other)
+        sync_key!(other, KeyEvent('o'))
+        @test other.running == 1
+        settle!(other)
+        @test Selection(other.production, "local", other.root).copy == saved.copy
+        @test !sync_dirty(other) && other.saved == selection_path(other.settings)
+    end
+
+    @testset "a failing load leaves the tree untouched" begin
+        m = fresh(; production = "test")
+        sync_start!(m)
+        settle!(m)
+        tier = findfirst(c -> c.label == "tier", m.root.children)
+        set_mode!(m.root.children[tier], :copy)
+        m.dirty = true
+        root, marks, collapsed = m.root, Selection(m.production, "local", m.root).copy, copy(m.collapsed)
+        stale = Selection("local", "test", FIXTURE_ROOT, m.production.local_root, nothing,
+                          ["test/config.json", "test/legend-metadata", "test/no-such-dir"], String[], now(), ExtractEntry[])
+        save_selection(selection_path(m.settings), stale)
+        draw(m)
+        sync_key!(m, KeyEvent('o'))
+        @test m.modal_kind == :discard && occursin("Replace the marks on test", m.modal.message)
+        sync_key!(m, KeyEvent(:left))
+        sync_key!(m, KeyEvent(:enter))    # the dialog opens on "Keep"; left selects "Replace"
+        settle!(m)
+        @test m.modal_kind == :error && occursin("test/no-such-dir", m.modal.message) && occursin("listing directories", m.modal.message)
+        @test m.root === root && Selection(m.production, "local", m.root).copy == marks && m.collapsed == collapsed && m.dirty
+        @test m.step === nothing
+        # A selection of another production is refused before anything is read from the host.
+        wrong = Selection("local", "other", FIXTURE_ROOT, m.production.local_root, nothing, String[], String[], now(), ExtractEntry[])
+        save_selection(selection_path(m.settings), wrong)
+        sync_key!(m, KeyEvent(:enter))
+        sync_key!(m, KeyEvent('o'))
+        sync_key!(m, KeyEvent(:left))
+        sync_key!(m, KeyEvent(:enter))
+        settle!(m)
+        @test occursin("is for production other", m.modal.message) && m.root === root
+    end
+
+    @testset "changing the host with unsaved marks asks first" begin
+        m = fresh(; production = "test")
+        sync_start!(m)
+        settle!(m)
+        tier = findfirst(c -> c.label == "tier", m.root.children)
+        set_mode!(m.root.children[tier], :copy)
+        m.dirty = true
+        root = m.root
+        draw(m)
+        tab_to!(m, :host)
+        sync_key!(m, KeyEvent(:enter))
+        foreach(_ -> sync_key!(m, KeyEvent(:backspace)), 1:length(m.edit.text))
+        type!(m, "local2")
+        sync_key!(m, KeyEvent(:enter))
+        @test m.modal_kind == :discard && occursin("Discard the marks on test?", m.modal.message)
+        @test m.settings.host == "local"                  # nothing changed yet
+        sync_key!(m, KeyEvent(:escape))                   # Keep
+        @test m.modal_kind == :none && m.settings.host == "local" && m.root === root && sync_dirty(m)
+        tab_to!(m, :host)
+        sync_key!(m, KeyEvent(:enter))
+        foreach(_ -> sync_key!(m, KeyEvent(:backspace)), 1:length(m.edit.text))
+        type!(m, "local2")
+        sync_key!(m, KeyEvent(:enter))
+        sync_key!(m, KeyEvent(:left))
+        sync_key!(m, KeyEvent(:enter))     # left selects "Discard"
+        settle!(m)
+        @test m.settings.host == "local2" && m.root !== root && !sync_dirty(m) && m.production.name == "test"
+        # Without unsaved marks the change reloads at once.
+        tab_to!(m, :production)
+        sync_key!(m, KeyEvent(:enter))
+        sync_key!(m, KeyEvent(:down))
+        sync_key!(m, KeyEvent(:enter))
+        settle!(m)
+        @test m.production.name == m.productions[2]
+    end
+
+    @testset "the progress line shows each step kind" begin
+        m = fresh(; production = "test")
+        sync_start!(m)
+        settle!(m)
+        last_row(m) = row_text(draw(m; height = 30), 30)
+        step(p) = update!(m, TaskEvent(Symbol("sync:step"), p))
+        step(StepProgress("listing detector files", 1, 3, 2, 8, nothing, ""))
+        @test occursin("[1/3] listing detector files 2/8", last_row(m)) && occursin('█', last_row(m))
+        step(StepProgress("copying", 2, 3, 45, 100, 3 * 1024 * 1024, "3.2MB/s  ETA 0:00:10"))
+        @test all(occursin(s, last_row(m)) for s in ("[2/3] copying 45/100", "3.0 M", "3.2MB/s  ETA 0:00:10"))
+        step(StepProgress("checking files to copy", 3, 3, 0, nothing, nothing, ""))
+        m.step_started = time() - 75
+        @test occursin("[3/3] checking files to copy", last_row(m)) && occursin("1:15", last_row(m))
+        step(StepProgress("extracting on the host", 1, 3, 1, 4, 2048, ""))
+        @test m.step_started > time() - 5                 # a new step restarts the clock
+        m.running += 1
+        update!(m, TaskEvent(Symbol("sync:estimate"), (Estimate(0, 0, 0, true), false, nothing, nothing)))
+        @test m.step === nothing && m.modal_kind == :estimate
+        update!(m, KeyEvent(:escape))                      # the dialog covers the last row
+        @test occursin("selected:", last_row(m))
+    end
+
+    @testset "an estimate reports its steps and a failure names the step" begin
+        m = fresh(; production = "test")
+        sync_start!(m)
+        settle!(m)
+        seen = StepProgress[]
+        sync_key!(m, KeyEvent('e'))
+        @test timedwait(() -> m.tasks.active[] == 0 && isready(m.tasks.channel), 30.0) == :ok
+        while isready(m.tasks.channel)
+            e = take!(m.tasks.channel)
+            e.id == Symbol("sync:step") && push!(seen, e.value)
+            update!(m, e)
+        end
+        @test [s.step for s in unique(seen)] == ["checking files to copy"] && m.modal_kind == :estimate && m.step === nothing
+        sync_key!(m, KeyEvent(:escape))
+        update!(m, TaskEvent(Symbol("sync:step"), StepProgress("copying", 2, 3, 1, 100, nothing, "")))
+        m.running += 1
+        update!(m, TaskEvent(Symbol("sync:transfer"), ErrorException("rsync died")))
+        @test occursin("rsync died", m.modal.message) && occursin("in step \"copying\", 2 of 3", m.modal.message)
+    end
+
+    @testset "changing the host or remote root drops the productions of the old one" begin
+        m = fresh()
+        sync_start!(m)
+        settle!(m)
+        old = copy(m.productions)
+        @test m.picking && "test" in old
+        sync_key!(m, KeyEvent(:escape))
+        draw(m)
+        tab_to!(m, :remote_root)
+        sync_key!(m, KeyEvent(:enter))
+        foreach(_ -> sync_key!(m, KeyEvent(:backspace)), 1:length(m.edit.text))
+        type!(m, EXTRACT_ROOT)
+        sync_key!(m, KeyEvent(:enter))
+        @test m.connecting && m.productions === nothing && m.picker === nothing && !m.picking
+        settle!(m)
+        @test m.productions == list_productions(h, EXTRACT_ROOT) && m.productions != old && m.picking
+        tb = draw(m)
+        @test find_text(tb, first(m.productions)) !== nothing && find_text(tb, "temp/jl-dev") === nothing
+
+        # With a production open, the host change drops the list as well.
+        m2 = fresh(; production = "test")
+        sync_start!(m2)
+        settle!(m2)
+        open_picker!(m2)
+        @test m2.picking
+        change_setting!(m2, :host, "local2")
+        @test m2.productions === nothing && m2.picker === nothing && !m2.picking && m2.connecting
+        settle!(m2)
+        @test m2.productions !== nothing && m2.production.name == "test"
+
+        # Keeping the marks leaves the old host's list alone.
+        m3 = fresh(; production = "test")
+        sync_start!(m3)
+        settle!(m3)
+        m3.dirty = true
+        change_setting!(m3, :host, "local2")
+        @test m3.modal_kind == :discard && m3.productions !== nothing
+        sync_key!(m3, KeyEvent(:escape))
+        @test m3.productions !== nothing && m3.settings.host == "local"
+    end
+
+    @testset "the five buttons fit the panel at 80 columns and wrap on narrower screens" begin
+        for width in (120, 80, 60)
+            m = fresh(; production = "test")
+            tb = draw(m; width, height = 40)
+            for label in values(Sync.BUTTON_LABELS)
+                @test find_text(tb, "[ $label ]") !== nothing
+            end
+            rects = [r for (name, r) in m.panel_rects if name in PANEL_BUTTONS]
+            @test length(rects) == 5
+            for (i, a) in pairs(rects), (j, b) in pairs(rects)
+                i < j && @test !(a.y == b.y && a.x < b.x + b.width && b.x < a.x + a.width)
+            end
+            @test all(r -> Tachikoma.right(r) <= width - 1, rects)
+            @test (length(unique(r.y for r in rects)) == 1) == (width >= 80)
+            click_on!(m, :connect)
+            @test m.running == 1 && m.connecting
+            settle!(m)
+            @test m.production.name == "test"
+        end
+    end
+
 end

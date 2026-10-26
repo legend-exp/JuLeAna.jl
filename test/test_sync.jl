@@ -68,7 +68,7 @@ using JuLeAna.Sync: main, RemoteHost, SSHHost, LocalHost, DirEntry,
                     parse_settings,
                     FieldEdit, PANEL_FIELDS, PANEL_BUTTONS, PANEL_ITEMS, panel_rects, revalidate!, change_setting!, refresh_options!,
                     blocked,
-                    open_picker!
+                    open_picker!, start_connect!, connect!, load_selection!, start_load!, discard_guard!, render_progress, start!, stop!
 
 # `update!` and `view` on a page deliver an event to it the way its host does.
 update!(p::SyncPage, e::KeyEvent) = (sync_key!(p, e); p)
