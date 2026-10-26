@@ -1,6 +1,6 @@
 name = "JuLeAna"
 uuid = "249371f1-448e-4e46-90b5-bb61a033b986"
-version = "0.2.1"
+version = "0.2.2"
 
 [deps]
 ArgParse = "c7e460c6-2fb9-53a9-8c5b-16f535851c63"
@@ -68,7 +68,7 @@ Infiltrator = "1.9"
 IntervalSets = "0.7"
 LaTeXStrings = "1"
 LegendDSP = "0.3.7"
-LegendDataManagement = "0.6.18"
+LegendDataManagement = "0.6.19"
 LegendDataTypes = "0.1.17"
 LegendEventAnalysis = "0.3.4"
 LegendHDF5IO = "0.1.19"

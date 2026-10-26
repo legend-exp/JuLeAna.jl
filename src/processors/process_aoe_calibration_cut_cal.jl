@@ -141,7 +141,7 @@ function process_aoe_calibration_cut_cal(processing_config, l200::LegendData, pe
                     qc_mask = read_ldata(@pf($is_single_pulse && !$is_pulser), l200, :jlqcs, filekey, det)
                     read_ldata(row -> merge(NamedTuple{(e_type_cal,)}((cal_func(row),)), row), l200, :jldsp, :cal, period, run, det)[qc_mask]
                 end
-                e_cal = getproperty(hit_cal, e_type)
+                e_cal = collect(getproperty(hit_cal, e_type))
                 e_unit = unit(eltype(e_cal))
                 e_cal, hit_cal, e_unit
             else

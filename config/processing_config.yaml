@@ -385,6 +385,7 @@ p_processors:
       timeout: 0
     dependencies:
       - process_energy_calibration_cal
+      - p_process_energy_cal
 
   p_process_psd_efficiencies_cal:
     enabled: false

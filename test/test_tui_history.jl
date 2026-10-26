@@ -266,6 +266,16 @@ detail_text(page) = join(first.(JuLeAna.history_detail(page)))
         @test page.row == 3
         @test JuLeAna.history_mouse!(page, press(cells.x, cells.y, Tachikoma.mouse_scroll_up))
         @test page.row == 2
+        # sideways scrolling and Shift with the wheel move the cursor by a run column
+        @test JuLeAna.history_mouse!(page, press(cells.x, cells.y, Tachikoma.mouse_scroll_right))
+        @test (page.row, page.col) == (2, 4)
+        @test JuLeAna.history_mouse!(page, press(cells.x, cells.y, Tachikoma.mouse_scroll_left))
+        @test (page.row, page.col) == (2, 3)
+        shifted(button) = Tachikoma.MouseEvent(cells.x, cells.y, button, Tachikoma.mouse_press, true, false, false)
+        @test JuLeAna.history_mouse!(page, shifted(Tachikoma.mouse_scroll_down))
+        @test (page.row, page.col) == (2, 4)
+        @test JuLeAna.history_mouse!(page, shifted(Tachikoma.mouse_scroll_up))
+        @test (page.row, page.col) == (2, 3)
         # the viewer gets the events while a report is open
         page.row, page.col = 1, 2
         JuLeAna.history_key!(page, KeyEvent(:enter))

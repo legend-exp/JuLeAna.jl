@@ -99,9 +99,9 @@ function p_process_lq_calibration_cut_cal(processing_config, l200::LegendData, p
         @debug "Loaded lq config: $(lq_config_det)"
 
         e_type = Symbol(lq_config_det.e_type)
-        lq_types = collect(keys(lq_config_det.lq_funcs))
         lq_funcs = lq_config_det.lq_funcs
-        lq_classifiers = Symbol.(lq_config_det.lq_classifiers)
+        lq_types = collect(keys(lq_funcs))
+        lq_classifiers = [Symbol("$(lq_type)_classifier") for lq_type in lq_types]
         qdrift_expression = lq_config_det.qdrift_expression
 
         #for lq_ctc_correction
@@ -191,7 +191,7 @@ function p_process_lq_calibration_cut_cal(processing_config, l200::LegendData, p
                                                        pinfo.period, pinfo.run, det)[qc_mask]
                                         end
                                         for pinfo in partinfo_det])
-                e_cal = getproperty(hit_cal, e_type)
+                e_cal = collect(getproperty(hit_cal, e_type))
                 dep_σ = mvalue(pars_energy[det][Symbol(first(split(string(e_type), "_cal")))].fit.Tl208DEP.fwhm / (2 * sqrt(2 * log(2))))
                 hit_cal, e_cal, dep_σ
             else

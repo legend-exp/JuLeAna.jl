@@ -8,8 +8,9 @@ const HISTORY_COLORS = (failed = :error, stopped = :warning, cancelled = :text_d
 const HISTORY_CELL_WIDTH = 3
 const HISTORY_CELL_STEP = HISTORY_CELL_WIDTH + 1
 
-# Rows scrolled by one step of the mouse wheel.
+# Rows and run columns scrolled by one step of the mouse wheel.
 const HISTORY_WHEEL_ROWS = 1
+const HISTORY_WHEEL_COLUMNS = 1
 
 # A run column of the History page: the index `p` of its period in `grid.periods`, the run,
 # its position `k` (from 0) among the `n` columns of the period and its header text.
@@ -394,7 +395,9 @@ end
 
 Apply the mouse event `evt` to `page`. While a report is open, the viewer gets the event
 (the scroll wheel and the scroll bar). Otherwise a left click on a cell moves the cursor
-to it and the scroll wheel moves the cursor by one row. Return `true` if the event was used.
+to it, the scroll wheel moves the cursor by one row, and sideways scrolling (a horizontal
+wheel or touchpad, or the wheel with Shift held) moves it by one run column. Return `true`
+if the event was used.
 """
 function history_mouse!(page::HistoryPage, evt::Tachikoma.MouseEvent)::Bool
     if !isnothing(page.viewer_path)
@@ -412,8 +415,14 @@ function history_mouse!(page::HistoryPage, evt::Tachikoma.MouseEvent)::Bool
         (isnothing(col) || x > page.offsets[col] + HISTORY_CELL_WIDTH - 1) && return false
         page.row, page.col = row, col
         return true
-    elseif evt.button in (Tachikoma.mouse_scroll_up, Tachikoma.mouse_scroll_down) && Base.contains(page.rect, evt.x, evt.y)
-        move_history_cursor!(page, (evt.button == Tachikoma.mouse_scroll_up ? -1 : 1) * HISTORY_WHEEL_ROWS, 0)
+    elseif evt.button in (Tachikoma.mouse_scroll_up, Tachikoma.mouse_scroll_down, Tachikoma.mouse_scroll_left,
+                          Tachikoma.mouse_scroll_right) && Base.contains(page.rect, evt.x, evt.y)
+        step = evt.button in (Tachikoma.mouse_scroll_up, Tachikoma.mouse_scroll_left) ? -1 : 1
+        if evt.shift || evt.button in (Tachikoma.mouse_scroll_left, Tachikoma.mouse_scroll_right)
+            move_history_cursor!(page, 0, step * HISTORY_WHEEL_COLUMNS)
+        else
+            move_history_cursor!(page, step * HISTORY_WHEEL_ROWS, 0)
+        end
         return true
     end
     return false
