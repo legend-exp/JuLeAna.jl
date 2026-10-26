@@ -301,7 +301,8 @@ withenv("LEGEND_DATA_CONFIG" => joinpath(mktempdir(), "prods", "current", "confi
             calls = Threads.Atomic{Int}(0)
             loader(_) = (Threads.atomic_add!(calls, 1); error("no session in this test"))
             # no config: no LoadSession, the form opens after the startup screen
-            m = JuLeAna.JuLeAnaTUI(DataflowController(noconfig; loader); splash_seconds = 0.0)
+            m = JuLeAna.JuLeAnaTUI(DataflowController(noconfig; loader); splash_seconds = 0.0,
+                                   sync_settings = JuLeAna.offline_sync_settings())
             JuLeAna.start!(m)
             @test !isnothing(m.production)
             @test production_settle!(() -> !isnothing(m.snap) && !JuLeAna.splash_active(m), m; timeout = 10)

@@ -38,6 +38,7 @@ withenv("LEGEND_DATA_CONFIG" => joinpath(mktempdir(), "config.json")) do
             include("test_tui_production.jl")
             include("test_tui_timing.jl")
             include("test_tui_branding.jl")
+            include("test_tui_sync.jl")
             include("test_logging.jl")
         end
         include("test_sync.jl")

@@ -25,7 +25,7 @@ end
 """
     SyncPage(host, production, options; queue = TaskQueue())
     SyncPage(host, options; queue = TaskQueue())
-    SyncPage(settings, queue; host_factory = SSHHost)
+    SyncPage(settings, queue; host_factory = SSHHost, suggested = false)
 
 The state of the sync screen: a settings panel above the production tree. The first form opens `production`
 on `host`. The second has a host but no production yet, and the third has no connection at all (`host`,
@@ -114,8 +114,10 @@ function SyncPage(host::RemoteHost, options::Options; queue::TaskQueue = TaskQue
     return revalidate!(blank_page(host, nothing, options, SyncSettings(options), nothing, queue, _ -> host, true))
 end
 
-function SyncPage(settings::SyncSettings, queue::TaskQueue; host_factory = SSHHost)
-    return revalidate!(blank_page(nothing, nothing, nothing, settings, nothing, queue, host_factory, true))
+function SyncPage(settings::SyncSettings, queue::TaskQueue; host_factory = SSHHost, suggested::Bool = false)
+    m = blank_page(nothing, nothing, nothing, settings, nothing, queue, host_factory, true)
+    m.suggested = suggested
+    return revalidate!(m)
 end
 
 """

@@ -202,7 +202,7 @@ press(page, entries, key) = JuLeAna.log_key!(page, KeyEvent(key), entries)
         Tachikoma.update!(m, KeyEvent('5'))
         @test m.page == 5
         text = log_text(render_model(m))
-        @test occursin("fit failed", text) && occursin("l level", text) && occursin("1-7 page", text)
+        @test occursin("fit failed", text) && occursin("l level", text) && occursin("1-8 page", text)
         Tachikoma.update!(m, KeyEvent('l'))
         text = log_text(render_model(m))
         @test m.log_page.min_level == Logging.Warn && occursin("(warnings)", text) && !occursin("loading the session", text)

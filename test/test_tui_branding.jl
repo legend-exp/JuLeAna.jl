@@ -227,7 +227,7 @@ withenv("LEGEND_DATA_CONFIG" => joinpath(mktempdir(), "config.json")) do
                 # the tab bar's bottom line is not touched
                 @test count(==('─'), row_text(wide, 4)) > 100
                 # the root is clipped from the left
-                clipped = branding_render(m, 104, 36)
+                clipped = branding_render(m, 114, 36)
                 @test endswith(row_text(clipped, 3), "jl-v9.9.9  …/l200│") &&
                       endswith(rstrip(row_text(clipped, 2), '│'), "JuLeAna " * version)
                 # no room right of the tabs: nothing in the rows of the tab bar (the Setup page

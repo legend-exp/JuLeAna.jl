@@ -1,6 +1,7 @@
 # This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
 
-const TUI_PAGES = ("Setup", "Graph", "Workers", "Progress", "Log", "Reports", "History")
+const TUI_PAGES = ("Setup", "Graph", "Workers", "Progress", "Log", "Reports", "History", "Sync")
+const SYNC_PAGE = length(TUI_PAGES)
 
 # Colors of the letters of the logo title, in the order of the letters of `JuLeAna`.
 const TITLE_COLORS = (Tachikoma.ColorRGB(0xcb, 0x3c, 0x33), Tachikoma.ColorRGB(0x38, 0x98, 0x26), Tachikoma.ColorRGB(0x95, 0x58, 0xb2))
@@ -218,7 +219,7 @@ A left click on a page's tab opens the page; other mouse events go to the visibl
 
 Keys: the visible page gets each key first (see [`JuLeAna.setup_key!`](@ref) for the
 Setup page, [`JuLeAna.graph_key!`](@ref) for the Graph page,
-[`JuLeAna.progress_key!`](@ref) for the Progress page and [`JuLeAna.log_key!`](@ref) for the Log page, [`JuLeAna.reports_key!`](@ref) for the Reports page and [`JuLeAna.history_key!`](@ref) for the History page and [`JuLeAna.workers_key!`](@ref) for the Workers page); otherwise `1` to `7` switch pages and `q`
+[`JuLeAna.progress_key!`](@ref) for the Progress page and [`JuLeAna.log_key!`](@ref) for the Log page, [`JuLeAna.reports_key!`](@ref) for the Reports page and [`JuLeAna.history_key!`](@ref) for the History page and [`JuLeAna.workers_key!`](@ref) for the Workers page); otherwise `1` to `8` switch pages and `q`
 or Ctrl-C quits. While processing runs, quitting asks first: `s` stops processing after
 the running items and quits when the run has ended, `q` quits at once, ending the run and the workers connected to this
 process, and `c` or Escape keeps the interface open.
@@ -230,6 +231,8 @@ ends it and is not passed on. `?` opens a panel that lists the keys of the visib
 Escape, `?` or `q` closes it. The Setup page's filter and the kwargs editor receive `?` as text.
 
 `N` on the Setup page opens the [`JuLeAna.ProductionForm`](@ref) for a new data production.
+
+Page 8 shows the `JuLeAna.Sync` screen. It is created when the tab is first shown and starts connecting to the host then.
 The form replaces the visible page and takes every key (see [`JuLeAna.production_key!`](@ref)).
 It is also open when the interface starts without a session: when the parsed
 options have no `config` or `new_production` is set, `start!` does not load a session.
@@ -274,6 +277,10 @@ mutable struct JuLeAnaTUI <: Tachikoma.Model
     help::Bool
     # the open new-production form, which replaces the visible page
     production::Union{Nothing,ProductionForm}
+    # the Sync page, created on the first visit of the Sync tab, the settings it starts from and how it reaches a host
+    sync::Union{Nothing,SyncPage}
+    const sync_settings::Union{Nothing,SyncSettings}
+    const sync_host::Any
     # minimum seconds of the startup screen
     const splash_seconds::Float64
     # frame, `update!` and garbage collection times, see `InterfaceTiming`
@@ -289,11 +296,12 @@ function tab_bar()
                                                               inactive = Tachikoma.tstyle(:text_dim)))
 end
 
-function JuLeAnaTUI(ctrl::DataflowController, messages::MessageBuffer = MessageBuffer(); splash_seconds::Real = 1.5)
+function JuLeAnaTUI(ctrl::DataflowController, messages::MessageBuffer = MessageBuffer(); splash_seconds::Real = 1.5,
+                    sync_settings::Union{Nothing,SyncSettings} = nothing, sync_host = SSHHost)
     m = JuLeAnaTUI(ctrl, messages, Tachikoma.TaskQueue(), Channel{ControllerCommand}(Inf), SetupPage(), GraphPage(), ProgressPage(),
                    LogPage(), ReportsPage(), HistoryPage(), WorkersPage(), tab_bar(), 0, 0, 1, false, nothing, false, false, nothing,
                    nothing, nothing, BusyItem[], (; key = nothing, messages = StepMessage[]), nothing, 0, false, 0.0, false, nothing,
-                   splash_seconds, InterfaceTiming())
+                   nothing, sync_settings, sync_host, splash_seconds, InterfaceTiming())
     errormonitor(Threads.@spawn run_commands(m))
     return m
 end
@@ -385,6 +393,11 @@ function Tachikoma.update!(m::JuLeAnaTUI, evt::Tachikoma.TaskEvent)
 end
 
 function update_task!(m::JuLeAnaTUI, evt::Tachikoma.TaskEvent)
+    if startswith(String(evt.id), "sync:")
+        isnothing(m.sync) && error("a sync task event arrived before the Sync page exists: $(evt.id)")
+        sync_task!(m.sync, evt)
+        return nothing
+    end
     if evt.id === :tick
         m.ticks += 1
         m.splash = splash_active(m)
@@ -506,6 +519,7 @@ function update_key!(m::JuLeAnaTUI, evt::Tachikoma.KeyEvent)
     m.page == 5 && !ctrl_c && log_key!(m.log_page, evt, message_entries(m.messages)) && return nothing
     m.page == 6 && !ctrl_c && reports_key!(m.reports_page, evt) && return nothing
     m.page == 7 && !ctrl_c && history_key!(m.history_page, evt) && return nothing
+    m.page == SYNC_PAGE && !ctrl_c && sync_key!(sync_page!(m), evt) && return nothing
     if ctrl_c || (evt.key == :char && evt.char == 'q')
         processing(m) ? (m.dialog = :quit) : (m.quit = true)
     elseif evt.key == :char && evt.char == '?'
@@ -513,7 +527,7 @@ function update_key!(m::JuLeAnaTUI, evt::Tachikoma.KeyEvent)
     elseif evt.key == :char && evt.char == 'T'
         next_theme!()
     elseif evt.key == :char && '1' <= evt.char <= '0' + n
-        m.page = evt.char - '0'
+        show_page!(m, evt.char - '0')
     end
     return nothing
 end
@@ -534,7 +548,7 @@ end
 function update_mouse!(m::JuLeAnaTUI, evt::Tachikoma.MouseEvent)
     if isnothing(m.dialog) && !m.help && isnothing(m.production) && !splash_active(m)
         if Tachikoma.handle_mouse!(m.tabs, evt) === :changed
-            m.page = m.tabs.active
+            show_page!(m, m.tabs.active)
             return nothing
         end
         m.page == 1 && setup_mouse!(m.setup, evt, m.snap, cmd -> send_command!(m, cmd))
@@ -548,6 +562,7 @@ function update_mouse!(m::JuLeAnaTUI, evt::Tachikoma.MouseEvent)
         m.page == 5 && log_mouse!(m.log_page, evt, message_entries(m.messages))
         m.page == 6 && reports_mouse!(m.reports_page, evt)
         m.page == 7 && history_mouse!(m.history_page, evt)
+        m.page == SYNC_PAGE && sync_mouse!(sync_page!(m), evt)
     end
     return nothing
 end
@@ -743,8 +758,11 @@ function draw_interface!(m::JuLeAnaTUI, f::Tachikoma.Frame)
         render_reports(m.reports_page, body_area, f.buffer)
     elseif m.page == 7
         render_history(m.history_page, body_area, f.buffer)
+    elseif m.page == SYNC_PAGE
+        draw_sync!(m, body_area, f.buffer)
     end
     splash_active(m) || render_status(m, status_area, f.buffer)
+    sync_hint_bar = m.page == SYNC_PAGE ? sync_bar(m) : ((), false)
     hints = (!isnothing(m.production) ?
              (m.production.phase === :done ? PRODUCTION_DONE_HINTS : m.production.phase === :creating ? () : PRODUCTION_HINTS) :
              m.page == 1 ? SETUP_HINTS :
@@ -754,11 +772,12 @@ function draw_interface!(m::JuLeAnaTUI, f::Tachikoma.Frame)
              m.page == 4 ? (isnothing(m.progress_page.open) ? PROGRESS_HINTS : PROGRESS_OPEN_HINTS) :
              m.page == 5 ? LOG_HINTS :
              m.page == 6 ? (isnothing(m.reports_page.viewer_path) ? REPORTS_HINTS : REPORTS_OPEN_HINTS) :
-             m.page == 7 ? (isnothing(m.history_page.viewer_path) ? HISTORY_HINTS : HISTORY_OPEN_HINTS) : ())
+             m.page == 7 ? (isnothing(m.history_page.viewer_path) ? HISTORY_HINTS : HISTORY_OPEN_HINTS) :
+             m.page == SYNC_PAGE ? first(sync_hint_bar) : ())
     spans = Tuple{String,Tachikoma.Style}[]
     # `q` closes an open report instead of quitting and is text in the editor
     for (key, description) in (hints...,
-                               (!isnothing(m.production) ||
+                               (!isnothing(m.production) || m.page == SYNC_PAGE && last(sync_hint_bar) ||
                                 m.page == 3 && (!isnothing(m.workers_page.editor) || !isnothing(m.workers_page.form)) ||
                                 m.page == 6 && !isnothing(m.reports_page.viewer_path) ||
                                 m.page == 7 && !isnothing(m.history_page.viewer_path) ? () : COMMON_HINTS)...)

@@ -493,7 +493,7 @@ press(page, key) = JuLeAna.reports_key!(page, KeyEvent(key))
         @test find_text(tb, "V02  1 run: p02-r006") !== nothing && find_text(tb, "fit failed") !== nothing
         keys_row = row_text(tb, 31)
         @test occursin("↑↓ move  Enter open  a all/run  r reload  Tab pane", keys_row)
-        @test occursin("1-7 page  q quit", keys_row)
+        @test occursin("1-8 page  q quit", keys_row)
 
         # `r` reads the reports again
         write(report(7), ok_text)
