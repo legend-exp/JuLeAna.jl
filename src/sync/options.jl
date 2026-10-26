@@ -191,18 +191,8 @@ function run_headless(options::Options, host::RemoteHost)
                             options.local_root; mount_root = options.mount_root)
     selection = load_selection(options.from, production)
 
-    # An error leaves its step on the screen; the step is named so the failure can be placed.
-    function failing(f, printer)
-        try
-            return f()
-        catch
-            println(printer.io)
-            isempty(failed_step(printer)) || println(stderr, "failed in step \"", failed_step(printer), "\"")
-            rethrow()
-        end
-    end
     printer = StepPrinter()
-    (; estimate, staging, free) = failing(printer) do
+    (; estimate, staging, free) = with_failed_step(printer) do
         return estimate_selection(host, production, selection; helper = options.helper, jobs = options.jobs, report = printer)
     end
     println()
@@ -217,7 +207,7 @@ function run_headless(options::Options, host::RemoteHost)
     end
 
     printer = StepPrinter()
-    result = failing(printer) do
+    result = with_failed_step(printer) do
         return apply!(host, production, selection; helper = options.helper, jobs = options.jobs, report = printer)
     end
     println()

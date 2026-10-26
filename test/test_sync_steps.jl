@@ -33,6 +33,35 @@
         @test occursin("[1/2] a 2/3", text)
         @test failed_step(printer) == "b"
         @test failed_step(StepPrinter(io)) == ""
+
+        # A shorter reading of the same step blanks what the longer one left behind.
+        printer = StepPrinter(io)
+        printer(StepProgress("a", 1, 1, 0, nothing, nothing, "a long detail text"))
+        long = length(format_step(StepProgress("a", 1, 1, 0, nothing, nothing, "a long detail text")))
+        take!(io)
+        printer(StepProgress("a", 1, 1, 0, nothing, nothing, ""))
+        @test length(rstrip(String(take!(io)), ' ')) < long
+        printer(StepProgress("a", 1, 1, 0, nothing, nothing, "a long detail text"))
+        take!(io)
+        printer(StepProgress("a", 1, 1, 0, nothing, nothing, ""))
+        @test length(String(take!(io))) - 1 >= long
+    end
+
+    @testset "with_failed_step names the step an error came from" begin
+        io, err = IOBuffer(), IOBuffer()
+        printer = StepPrinter(io)
+        printer(StepProgress("copying", 2, 3, 1, 4, nothing, ""))
+        take!(io)
+        @test_throws "boom" with_failed_step(() -> error("boom"), printer, err)
+        @test String(take!(io)) == "\n"
+        @test String(take!(err)) == "failed in step \"copying\"\n"
+        @test with_failed_step(() -> 7, printer, err) == 7
+        @test isempty(take!(err))
+
+        # No step reported yet: nothing is printed.
+        fresh = StepPrinter(io)
+        @test_throws "early" with_failed_step(() -> error("early"), fresh, err)
+        @test isempty(take!(io)) && isempty(take!(err))
     end
 
     @testset "apply! reports the steps of an estimate in execution order" begin
@@ -103,6 +132,45 @@
         @test [(s.done, s.total) for s in seen] == [(0, 2), (1, 2), (2, 2)]
     end
 
+    @testset "apply! reports the steps of a detector file estimate" begin
+        p = Production(h, "dprod", PERDET_ROOT, mktempdir())
+        p16 = joinpath(PERDET_ROOT, "dprod", "generated", "tier", "jlqcs", "cal", "p16")
+        sel = Selection("local", "dprod", PERDET_ROOT, p.local_root, nothing, ["dprod/config.json"], String[], now(), ExtractEntry[],
+                        [DetectorEntry(relative(p, p16), ["B00000C", "V01234A"], :copy)])
+        names = apply_steps(sel; dry_run = true)
+        @test names == ["listing detector files", "checking files to copy"]
+        seen = StepProgress[]
+        apply!(h, p, sel; dry_run = true, report = collect_into(seen))
+        @test unique(s.step for s in seen) == names
+        @test all(s -> s.count == length(names), seen)
+        @test [s.index for s in seen] == sort([s.index for s in seen])
+        listed = filter(s -> s.step == "listing detector files", seen)
+        @test last(listed).done == last(listed).total == 2
+    end
+
+    @testset "detector_steps follow the real listing" begin
+        # A period of per-detector files counts its run directories.
+        p = Production(h, "dprod", PERDET_ROOT, mktempdir())
+        p16 = joinpath(PERDET_ROOT, "dprod", "generated", "tier", "jlqcs", "cal", "p16")
+        period = expand!(h, p, find_node!(h, p, production_tree(h, p), relative(p, p16)))
+        row = ensure_detectors!(period; whole_files = true)
+        seen = StepProgress[]
+        steps = detector_steps(collect_into(seen), row)
+        period_file_nodes(h, period; steps)
+        @test all(s -> s.step == "listing runs" && s.count == 1, seen)
+        @test (last(seen).done, last(seen).total) == (2, 2)
+
+        # A run reads its first file.
+        p = Production(h, "xprod", EXTRACT_ROOT, mktempdir())
+        helper = HelperConfig(; staging = joinpath(mktempdir(), "stage"))
+        dsp = joinpath(EXTRACT_ROOT, "xprod", "generated", "tier", "jldsp", "cal", "p18", "r000")
+        run = expand!(h, p, find_node!(h, p, production_tree(h, p), relative(p, dsp)))
+        row = ensure_detectors!(run)
+        seen = StepProgress[]
+        detector_nodes(h, helper, run; steps = detector_steps(collect_into(seen), row))
+        @test [(s.step, s.index, s.count) for s in seen] == [("reading first file", 1, 1)]
+    end
+
     @testset "the headless run prints the steps and names a failing step" begin
         local_root = mktempdir()
         out = joinpath(mktempdir(), "sel.yaml")
@@ -119,5 +187,25 @@
         @test occursin("[1/1] checking files to copy", text)
         @test_throws ArgumentError run_headless(Options("local", joinpath(FIXTURE_ROOT, "absent"), local_root, nothing, "test", "", out,
                                                         true, false), h)
+
+        # A failure inside a late step names that step on stderr and ends the printed line.
+        bad = joinpath(mktempdir(), "bad.yaml")
+        save_selection(bad,
+                       Selection("local", "test", FIXTURE_ROOT, p.local_root, nothing, ["test/config.json", "test/absent-dir"], String[],
+                                 now(),
+                                 ExtractEntry[]))
+        stdout_path, stderr_path = tempname(), tempname()
+        open(stdout_path, "w") do out_io
+            open(stderr_path, "w") do err_io
+                redirect_stdout(out_io) do
+                    redirect_stderr(err_io) do
+                        @test_throws Exception run_headless(Options("local", FIXTURE_ROOT, local_root, nothing, "test", bad, bad, true,
+                                                                    false), h)
+                    end
+                end
+            end
+        end
+        @test occursin("failed in step \"checking files to copy\"", read(stderr_path, String))
+        @test endswith(read(stdout_path, String), "\n")
     end
 end

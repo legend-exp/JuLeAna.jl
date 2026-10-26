@@ -43,6 +43,8 @@ end
 
 """
     format_step(p::StepProgress)::String
+
+One line of text for `p`: position, step name, counts, bytes and detail.
 """
 function format_step(p::StepProgress)
     text = string("[", p.index, "/", p.count, "] ", p.step)
@@ -61,16 +63,45 @@ line. [`failed_step`](@ref) names the last step reported, which is the one an er
 mutable struct StepPrinter
     io::IO
     last::Union{Nothing,StepProgress}
+    width::Int
 end
 
-StepPrinter(io::IO = stdout) = StepPrinter(io, nothing)
+StepPrinter(io::IO = stdout) = StepPrinter(io, nothing, 0)
 
 function (printer::StepPrinter)(p::StepProgress)
-    printer.last === nothing || printer.last.step == p.step || println(printer.io)
+    changed = printer.last !== nothing && printer.last.step != p.step
+    changed && println(printer.io)
     printer.last = p
-    print(printer.io, "\r", format_step(p), "   ")
+    line = format_step(p)
+    # Blank the characters of a longer previous line of the same step.
+    pad = changed ? 0 : max(0, printer.width - length(line))
+    printer.width = length(line)
+    print(printer.io, "\r", line, " "^(pad + 3))
     flush(printer.io)
     return nothing
 end
 
+"""
+    failed_step(printer::StepPrinter)::String
+
+The name of the last step `printer` showed, or `""` when it showed none.
+"""
 failed_step(printer::StepPrinter) = printer.last === nothing ? "" : printer.last.step
+
+"""
+    with_failed_step(f, printer::StepPrinter, err::IO = stderr)
+
+Call `f()`. When it throws after `printer` showed a step, end the printed line and name the step on `err`
+before rethrowing; an error before the first step is rethrown as it is.
+"""
+function with_failed_step(f, printer::StepPrinter, err::IO = stderr)
+    try
+        return f()
+    catch
+        if !isempty(failed_step(printer))
+            println(printer.io)
+            println(err, "failed in step \"", failed_step(printer), "\"")
+        end
+        rethrow()
+    end
+end

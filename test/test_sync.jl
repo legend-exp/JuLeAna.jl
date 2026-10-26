@@ -57,7 +57,8 @@ using JuLeAna.Sync: main, RemoteHost, SSHHost, LocalHost, DirEntry,
                     prepare_extraction,
                     ExtractProgress, STAGING_MARGIN, check_staging_space, reduced_groups, reconcile_local, rsync_listed,
                     with_environment!, start_bootstrap!, environment_ready!, request_detectors!, run_estimate!, toggle_extract!,
-                    StepProgress, Steps, NO_STEPS, format_step, StepPrinter, failed_step, apply_steps, estimate_selection, detector_steps
+                    StepProgress, Steps, NO_STEPS, format_step, StepPrinter, failed_step, with_failed_step, apply_steps, estimate_selection,
+                    detector_steps
 
 const SYNC_FIXTURES = joinpath(@__DIR__, "sync", "fixtures")
 
