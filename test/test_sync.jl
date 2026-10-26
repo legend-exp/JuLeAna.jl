@@ -18,7 +18,7 @@ using Tachikoma: TestBackend, Frame, Rect, KeyEvent, MouseEvent, mouse_left, mou
                  row_text,
                  find_text, drain_tasks!, render_widget!
 import Tachikoma
-import Tachikoma: view, update!, should_quit
+import Tachikoma: view, update!, should_quit, init!, cleanup!
 
 include(joinpath(@__DIR__, "sync", "fixture_lh5.jl"))
 include(joinpath(@__DIR__, "sync", "fixture_extract_remote.jl"))
@@ -43,6 +43,7 @@ using JuLeAna.Sync: main, RemoteHost, SSHHost, LocalHost, DirEntry,
                     Options, parse_options, run_headless, default_local_root, default_selection_dir, default_hosts_file, config_dir,
                     default_selection_path,
                     SyncPage, SyncApp, sync_key!, sync_mouse!, sync_task!, sync_hints, sync_dirty, sync_busy, sync_text_input, spawn!,
+                    sync_start!,
                     checkbox, node_label, build_tree, rebuild_tree!, current_node,
                     request_expand!, attach_listing!, show_error!, save!, details, status_bar,
                     render_sync, run_tui, task_queue,

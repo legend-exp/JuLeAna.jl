@@ -52,15 +52,15 @@ function update!(app::SyncApp, e::KeyEvent)
         app.dialog = nothing
         app.dialog_kind = :none
         if kind == :unsaved
-            answer == :confirm && save!(app.page)
-            app.quit = true
+            # A save that fails shows its error in the page's dialog and keeps the app, and the marks, open.
+            app.quit = answer != :confirm || shielded(() -> (save!(app.page); true), app.page, false)
         elseif kind == :busy && answer == :confirm
             app.quit = true
         end
         return app
     end
     sync_key!(app.page, e) && return app
-    (e.key == :ctrl_c || (e.key == :char && e.char == 'q')) && request_quit!(app)
+    (ctrl_c(e) || (e.key == :char && e.char == 'q')) && request_quit!(app)
     return app
 end
 

@@ -2,6 +2,7 @@
 
 @testset "app.jl" begin
     h = LocalHost()
+    term = Tachikoma.Terminal(; io = IOBuffer(), size = (rows = 24, cols = 80), external_size = true)
 
     function app_for(; dirty = false, out = joinpath(mktempdir(), "sel.yaml"))
         local_root = mktempdir()
@@ -36,6 +37,9 @@
         app = app_for()
         update!(app, KeyEvent('q'))
         @test should_quit(app)
+        clean = app_for()
+        update!(clean, KeyEvent(:ctrl_c))
+        @test should_quit(clean)
 
         for key in (KeyEvent('q'), KeyEvent(:ctrl_c))
             dirty = app_for(; dirty = true)
@@ -47,6 +51,11 @@
         update!(saved, KeyEvent('q'))
         update!(saved, KeyEvent(:enter))                 # the dialog opens on "Save and quit"
         @test should_quit(saved) && isfile(saved.page.options.out)
+        # A failing save keeps the app open with its error in the page's dialog; the marks stay.
+        blocked = app_for(; dirty = true, out = joinpath(touch(joinpath(mktempdir(), "file")), "sel.yaml"))
+        update!(blocked, KeyEvent('q'))
+        update!(blocked, KeyEvent(:enter))
+        @test !should_quit(blocked) && blocked.dialog === nothing && blocked.page.modal_kind == :error && blocked.page.dirty
         discarded = app_for(; dirty = true)
         update!(discarded, KeyEvent('q'))
         update!(discarded, KeyEvent(:escape))            # Escape is "Quit without saving"
@@ -94,10 +103,33 @@
         local_root = mktempdir()
         options = Options("local", FIXTURE_ROOT, local_root, nothing, "", "", nothing, false, false)
         app = SyncApp(SyncPage(h, options))
+        init!(app, term)
+        @test app.timer !== nothing && app.page.running == 1
+        cleanup!(app)          # the tick timer keeps the queue active
         settle!(app)
         @test app.page.productions !== nothing && app.page.picker !== nothing
         update!(app, KeyEvent('q'))
         @test should_quit(app)
+        picker = SyncApp(SyncPage(h, options))
+        update!(picker, KeyEvent(:ctrl_c))
+        @test should_quit(picker)
+    end
+
+    @testset "init! starts the listing once" begin
+        local_root = mktempdir()
+        options = Options("local", FIXTURE_ROOT, local_root, nothing, "", "", nothing, false, false)
+        page = SyncPage(h, options)
+        @test page.running == 0 && page.tasks.active[] == 0
+        app = SyncApp(page)
+        init!(app, term)
+        sync_start!(page)
+        @test page.running == 1
+        cleanup!(app)
+        settle!(app)
+        @test page.running == 0 && page.productions !== nothing
+        sync_start!(page)
+        @test page.running == 0
+        @test app.timer === nothing
     end
 
     @testset "an exception in a handler opens the error dialog and the app keeps running" begin
@@ -123,6 +155,7 @@
         local_root = mktempdir()
         options = Options("local", FIXTURE_ROOT, local_root, nothing, "", "", nothing, false, false)
         app = SyncApp(SyncPage(h, options))
+        sync_start!(app.page)
         settle!(app)
         app.queue.active[] += 1                           # another component's task on the shared queue
         update!(app, KeyEvent(:down))

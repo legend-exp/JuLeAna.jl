@@ -4,7 +4,7 @@
     SyncPage(host, production, options; queue = TaskQueue())
     SyncPage(host, options; queue = TaskQueue())
 
-The state of the sync screen. The second form starts on the production picker: it lists
+The state of the sync screen. The second form starts on the production picker: [`sync_start!`](@ref) lists
 the productions of `options.remote_root` in the background, and choosing one
 builds the production and switches to the tree screen. `screen` is `:pick` or
 `:tree`; `production` and `root` are `nothing` on the picker.
@@ -70,7 +70,18 @@ function SyncPage(host::RemoteHost, options::Options; queue::TaskQueue = TaskQue
                  false, "", nothing,
                  nothing, :none, nothing, nothing, nothing,
                  :pick, nothing, nothing, nothing, nothing, nothing)
-    return request_productions!(m)
+    return m
+end
+
+"""
+    sync_start!(page::SyncPage)::SyncPage
+
+Start the work the page needs on its first display: on the picker, list the productions. Calling it again
+while the listing runs or after it arrived does nothing.
+"""
+function sync_start!(m::SyncPage)
+    m.screen == :pick && m.productions === nothing && m.running == 0 && request_productions!(m)
+    return m
 end
 
 """

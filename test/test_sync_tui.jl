@@ -403,7 +403,7 @@
     @testset "production picker" begin
         local_root = mktempdir()
         options = Options("local", FIXTURE_ROOT, local_root, nothing, "", "", nothing, false, false)
-        m = SyncPage(h, options)
+        m = sync_start!(SyncPage(h, options))
         @test find_text(draw(m), "Productions on local") !== nothing
         @test find_text(draw(m), "listing…") !== nothing
         settle!(m)
@@ -431,7 +431,7 @@
     @testset "picker: arrows move, errors open the modal" begin
         local_root = mktempdir()
         options = Options("local", FIXTURE_ROOT, local_root, nothing, "", "", nothing, false, false)
-        m = SyncPage(h, options)
+        m = sync_start!(SyncPage(h, options))
         settle!(m)
         update!(m, KeyEvent(:down))
         update!(m, KeyEvent(:enter))
@@ -440,7 +440,7 @@
 
         missing_root = Options("local", joinpath(FIXTURE_ROOT, "nosuch"), local_root, nothing,
                                "", "", nothing, false, false)
-        m4 = SyncPage(h, missing_root)
+        m4 = sync_start!(SyncPage(h, missing_root))
         settle!(m4)
         @test m4.modal_kind == :error
         @test find_text(draw(m4), "not a directory") !== nothing
@@ -539,7 +539,7 @@
 
         @testset "picker" begin
             options = Options("local", FIXTURE_ROOT, mktempdir(), nothing, "", "", nothing, false, false)
-            m = SyncPage(h, options)
+            m = sync_start!(SyncPage(h, options))
             settle!(m)
             draw(m)
             area = m.picker.last_area
