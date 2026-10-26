@@ -31,9 +31,9 @@ using LegendDataManagement: DetectorId, Timestamp
 using Tachikoma: Tachikoma, Model, Frame, Buffer, Rect, Span, KeyEvent, MouseEvent, TaskEvent, TaskQueue, list_hit, list_scroll,
                  spawn_task!, TreeView, TreeNode, selected_node, tree_visible_count, handle_key!, Block, StatusBar, Paragraph, Modal,
                  TextInput, Gauge, SelectableList, Layout, Constraint, Vertical, Horizontal, Fill, Fixed, Percent, split_layout, render,
-                 tstyle, center, word_wrap, BOX_HEAVY, app
+                 tstyle, center, word_wrap, BOX_HEAVY, app, set_string!, mouse_left, mouse_press
 import Tachikoma: view, update!, should_quit, task_queue, init!, cleanup!
-using ..JuLeAna: tui_theme, load_theme_name
+using ..JuLeAna: tui_theme, load_theme_name, complete_path
 
 include("remote.jl")
 include("steps.jl")

@@ -189,6 +189,9 @@ end
 The directories at most three levels below `remote_root` that hold a
 `config.json`, relative to `remote_root` and sorted. These are the productions;
 no other part of the tree is searched.
+
+The rule differs from `JuLeAna.find_productions`, which reads a local folder: it accepts `config.yaml`, stops at the first
+config it finds and reads four levels, while this one runs on the host and descends below a config.
 """
 function list_productions(h::SSHHost, remote_root::AbstractString)
     text = run_remote(h, `find $remote_root -mindepth 2 -maxdepth 4 -name config.json -type f -printf '%h\n'`)

@@ -1,15 +1,37 @@
 # This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
 
+const PANEL_FIELDS = SETTINGS_FIELDS
+const PANEL_BUTTONS = (:save, :estimate, :transfer)
+const PANEL_ITEMS = (PANEL_FIELDS..., PANEL_BUTTONS...)
+const FIELD_LABELS = (host = "Host", remote_root = "Remote root", production = "Production", local_root = "Local root",
+                      mount_root = "Mount root", staging = "Staging", jobs = "Jobs", selection = "Selection")
+const BUTTON_LABELS = (connect = "Connect", load = "Load selection", save = "Save selection", estimate = "Estimate", transfer = "Transfer")
+
+# Width from which the panel uses two columns, and the fewest body rows that justify showing the panel.
+const WIDE_PANEL = 100
+const MIN_BODY = 6
+
+"""
+    FieldEdit(field, text, hint)
+
+A settings field being edited: its name, the text typed so far and the candidates the last Tab listed.
+"""
+mutable struct FieldEdit
+    field::Symbol
+    text::String
+    hint::String
+end
+
 """
     SyncPage(host, production, options; queue = TaskQueue())
     SyncPage(host, options; queue = TaskQueue())
 
-The state of the sync screen. The second form starts on the production picker: [`sync_start!`](@ref) lists
-the productions of `options.remote_root` in the background, and choosing one
-builds the production and switches to the tree screen. `screen` is `:pick` or
-`:tree`; `production` and `root` are `nothing` on the picker.
+The state of the sync screen: a settings panel above the production tree. The second form has no production
+yet: [`sync_start!`](@ref) lists the productions of `options.remote_root` in the background, and choosing one
+(Enter on the Production field opens the list) builds the production and its tree. `production` and `root` are
+`nothing` until then.
 
-On the tree screen the `Node` tree is the source of truth; the `TreeView` is
+The `Node` tree is the source of truth; the `TreeView` is
 rebuilt from it whenever anything changes, because `TreeView` caches its
 flattened rows and mutating its nodes in place would leave that cache stale.
 
@@ -19,6 +41,11 @@ reason. `pending` holds the remote paths of listings in flight.
 `extracting` is set while the remote helper reduces files, `environment` caches a
 ready helper environment, and `continuation` is what to do once an environment
 check or creation finishes.
+
+`settings` holds the text of every panel field; `errors` the reasons the invalid ones are unusable. `focus` is
+`:panel` or `:tree`, `cursor` indexes `PANEL_ITEMS`, `edit` is the field being edited and `picking` says the
+production list is open. `panel_open` is the wish of the user, `panel_shown` what the last render could fit;
+`panel_rects` and `summary_rect` are the screen cells of the last render, which mouse handling uses.
 
 The page is given a `TaskQueue` and starts its tasks with ids prefixed `sync:`; the host routes events with that
 prefix to [`sync_task!`](@ref). `running` counts the page's own unanswered tasks, because the queue may be shared.
@@ -42,12 +69,21 @@ mutable struct SyncPage
     input::Union{Nothing,TextInput}
     estimate::Union{Nothing,Estimate}
     progress::Union{Nothing,Progress}
-    screen::Symbol
     productions::Union{Nothing,Vector{String}}
     picker::Union{Nothing,SelectableList}
     extracting::Union{Nothing,ExtractProgress}
     environment::Union{Nothing,EnvironmentStatus}
     continuation::Union{Nothing,Function}
+    focus::Symbol
+    cursor::Int
+    edit::Union{Nothing,FieldEdit}
+    panel_open::Bool
+    panel_shown::Bool
+    errors::Dict{Symbol,String}
+    remote_default::String
+    panel_rects::Vector{Pair{Symbol,Rect}}
+    summary_rect::Rect
+    picking::Bool
 end
 
 function SyncPage(host::RemoteHost, production::Production, options::Options; queue::TaskQueue = TaskQueue())
@@ -57,10 +93,11 @@ function SyncPage(host::RemoteHost, production::Production, options::Options; qu
                  TreeView(TreeNode("")), queue,
                  false, "", nothing,
                  nothing, :none, nothing, nothing, nothing,
-                 :tree, nothing, nothing, nothing, nothing, nothing)
+                 nothing, nothing, nothing, nothing, nothing,
+                 :tree, 1, nothing, false, true, Dict{Symbol,String}(), "", Pair{Symbol,Rect}[], Rect(1, 1, 0, 0), false)
     rebuild_tree!(m)
     m.tree.selected = 1
-    return m
+    return revalidate!(m)
 end
 
 function SyncPage(host::RemoteHost, options::Options; queue::TaskQueue = TaskQueue())
@@ -69,18 +106,19 @@ function SyncPage(host::RemoteHost, options::Options; queue::TaskQueue = TaskQue
                  TreeView(TreeNode("")), queue,
                  false, "", nothing,
                  nothing, :none, nothing, nothing, nothing,
-                 :pick, nothing, nothing, nothing, nothing, nothing)
-    return m
+                 nothing, nothing, nothing, nothing, nothing,
+                 :tree, 1, nothing, true, true, Dict{Symbol,String}(), "", Pair{Symbol,Rect}[], Rect(1, 1, 0, 0), false)
+    return revalidate!(m)
 end
 
 """
     sync_start!(page::SyncPage)::SyncPage
 
-Start the work the page needs on its first display: on the picker, list the productions. Calling it again
+Start the work the page needs on its first display: without a production, list the productions. Calling it again
 while the listing runs or after it arrived does nothing.
 """
 function sync_start!(m::SyncPage)
-    m.screen == :pick && m.productions === nothing && m.running == 0 && request_productions!(m)
+    m.production === nothing && m.productions === nothing && m.running == 0 && request_productions!(m)
     return m
 end
 
@@ -549,8 +587,9 @@ function details(m::SyncPage)
     append!(lines,
             ["space copy   l link   n first N   x extract",
              "per-detector tiers: space/l mark a detector's files",
-             "enter expand/collapse   s save   mouse: click, wheel",
-             "e estimate   t sync   q quit"])
+             "enter expand/collapse   mouse: click, wheel",
+             "Tab settings and buttons   p panel",
+             "s save   e estimate   t sync   q quit"])
     return Paragraph(join(lines, "\n"); block = Block(title = "Details"), wrap = word_wrap)
 end
 
@@ -586,24 +625,166 @@ function render_prompt(m::SyncPage, area::Rect, buf::Buffer)
     return nothing
 end
 
-"""
-    render_pick(m::SyncPage, area::Rect, buf::Buffer)
+panel_rows(wide::Bool) = wide ? 6 : length(PANEL_FIELDS) + 2
 
-The production picker: the productions found under the remote root, or a
-placeholder while the search runs.
 """
-function render_pick(m::SyncPage, area::Rect, buf::Buffer)
-    rows = split_layout(Layout(Vertical, Constraint[Fill(1), Fixed(1)]), area)
-    block = Block(title = "Productions on $(m.options.host)")
-    if m.picker === nothing
-        render(Paragraph(m.productions === nothing ? "listing…" : "no productions found in $(m.options.remote_root)";
-                         block), rows[1], buf)
+    panel_rects(inner::Rect, wide::Bool)::Vector{Pair{Symbol,Rect}}
+
+The one-row cell of every field and button inside the panel's `inner` area. Rendering and mouse
+handling both use it, so a click always lands on what was drawn.
+"""
+function panel_rects(inner::Rect, wide::Bool)
+    rects = Pair{Symbol,Rect}[]
+    cell(row, col, width, name) = push!(rects, name => Rect(inner.x + col, inner.y + row, max(width, 1), 1))
+    w = inner.width
+    if wide
+        half = w ÷ 2
+        cell(0, 0, half - 1, :host)
+        cell(0, half, w - half, :remote_root)
+        cell(1, 0, w, :production)
+        cell(2, 0, half - 1, :local_root)
+        cell(2, half, w - half, :mount_root)
+        third = w ÷ 3
+        cell(3, 0, third - 1, :staging)
+        cell(3, third, third - 1, :jobs)
+        cell(3, 2 * third, w - 2 * third, :selection)
+        row = 4
     else
-        render(m.picker, rows[1], buf)
+        for (i, field) in enumerate(PANEL_FIELDS)
+            cell(i - 1, 0, w, field)
+        end
+        row = length(PANEL_FIELDS)
     end
-    render(StatusBar(left = [Span(isempty(m.status) ? "↑/↓ move   enter open   r reload   q quit   mouse: click, wheel" : m.status)]),
-           rows[2], buf)
-    m.modal === nothing || render(m.modal, area, buf)
+    x = 0
+    for button in PANEL_BUTTONS
+        width = textwidth(BUTTON_LABELS[button]) + 4
+        cell(row, x, width, button)
+        x += width + 1
+    end
+    return rects
+end
+
+"""
+    revalidate!(page)
+
+Recompute the reasons fields are invalid (with `check_paths`) and the remote root the hosts file gives
+the host. Called after every change of a setting, never per frame.
+"""
+function revalidate!(m::SyncPage)
+    m.errors = Dict(settings_errors(m.settings; check_paths = true))
+    s = m.settings
+    m.remote_default = isfile(s.hosts_file) && s.host in hosts_choices(s.hosts_file) ? host_remote_root(s.hosts_file, s.host) : ""
+    return m
+end
+
+"""
+    blocked(page)::Bool
+
+Whether an invalid setting forbids Estimate and Transfer. The first reason goes to the status line.
+"""
+function blocked(m::SyncPage)
+    isempty(m.errors) && return false
+    m.status = last(first(settings_errors(m.settings; check_paths = true)))
+    return true
+end
+
+"""
+    change_setting!(page, field, text)
+
+Store a committed value. A value that is invalid stays in the field and is shown with its reason.
+"""
+function change_setting!(m::SyncPage, field::Symbol, text::AbstractString)
+    setfield!(m.settings, field, String(text))
+    revalidate!(m)
+    refresh_options!(m)
+    return m
+end
+
+"""
+    refresh_options!(page)
+
+Rebuild `page.options` from the settings when they are valid, so the next estimate or transfer uses the
+new jobs, staging directory and selection path.
+"""
+function refresh_options!(m::SyncPage)
+    isempty(m.errors) || return m
+    m.options = Options(m.settings; from = m.options.from, dry_run = m.options.dry_run, yes = m.options.yes)
+    return m
+end
+
+# What an empty field stands for.
+function empty_text(m::SyncPage, field::Symbol)
+    field === :remote_root && return isempty(m.remote_default) ? "(not set)" : string("(", m.remote_default, ")")
+    field === :staging && return "(host default)"
+    field === :mount_root && return "(none)"
+    field === :production && return "(choose with Enter)"
+    field === :selection &&
+        return isempty(selection_path(m.settings)) ? "(default after choosing a production)" : selection_path(m.settings)
+    return ""
+end
+
+function render_panel(m::SyncPage, area::Rect, buf::Buffer, shown::Bool, wide::Bool)
+    m.summary_rect = Rect(area.x, area.y, area.width, 1)
+    s = m.settings
+    if !shown
+        empty!(m.panel_rects)
+        text = string("▸ ", s.host, "  ", isempty(s.production) ? "(no production)" : s.production, "  ", s.local_root)
+        set_string!(buf, area.x, area.y, text, tstyle(:accent); max_x = Tachikoma.right(area))
+        return nothing
+    end
+    inner = render(Block(title = "Settings"), area, buf)
+    m.panel_rects = panel_rects(inner, wide)
+    for (name, rect) in m.panel_rects
+        focused = m.focus == :panel && PANEL_ITEMS[m.cursor] == name
+        if name in PANEL_FIELDS
+            editing = m.edit !== nothing && m.edit.field == name
+            value = getfield(s, name)
+            dim = isempty(value) && !editing
+            shown_text = editing ? m.edit.text * "▏" : !isempty(value) ? value : empty_text(m, name)
+            style = haskey(m.errors, name) ? tstyle(:error) : editing ? tstyle(:accent) : dim ? tstyle(:text_dim) : tstyle(:text)
+            set_string!(buf, rect.x, rect.y, rpad(FIELD_LABELS[name], 12), focused ? tstyle(:accent, bold = true) : tstyle(:text_dim);
+                        max_x = Tachikoma.right(rect))
+            set_string!(buf, rect.x + 12, rect.y, shown_text, style; max_x = Tachikoma.right(rect))
+        else
+            set_string!(buf, rect.x, rect.y, string("[ ", BUTTON_LABELS[name], " ]"),
+                        focused ? tstyle(:accent, bold = true) : tstyle(:text);
+                        max_x = Tachikoma.right(rect))
+        end
+    end
+    field = m.edit !== nothing ? m.edit.field : m.focus == :panel && PANEL_ITEMS[m.cursor] in PANEL_FIELDS ? PANEL_ITEMS[m.cursor] : nothing
+    message = field === nothing ? "" : m.edit !== nothing && !isempty(m.edit.hint) ? m.edit.hint : get(m.errors, field, "")
+    set_string!(buf, inner.x, Tachikoma.bottom(inner), message, tstyle(haskey(m.errors, something(field, :none)) ? :error : :text_dim);
+                max_x = Tachikoma.right(inner))
+    return nothing
+end
+
+# The production list as an overlay on the body.
+function render_picker(m::SyncPage, area::Rect, buf::Buffer)
+    m.picker === nothing && return nothing
+    height = min(area.height, max(5, length(m.productions) + 2))
+    rect = center(area, min(70, area.width), height)
+    for y in rect.y:Tachikoma.bottom(rect)
+        set_string!(buf, rect.x, y, " "^rect.width, tstyle(:text))
+    end
+    render(m.picker, rect, buf)
+    return nothing
+end
+
+# The bottom row: the status alone without a tree, else the running estimate or the transfer gauge.
+function render_progress(m::SyncPage, area::Rect, buf::Buffer)
+    if m.root === nothing
+        set_string!(buf, area.x, area.y, isempty(m.status) ? "Connect (c) lists the productions" : m.status, tstyle(:text);
+                    max_x = Tachikoma.right(area))
+    elseif m.progress === nothing
+        render(status_bar(m), area, buf)
+    else
+        x = m.extracting
+        render(Gauge(x === nothing ? m.progress.fraction : (x.total == 0 ? 0.0 : x.done / x.total);
+                     label = x === nothing ?
+                             string(format_bytes(m.progress.bytes), "  ", m.progress.rate, "  ETA ", m.progress.eta) :
+                             string("extracting ", x.done, "/", x.total, " files  ", format_bytes(x.bytes))),
+               area, buf)
+    end
     return nothing
 end
 
@@ -614,21 +795,22 @@ Draw the interface into `area`. The area is explicit and nothing assumes it owns
 the terminal, so the future Juleana app can host this as one screen.
 """
 function render_sync(m::SyncPage, area::Rect, buf::Buffer)
-    m.screen == :pick && return render_pick(m, area, buf)
-    rows = split_layout(Layout(Vertical, Constraint[Fill(1), Fixed(1)]), area)
-    panes = split_layout(Layout(Horizontal, Constraint[Percent(55), Fill(1)]), rows[1])
-    render(m.tree, panes[1], buf)
-    render(details(m), panes[2], buf)
-    if m.progress === nothing
-        render(status_bar(m), rows[2], buf)
+    wide = area.width >= WIDE_PANEL
+    shown = m.panel_open && area.height >= panel_rows(wide) + 2 + MIN_BODY + 1       # the progress row is the +1
+    m.panel_shown = shown
+    shown || m.focus != :panel || (m.focus = :tree)
+    rows = split_layout(Layout(Vertical, Constraint[Fixed(shown ? panel_rows(wide) + 2 : 1), Fill(1), Fixed(1)]), area)
+    render_panel(m, rows[1], buf, shown, wide)
+    if m.root === nothing
+        render(Paragraph(m.running > 0 ? "working…" : "No production is open. Choose one with Enter on the Production field.";
+                         block = Block(title = "Production")), rows[2], buf)
     else
-        x = m.extracting
-        render(Gauge(x === nothing ? m.progress.fraction : (x.total == 0 ? 0.0 : x.done / x.total);
-                     label = x === nothing ?
-                             string(format_bytes(m.progress.bytes), "  ", m.progress.rate, "  ETA ", m.progress.eta) :
-                             string("extracting ", x.done, "/", x.total, " files  ", format_bytes(x.bytes))),
-               rows[2], buf)
+        panes = split_layout(Layout(Horizontal, Constraint[Percent(55), Fill(1)]), rows[2])
+        render(m.tree, panes[1], buf)
+        render(details(m), panes[2], buf)
     end
+    render_progress(m, rows[3], buf)
+    m.picking && render_picker(m, rows[2], buf)
     m.modal_kind == :firstn && return render_prompt(m, area, buf)
     m.modal === nothing || render(m.modal, area, buf)
     return nothing
@@ -640,35 +822,175 @@ end
 The keys for a one-line hint bar, as `(key, description)` pairs.
 """
 function sync_hints(m::SyncPage)
-    m.screen == :pick && return (("↑↓", "move"), ("Enter", "open"), ("r", "reload"))
-    sync_text_input(m) && return (("Enter", "apply"), ("Esc", "cancel"))
-    return (("Space", "copy"), ("l", "link"), ("x", "extract"), ("n", "first N"), ("e", "estimate"), ("t", "sync"), ("s", "save"))
+    sync_text_input(m) && return (("Enter", "apply"), ("Tab", "complete"), ("Esc", "cancel"))
+    m.picking && return (("↑↓", "move"), ("Enter", "choose"), ("Esc", "close"), ("r", "reload"))
+    m.focus == :panel && return (("Tab", "next"), ("Enter", "edit or press"), ("Esc", "tree"), ("p", "panel"))
+    return (("Tab", "settings"), ("Space", "copy"), ("l", "link"), ("x", "extract"), ("n", "first N"), ("e", "estimate"), ("t", "sync"),
+            ("s", "save"), ("p", "panel"))
 end
 
-# Builds the tree of the picked production in the background.
-function open_production!(m::SyncPage)
-    name = m.productions[m.picker.selected]
+# Builds the tree of production `name` in the background.
+function open_production!(m::SyncPage, name::AbstractString)
     host = m.host
     options = m.options
     m.status = "opening $name…"
     spawn!(m, :open) do
-        production = Production(host, name, options.remote_root, options.local_root;
-                                mount_root = options.mount_root)
+        production = Production(host, name, options.remote_root, options.local_root; mount_root = options.mount_root)
         return (production, production_tree(host, production))
     end
 end
 
-# Keys on the picker screen. Input is ignored while the production is being opened,
-# so that a second enter cannot start a second build.
-function update_pick!(m::SyncPage, e::KeyEvent)
-    m.running > 0 && return m
-    (e.key == :char && e.char == 'r') && return request_productions!(m)
+function move_focus!(m::SyncPage, step::Int)
+    items = m.panel_open && m.panel_shown ? length(PANEL_ITEMS) : 0
+    position = m.focus == :tree ? (step > 0 ? 0 : items + 1) : m.cursor
+    position += step
+    if 1 <= position <= items
+        m.focus = :panel
+        m.cursor = position
+    else
+        m.focus = :tree
+    end
+    return m
+end
+
+function panel_key!(m::SyncPage, e::KeyEvent)
+    if e.key in (:up, :left)
+        m.cursor = max(1, m.cursor - 1)
+    elseif e.key in (:down, :right)
+        m.cursor = min(length(PANEL_ITEMS), m.cursor + 1)
+    elseif e.key == :enter
+        activate!(m, PANEL_ITEMS[m.cursor])
+    elseif e.key == :escape
+        m.focus = :tree
+    else
+        return false
+    end
+    return true
+end
+
+# A field starts an edit (the Production field opens the picker); a button acts.
+function activate!(m::SyncPage, name::Symbol)
+    name === :production && return open_picker!(m)
+    if name in PANEL_FIELDS
+        m.edit = FieldEdit(name, getfield(m.settings, name), "")
+    elseif name === :save
+        needs_production!(m) || save!(m)
+    elseif name === :estimate
+        needs_production!(m) || blocked(m) || open_estimate!(m; confirm = false)
+    elseif name === :transfer
+        needs_production!(m) || blocked(m) || open_estimate!(m; confirm = true)
+    end
+    return m
+end
+
+"""
+    needs_production!(page)::Bool
+
+Whether an action that needs an open production has to be refused; the reason goes to the status line. The tree keys,
+Save, Estimate and Transfer call it, so a page without a production never reaches code that needs one.
+"""
+function needs_production!(m::SyncPage)
+    m.production === nothing || return false
+    m.status = "Open a production first (Enter on Production)"
+    return true
+end
+
+function edit_key!(m::SyncPage, e::KeyEvent)
+    edit = m.edit
+    edit.hint = ""
+    if e.key == :escape
+        m.edit = nothing
+    elseif e.key == :enter
+        m.edit = nothing
+        change_setting!(m, edit.field, edit.text)
+    elseif e.key == :backspace
+        edit.text = chop(edit.text)
+    elseif e.key == :tab
+        complete_field!(m, edit)
+    elseif e.key == :char && isprint(e.char)
+        edit.text *= e.char
+    end
+    return m
+end
+
+# Tab in a field: local folders for the two local roots, the hosts file for the host.
+function complete_field!(m::SyncPage, edit::FieldEdit)
+    if edit.field in (:local_root, :mount_root)
+        completed, candidates = complete_path(edit.text)
+        edit.text = completed
+        length(candidates) > 1 && (edit.hint = join(first(candidates, 8), "  "))
+    elseif edit.field === :host
+        candidates = filter(startswith(edit.text), hosts_choices(m.settings.hosts_file))
+        isempty(candidates) && return m
+        common = first(candidates)
+        for c in candidates
+            common = join(first(p) for p in Iterators.takewhile(p -> p[1] == p[2], zip(common, c)))
+        end
+        edit.text = common
+        length(candidates) > 1 && (edit.hint = join(candidates, "  "))
+    end
+    return m
+end
+
+"""
+    open_picker!(page)
+
+Open the production list; when the productions are not known yet, or the last listing found none, list them
+first and open the list when they arrive.
+"""
+function open_picker!(m::SyncPage)
+    if m.running > 0
+        m.status = "busy: " * (isempty(m.status) ? "a background task is running" : m.status)
+        return m
+    end
+    if m.productions === nothing || isempty(m.productions)
+        request_productions!(m)
+        return m
+    end
+    m.picker = SelectableList(m.productions; focused = true, block = Block(title = "Productions on $(m.settings.host)"))
+    m.picking = true
+    return m
+end
+
+# Rows of the picker move; Enter chooses; Escape closes; r lists the productions again. Without a picker the key does nothing.
+function picker_key!(m::SyncPage, e::KeyEvent)
     m.picker === nothing && return m
     if e.key in (:up, :down, :home, :end_key)
         handle_key!(m.picker, e)
     elseif e.key == :enter
-        open_production!(m)
+        choose_production!(m)
+    elseif e.key == :escape
+        m.picking = false
+    elseif e.key == :char && e.char == 'r' && m.running == 0
+        m.picking = false
+        request_productions!(m)
     end
+    return m
+end
+
+"""
+    choose_production!(page)
+
+Open the production under the picker's cursor. Unsaved marks of the production on display are only dropped
+after a confirmation.
+"""
+function choose_production!(m::SyncPage)
+    name = m.productions[m.picker.selected]
+    m.picking = false
+    return discard_guard!(m, () -> open_production!(m, name))
+end
+
+"""
+    discard_guard!(page, proceed)
+
+Call `proceed()`, after a confirmation when the tree has unsaved marks.
+"""
+function discard_guard!(m::SyncPage, proceed)
+    m.dirty || return proceed()
+    m.modal = Modal(title = "Unsaved selection", message = "Discard the marks on $(m.production.name)?",
+                    confirm_label = "Discard", cancel_label = "Keep", selected = :cancel)
+    m.modal_kind = :discard
+    m.continuation = proceed
     return m
 end
 
@@ -723,11 +1045,13 @@ end
 # never answer a dialog. Clicks on the tree go through the same code as enter.
 function mouse!(m::SyncPage, e::MouseEvent)
     m.modal_kind == :none || return m
-    if m.screen == :pick
+    if m.picking
         (m.running > 0 || m.picker === nothing) && return m
-        mouse_list!(m.picker, length(m.productions), e) && open_production!(m)
+        mouse_list!(m.picker, length(m.productions), e) && choose_production!(m)
         return m
     end
+    m.root === nothing && return m
+    e.button == mouse_left && e.action == mouse_press && Base.contains(m.tree.last_area, e.x, e.y) && (m.focus = :tree)
     if mouse_list!(m.tree, tree_visible_count(m.tree), e)
         node = current_node(m)
         node === nothing || expand_or_collapse!(m, node; collapse = true)
@@ -767,6 +1091,14 @@ function key!(m::SyncPage, e::KeyEvent)
             answer == :confirm && return start_bootstrap!(m)
             m.continuation = nothing
         end
+        if m.modal_kind == :discard
+            proceed = m.continuation
+            m.continuation = nothing
+            m.modal = nothing
+            m.modal_kind = :none
+            answer == :confirm && proceed()
+            return m
+        end
         m.modal = nothing
         m.modal_kind = :none
         return m
@@ -774,7 +1106,14 @@ function key!(m::SyncPage, e::KeyEvent)
 
     m.modal_kind == :estimating && return m   # waiting on the dry run
 
-    m.screen == :pick && return update_pick!(m, e)
+    m.edit !== nothing && return edit_key!(m, e)
+    m.picking && return picker_key!(m, e)
+    e.key in (:tab, :backtab) && return move_focus!(m, e.key == :tab ? 1 : -1)
+    if m.focus == :panel
+        panel_key!(m, e) && return m
+        (e.key == :char && e.char in ('e', 't', 's', 'p')) || return m     # the tree keys need the tree focus
+    end
+    m.root === nothing && e.key == :char && e.char in (' ', 'l', 'n', 'x', 's', 'e', 't') && (needs_production!(m); return m)
 
     node = current_node(m)
 
@@ -830,16 +1169,19 @@ function key!(m::SyncPage, e::KeyEvent)
             m.status = "x extracts a detector: open the detectors row of a run or period and move onto one"
         end
     elseif e.char == 'e'
-        open_estimate!(m; confirm = false)
+        blocked(m) || open_estimate!(m; confirm = false)
     elseif e.char == 't'
-        open_estimate!(m; confirm = true)
+        blocked(m) || open_estimate!(m; confirm = true)
     elseif e.char == 's'
         save!(m)
+    elseif e.char == 'p'
+        m.panel_open = !m.panel_open
+        m.panel_open || m.focus != :panel || (m.focus = :tree)
     end
     return m
 end
 
-sync_text_input(m::SyncPage) = m.modal_kind == :firstn
+sync_text_input(m::SyncPage) = m.modal_kind == :firstn || m.edit !== nothing
 
 ctrl_c(e::KeyEvent) = e.key == :ctrl_c || (e.key == :ctrl && e.char == 'c')
 
@@ -864,6 +1206,7 @@ function shielded(f, m::SyncPage, fallback)
             message = first(split(sprint(showerror, err), '\n'))
             m.status = isempty(m.status) ? message : m.status * "; " * message
         else
+            m.edit = nothing
             show_error!(m, err)
         end
         return fallback
@@ -895,7 +1238,22 @@ Handle a mouse event; `false` while a dialog is open, `true` otherwise.
 """
 function sync_mouse!(m::SyncPage, e::MouseEvent)
     m.modal_kind == :none && m.modal === nothing || return false
+    m.edit === nothing || return false
     return shielded(m, true) do
+        if e.button == mouse_left && e.action == mouse_press
+            if Base.contains(m.summary_rect, e.x, e.y)
+                m.panel_open = !m.panel_open
+                m.panel_open || m.focus != :panel || (m.focus = :tree)
+                return true
+            end
+            for (name, rect) in (m.picking ? Pair{Symbol,Rect}[] : m.panel_rects)
+                Base.contains(rect, e.x, e.y) || continue
+                m.focus = :panel
+                m.cursor = findfirst(==(name), PANEL_ITEMS)
+                activate!(m, name)
+                return true
+            end
+        end
         mouse!(m, e)
         return true
     end
@@ -977,26 +1335,28 @@ function task!(m::SyncPage, id::AbstractString, e::TaskEvent)
         m.progress = nothing
         m.extracting = nothing
         m.continuation = nothing
-        if m.screen == :pick
-            m.status = ""
-            id == "productions" && (m.productions = String[])
-        end
-        return show_error!(m, e.value)
+        id == "productions" && (m.productions = String[])
+        show_error!(m, e.value)
+        # The dialog clears the status; once it is dismissed the page says why it has no production.
+        id == "productions" && (m.status = "no productions found in $(m.options.remote_root)")
+        return m
     end
 
     if id == "productions"
         m.productions = e.value
-        isempty(e.value) || (m.picker = SelectableList(e.value; focused = true,
-                                                       block = Block(title = "Productions on $(m.options.host)")))
+        if isempty(e.value)
+            m.picking = false
+            m.status = "no productions found in $(m.options.remote_root)"
+        else
+            m.picker = SelectableList(e.value; focused = true, block = Block(title = "Productions on $(m.options.host)"))
+            m.picking = true
+        end
         return m
     elseif id == "open"
         m.production, m.root = e.value
-        o = m.options
-        name = m.production.name
-        m.options = Options(o.host, o.remote_root, o.local_root, o.mount_root, name,
-                            isempty(o.out) ? default_selection_path(name) : o.out,
-                            o.from, o.dry_run, o.yes, o.jobs, o.helper)
-        m.screen = :tree
+        m.settings.production = m.production.name
+        revalidate!(m)
+        m.options = Options(m.settings; from = m.options.from, dry_run = m.options.dry_run, yes = m.options.yes)
         m.status = ""
         rebuild_tree!(m)
         m.tree.selected = 1

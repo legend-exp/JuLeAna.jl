@@ -404,11 +404,11 @@
         local_root = mktempdir()
         options = Options("local", FIXTURE_ROOT, local_root, nothing, "", "", nothing, false, false)
         m = sync_start!(SyncPage(h, options))
-        @test find_text(draw(m), "Productions on local") !== nothing
-        @test find_text(draw(m), "listing…") !== nothing
+        @test find_text(draw(m), "working…") !== nothing && !m.picking
         settle!(m)
         tb = draw(m)
-        @test find_text(tb, "listing…") === nothing
+        @test m.picking && find_text(tb, "Productions on local") !== nothing
+        @test find_text(tb, "working…") === nothing
         @test find_text(tb, "temp/jl-dev") !== nothing
         @test find_text(tb, "test") !== nothing
 
@@ -445,15 +445,15 @@
         @test m4.modal_kind == :error
         @test find_text(draw(m4), "not a directory") !== nothing
 
-        # After the error is dismissed the picker says so and can retry.
+        # After the error is dismissed the page says so and opening the picker again retries.
         update!(m4, KeyEvent(:escape))
         @test m4.modal === nothing
         tb = draw(m4)
         @test find_text(tb, "no productions found") !== nothing
-        @test find_text(tb, "listing…") === nothing
+        @test find_text(tb, "working…") === nothing
         m4.options = options
-        update!(m4, KeyEvent('r'))
-        @test find_text(draw(m4), "listing…") !== nothing
+        open_picker!(m4)
+        @test find_text(draw(m4), "working…") !== nothing
         settle!(m4)
         @test find_text(draw(m4), "temp/jl-dev") !== nothing
     end
@@ -545,13 +545,13 @@
             area = m.picker.last_area
             update!(m, click(area.x + 1, area.y + 1))
             @test m.picker.selected == 2
-            @test m.screen == :pick
+            @test m.picking
             update!(m, click(area.x + 200, area.y + 1))
             @test m.picker.selected == 2
             # A click is ignored while a background task is active.
             m.running += 1
             update!(m, click(area.x + 1, area.y + 2))
-            @test m.picker.selected == 2 && m.screen == :pick
+            @test m.picker.selected == 2 && m.picking
             m.running -= 1
             update!(m, click(area.x + 1, area.y + 1))
             settle!(m)

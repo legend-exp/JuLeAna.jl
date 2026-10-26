@@ -16,7 +16,7 @@ using JuLeAna: Sync
 using Tachikoma: TestBackend, Frame, Rect, KeyEvent, MouseEvent, mouse_left, mouse_right, mouse_press, mouse_release, mouse_drag,
                  mouse_scroll_up, mouse_scroll_down, tree_visible_count, TaskEvent, TaskQueue, GraphicsRegion, PixelSnapshot, reset!,
                  row_text,
-                 find_text, drain_tasks!, render_widget!
+                 find_text, style_at, drain_tasks!, render_widget!
 import Tachikoma
 import Tachikoma: view, update!, should_quit, init!, cleanup!
 
@@ -65,7 +65,10 @@ using JuLeAna.Sync: main, RemoteHost, SSHHost, LocalHost, DirEntry,
                     StepProgress, Steps, NO_STEPS, format_step, StepPrinter, failed_step, with_failed_step, apply_steps, estimate_selection,
                     detector_steps,
                     SyncSettings, SETTINGS_FIELDS, user_settings, field_error, settings_errors, hosts_choices, selection_path,
-                    parse_settings
+                    parse_settings,
+                    FieldEdit, PANEL_FIELDS, PANEL_BUTTONS, PANEL_ITEMS, panel_rects, revalidate!, change_setting!, refresh_options!,
+                    blocked,
+                    open_picker!
 
 # `update!` and `view` on a page deliver an event to it the way its host does.
 update!(p::SyncPage, e::KeyEvent) = (sync_key!(p, e); p)
@@ -157,6 +160,7 @@ withenv("XDG_CONFIG_HOME" => TEST_CONFIG_HOME) do
         run_file("test_sync_extract_options.jl")
         run_file("test_sync_tui.jl")
         run_file("test_sync_app.jl")
+        run_file("test_sync_page.jl")
         run_file("test_sync_extract_tui.jl")
         run_file("test_sync_tierdet_tui.jl")
         run_file("test_sync_perdet_tui.jl")
