@@ -56,7 +56,8 @@ function process_qcs_cal(processing_config, l200::LegendData, period::DataPeriod
     end
 
     # create log line Tuple
-    log_nt = NamedTuple{(:Detector, :usability, :Status, Symbol("Pulser SF"), Symbol("Tl-208 FEP SF"), Symbol("Number Pulser Events"),
+    log_nt = NamedTuple{(:Detector, :usability, :psd_usability, :Status, Symbol("Pulser SF"), Symbol("Tl-208 FEP SF"),
+                         Symbol("Number Pulser Events"),
                          Symbol("Number Single-pulse Events"), Symbol("Single pulses with invalid energy"), :Error)}
 
     # get worker pool
@@ -88,7 +89,8 @@ function process_qcs_cal(processing_config, l200::LegendData, period::DataPeriod
            haskey(pars_db[det], :n_invalid_e_single_pulse) &&
            isfile(qcsfilename)
             sf = pars_db[det].survival_fractions
-            log_det = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(1), sf.pulser.is_single_pulse,
+            log_det = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), ProcessStatus(1),
+                              sf.pulser.is_single_pulse,
                               sf.Tl208FEP.is_single_pulse, pars_db[det].n_pulser, pars_db[det].n_single_pulse,
                               pars_db[det].n_invalid_e_single_pulse, "Already processed --> skipped."))
             @debug "Detector $det already processed"
@@ -217,7 +219,8 @@ function process_qcs_cal(processing_config, l200::LegendData, period::DataPeriod
             end
         end
 
-        log_det = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(1), pulser_sf.is_single_pulse, fep_sf.is_single_pulse,
+        log_det = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), ProcessStatus(1),
+                          pulser_sf.is_single_pulse, fep_sf.is_single_pulse,
                           n_pulser, n_single_pulse, n_invalid_e_single_pulse, "-"))
         return (result = (func = qc_propfunc, survival_fractions = survival_fractions, n_pulser = n_pulser, n_single_pulse = n_single_pulse,
                           n_invalid_e_single_pulse = n_invalid_e_single_pulse), log = log_det, processed = true)

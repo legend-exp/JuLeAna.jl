@@ -169,6 +169,28 @@ end
         @test r.X == "-"
 
         @test_throws "needs `detector` and `usability` fields" failure_log(DetLog, (channel = 1,), "boom")
+
+        PsdLog = NamedTuple{(:Detector, :usability, :psd_usability, :Partition, :Status, :X, :Error)}
+        r = failure_log(PsdLog, (; det..., psd_usability = :off, partition = :p1), "boom")
+        @test keys(r) == fieldnames(PsdLog)
+        @test (r.Partition, r.Status, r.X, r.Error) == (:p1, ProcessStatus(0), "-", "boom")
+        @test r.psd_usability == JuLeAna.detector_status(:off)
+        @test_throws "psd_usability" failure_log(PsdLog, (; det..., partition = :p1), "boom")
+    end
+
+    @testset "report columns of processors" begin
+        # The report rows of the processors for HPGe detectors list psd_usability right after usability, those of the other systems do not.
+        dir = joinpath(pkgdir(JuLeAna), "src", "processors")
+        n_geds = 0
+        for file in filter(endswith(".jl"), readdir(dir; join = true))
+            code = read(file, String)
+            for m in eachmatch(r"NamedTuple\{\(:Detector, :usability(, :psd_usability)?,", code)
+                geds = occursin("system = :geds", code)
+                @test (m.captures[1] !== nothing) == geds
+                n_geds += geds
+            end
+        end
+        @test n_geds > 0
     end
 
     @testset "parallel" begin

@@ -63,8 +63,9 @@ is `ProcessStatus(0)` and every column without data is filled with `"-"`.
 
 Methods exist for `FileKey` items, giving `(itr, status, "-"..., message)`, and for
 `NamedTuple` items with `detector` and `usability` fields, giving
-`(detector, usability, [partition,] status, "-"..., message)`; the partition column is
-present when `log_nt` has a `Partition` column. A new item type for [`parallel`](@ref)
+`(detector, usability, [psd_usability,] [partition,] status, "-"..., message)`; the
+`psd_usability` column is present when `log_nt` has a `psd_usability` column and the
+partition column when it has a `Partition` column. A new item type for [`parallel`](@ref)
 needs its own `failure_log` method.
 """
 function failure_log(log_nt::Type{<:NamedTuple}, itr::FileKey, message::AbstractString)
@@ -74,8 +75,9 @@ end
 function failure_log(log_nt::Type{<:NamedTuple}, itr::NamedTuple, message::AbstractString)
     haskey(itr, :detector) && haskey(itr, :usability) ||
         throw(ArgumentError("failure_log needs `detector` and `usability` fields, got $(keys(itr))"))
-    lead = :Partition in fieldnames(log_nt) ? (itr.detector, detector_status(itr.usability), itr.partition) :
-           (itr.detector, detector_status(itr.usability))
+    lead = (itr.detector, detector_status(itr.usability))
+    :psd_usability in fieldnames(log_nt) && (lead = (lead..., detector_status(itr.psd_usability)))
+    :Partition in fieldnames(log_nt) && (lead = (lead..., itr.partition))
     return log_nt((lead..., ProcessStatus(0), fill("-", length(fieldnames(log_nt)) - length(lead) - 2)..., message))
 end
 

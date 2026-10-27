@@ -62,7 +62,8 @@ function p_process_aoe_cut_cal(processing_config, l200::LegendData, period::Data
     end
 
     # create log line Tuple
-    log_nt = NamedTuple{(:Detector, :usability, :Partition, :Status, Symbol("Classifier Type"), Symbol("Cut Value"), Symbol("SEP SF"),
+    log_nt = NamedTuple{(:Detector, :usability, :psd_usability, :Partition, :Status, Symbol("Classifier Type"), Symbol("Cut Value"),
+                         Symbol("SEP SF"),
                          Symbol("FEP SF"), :Error)}
 
     # get worker pool
@@ -111,7 +112,8 @@ function p_process_aoe_cut_cal(processing_config, l200::LegendData, period::Data
         if (only_first_period && period != first(partinfo_det.period))
             @info "Only first period in partition $part for $period in $det ($ch)"
             for aoe_classifier in aoe_classifiers
-                log_info = log_nt((det, detector_status(chinfo_det.usability), part, process_skipped, aoe_classifier, fill("-", 3)...,
+                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                   process_skipped, aoe_classifier, fill("-", 3)...,
                                    "Only first periods --> skipped."))
                 # add results to dict
                 log_info_dict[aoe_classifier] = log_info
@@ -124,7 +126,8 @@ function p_process_aoe_cut_cal(processing_config, l200::LegendData, period::Data
             @debug "Detector $(det) already processed, check missing filters"
             for aoe_classifier in aoe_classifiers
                 if haskey(pars_db_det[det], aoe_classifier)
-                    log_info = log_nt((det, detector_status(chinfo_det.usability), part, ProcessStatus(1), aoe_classifier,
+                    log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                       ProcessStatus(1), aoe_classifier,
                                        pars_db_det[det][aoe_classifier].lowcut, pars_db_det[det][aoe_classifier].peaks.ds[:Tl208SEP].sf,
                                        pars_db_det[det][aoe_classifier].peaks.ds[:Tl208FEP].sf, "Already processed --> skipped."))
                     # add results to dict
@@ -277,7 +280,8 @@ function p_process_aoe_cut_cal(processing_config, l200::LegendData, period::Data
                 result = merge(result_cut,
                                (peaks = (low = result_peaks_low, ds = result_peaks_ds), qbb = (low = qbb_result_low, ds = qbb_result_ds)))
 
-                log_info = log_nt((det, detector_status(chinfo_det.usability), part, ProcessStatus(1), aoe_classifier, result_cut.lowcut,
+                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                   ProcessStatus(1), aoe_classifier, result_cut.lowcut,
                                    result.peaks.ds[:Tl208SEP].sf, result.peaks.ds[:Tl208FEP].sf, "-"))
 
                 # add results to dict
@@ -287,7 +291,8 @@ function p_process_aoe_cut_cal(processing_config, l200::LegendData, period::Data
 
             catch e
                 e isa ProcessStepError || @error "Error in $aoe_classifier cut generation: $(truncate_error(e))"
-                log_info = log_nt((det, detector_status(chinfo_det.usability), part, ProcessStatus(0), aoe_classifier, "-", "-", "-",
+                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                   ProcessStatus(0), aoe_classifier, "-", "-", "-",
                                    truncate_error(e)))
 
                 # add results to dict

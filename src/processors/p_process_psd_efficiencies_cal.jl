@@ -62,7 +62,8 @@ function p_process_psd_efficiencies_cal(processing_config, l200::LegendData, per
     end
 
     # create log line Tuple
-    log_nt_cut = NamedTuple{(:Detector, :usability, :Partition, :Status, Symbol("Classifier Type"), Symbol("Cut Value"), Symbol("SEP SF"),
+    log_nt_cut = NamedTuple{(:Detector, :usability, :psd_usability, :Partition, :Status, Symbol("Classifier Type"), Symbol("Cut Value"),
+                             Symbol("SEP SF"),
                              Symbol("FEP SF"), :CutError)}
 
     # get worker pool
@@ -109,7 +110,8 @@ function p_process_psd_efficiencies_cal(processing_config, l200::LegendData, per
         if (only_first_period && period != first(partinfo_det.period))
             @info "Only first period in partition $part for $period in $det ($ch)"
             for psd_classifier in psd_classifiers
-                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), part, process_skipped, psd_classifier, fill("-", 3)...,
+                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                       process_skipped, psd_classifier, fill("-", 3)...,
                                        "Only first periods --> skipped."))
                 # add results to dict
                 log_info_dict[psd_classifier] = log_info
@@ -122,7 +124,8 @@ function p_process_psd_efficiencies_cal(processing_config, l200::LegendData, per
             @debug "Detector $(det) already processed, check missing filters"
             for psd_classifier in psd_classifiers
                 if haskey(pars_db_det[det], psd_classifier)
-                    log_info = log_nt_cut((det, detector_status(chinfo_det.usability), part, ProcessStatus(1), psd_classifier,
+                    log_info = log_nt_cut((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                           ProcessStatus(1), psd_classifier,
                                            pars_db_det[det][psd_classifier].cuts.lowcut,
                                            pars_db_det[det][psd_classifier].peaks.ds[:Tl208SEP].sf,
                                            pars_db_det[det][psd_classifier].peaks.ds[:Tl208FEP].sf, "Already processed --> skipped."))
@@ -306,7 +309,8 @@ function p_process_psd_efficiencies_cal(processing_config, l200::LegendData, per
                                 qbb = (low = qbb_result_low, high = qbb_result_high, ds = qbb_result_ds, low_lq = qbb_result_low_lq,
                                        lq_ds = qbb_result_lq_ds)))
 
-                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), part, ProcessStatus(1), psd_classifier, NaN,
+                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                       ProcessStatus(1), psd_classifier, NaN,
                                        result.peaks.ds[:Tl208SEP].sf, result.peaks.ds[:Tl208FEP].sf, "-"))
 
                 # add results to dict
@@ -317,7 +321,8 @@ function p_process_psd_efficiencies_cal(processing_config, l200::LegendData, per
             catch e
                 # a failed `@process_step` has logged its error already
                 e isa ProcessStepError || @error "Error in $psd_classifier cut generation: $(truncate_error(e))"
-                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), part, ProcessStatus(0), psd_classifier, "-", "-", "-",
+                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                       ProcessStatus(0), psd_classifier, "-", "-", "-",
                                        truncate_error(e)))
 
                 # add results to dict

@@ -57,7 +57,7 @@ function p_process_stability_plots_phy(processing_config, l200::LegendData, peri
     end
 
     # create log line Tuple
-    log_nt = NamedTuple{(:Detector, :usability, :Partition, :Status, :Plot, :Error)}
+    log_nt = NamedTuple{(:Detector, :usability, :psd_usability, :Partition, :Status, :Plot, :Error)}
 
     # get worker pool
 
@@ -76,7 +76,8 @@ function p_process_stability_plots_phy(processing_config, l200::LegendData, peri
 
         if only_first_period && period != first(partinfo_det.period)
             @info "Skip $det in partition $part for period $period, as it starts in period $(first(partinfo_det.period))"
-            log_det = log_nt((det, detector_status(chinfo_det.usability), part, process_skipped, :all,
+            log_det = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part, process_skipped,
+                              :all,
                               "Skipped, starts in period $(first(partinfo_det.period))"))
             return (processed = Dict(:all => false), log = Dict(:all => log_det), skipped = true)
         end
@@ -120,11 +121,13 @@ function p_process_stability_plots_phy(processing_config, l200::LegendData, peri
                     p = make_plot()
                     save_plot(p, l200, part, filekey_det, det, plot_name)
                 end
-                log_info_dict[plot_name] = log_nt((det, detector_status(chinfo_det.usability), part, ProcessStatus(1), plot_name, ""))
+                log_info_dict[plot_name] = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability),
+                                                   part, ProcessStatus(1), plot_name, ""))
                 processed_dict[plot_name] = true
             catch e
                 e isa ProcessStepError || rethrow()
-                log_info_dict[plot_name] = log_nt((det, detector_status(chinfo_det.usability), part, ProcessStatus(0), plot_name,
+                log_info_dict[plot_name] = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability),
+                                                   part, ProcessStatus(0), plot_name,
                                                    "$(truncate_error(e.exception))"))
                 processed_dict[plot_name] = false
             end

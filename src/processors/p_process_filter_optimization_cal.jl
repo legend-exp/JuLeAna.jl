@@ -49,7 +49,8 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
     end
 
     # create log line Tuple
-    log_nt = NamedTuple{(:Detector, :usability, :Partition, :Status, Symbol("Filter Type"), Symbol("Rise Time"), Symbol("Flat-Top Time"),
+    log_nt = NamedTuple{(:Detector, :usability, :psd_usability, :Partition, :Status, Symbol("Filter Type"), Symbol("Rise Time"),
+                         Symbol("Flat-Top Time"),
                          Symbol("Min. FWHM"), :Error)}
 
     # get worker pool
@@ -106,7 +107,8 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
         if (only_first_period && period != first(partinfo_det.period))
             @info "Only first period in partition $part for $period in $det ($ch)"
             for filter_type in e_filter
-                log_info = log_nt((det, detector_status(chinfo_det.usability), part, process_skipped, filter_type, fill("-", 3)...,
+                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                   process_skipped, filter_type, fill("-", 3)...,
                                    "Only first periods --> skipped."))
                 # add results to dict
                 log_info_dict[filter_type] = log_info
@@ -120,7 +122,8 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
             for filter_type in e_filter
                 if haskey(pars_db_det[det], filter_type)
                     @debug "Filter $filter_type already processed, skip"
-                    log_info = log_nt((det, detector_status(chinfo_det.usability), part, ProcessStatus(1), filter_type,
+                    log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                       ProcessStatus(1), filter_type,
                                        pars_db_det[det][filter_type].rt, pars_db_det[det][filter_type].ft,
                                        pars_db_det[det][filter_type].min_fwhm, "Already processed --> skipped."))
                     # add results to dict
@@ -247,7 +250,8 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
                     save_plot(p, l200, part, filekey_det, det, Symbol("fwhm_ft_scan_$(filter_type)"))
                 end
 
-                log_info = log_nt((det, detector_status(chinfo_det.usability), part, ProcessStatus(1), filter_type, result_rt.rt,
+                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                   ProcessStatus(1), filter_type, result_rt.rt,
                                    result_ft.ft, result_ft.min_fwhm, "-"))
 
                 # add results to dict
@@ -259,7 +263,8 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
                 yield()
             catch e
                 e isa ProcessStepError || @error "Filter: $filter_type filter optimization: $(truncate_error(e))"
-                log_info = log_nt((det, detector_status(chinfo_det.usability), part, ProcessStatus(0), filter_type, "-", "-", "-",
+                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                   ProcessStatus(0), filter_type, "-", "-", "-",
                                    "$(truncate_error(e))"))
                 # add results to dict
                 log_info_dict[filter_type] = log_info

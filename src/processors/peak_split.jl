@@ -22,7 +22,7 @@ function split_peaks(processing_config, l200::LegendData, period::DataPeriod, ru
     end
 
     # create log line Tuple
-    log_nt = NamedTuple{(:Detector, :usability, :Status, :Counts, Symbol("Total Time"), Symbol("Total Allocated"), :Error)}
+    log_nt = NamedTuple{(:Detector, :usability, :psd_usability, :Status, :Counts, Symbol("Total Time"), Symbol("Total Allocated"), :Error)}
 
     # get output directory
     mkpath(l200.tier[:jlpks, category, period, run])
@@ -58,7 +58,8 @@ function split_peaks(processing_config, l200::LegendData, period::DataPeriod, ru
                 rm(output_filename)
             end
             if isfile(output_filename)
-                log_det = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(1), count_text(), "0", "0",
+                log_det = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), ProcessStatus(1),
+                                  count_text(), "0", "0",
                                   "Already processed --> skipped."))
                 return (processed = false, log = log_det)
             end
@@ -98,7 +99,8 @@ function split_peaks(processing_config, l200::LegendData, period::DataPeriod, ru
         total_time = canonicalize(Dates.Nanosecond(TimerOutputs.tottime(split_timer)))
         total_allocated = Base.format_bytes(TimerOutputs.totallocated(split_timer))
 
-        log_det = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(1), count_text(), "$total_time", total_allocated, ""))
+        log_det = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), ProcessStatus(1),
+                          count_text(), "$total_time", total_allocated, ""))
 
         @info "Finished processing detector $det ($ch) in $total_time"
 

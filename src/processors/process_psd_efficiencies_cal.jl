@@ -72,7 +72,8 @@ function process_psd_efficiencies_cal(processing_config, l200::LegendData, perio
     end
 
     # create log line Tuple
-    log_nt_cut = NamedTuple{(:Detector, :usability, :Status, Symbol("Classifier Type"), Symbol("Cut Value"), Symbol("SEP SF"),
+    log_nt_cut = NamedTuple{(:Detector, :usability, :psd_usability, :Status, Symbol("Classifier Type"), Symbol("Cut Value"),
+                             Symbol("SEP SF"),
                              Symbol("FEP SF"), :CutError)}
 
     # get worker pool
@@ -102,7 +103,8 @@ function process_psd_efficiencies_cal(processing_config, l200::LegendData, perio
             @debug "Detector $(det) already processed, check missing energy types"
             for psd_classifier in psd_classifiers
                 if haskey(pars_db[det], psd_classifier)
-                    log_info = log_nt_cut((det, detector_status(chinfo_det.usability), ProcessStatus(1), psd_classifier,
+                    log_info = log_nt_cut((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability),
+                                           ProcessStatus(1), psd_classifier,
                                            pars_db[det][psd_classifier].cuts.lowcut, pars_db[det][psd_classifier].peaks.ds[:Tl208SEP].sf,
                                            pars_db[det][psd_classifier].peaks.ds[:Tl208FEP].sf, "Already processed --> skipped."))
                     # add results to dict
@@ -270,7 +272,8 @@ function process_psd_efficiencies_cal(processing_config, l200::LegendData, perio
                                          lq_ds = result_peaks_lq_ds),
                                 qbb = (low = qbb_result_low, ds = qbb_result_ds, low_lq = qbb_result_low_lq, lq_ds = qbb_result_lq_ds)))
 
-                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), ProcessStatus(1), psd_classifier, aoe_low_cut,
+                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability),
+                                       ProcessStatus(1), psd_classifier, aoe_low_cut,
                                        result.peaks.ds[:Tl208SEP].sf, result.peaks.ds[:Tl208FEP].sf, "-"))
 
                 # add results to dict
@@ -281,7 +284,8 @@ function process_psd_efficiencies_cal(processing_config, l200::LegendData, perio
             catch e
                 # a failed `@process_step` has logged its error already
                 e isa ProcessStepError || @error "Error in $psd_classifier cut generation: $(truncate_error(e))"
-                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), ProcessStatus(0), psd_classifier, "-", "-", "-",
+                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability),
+                                       ProcessStatus(0), psd_classifier, "-", "-", "-",
                                        truncate_error(e)))
 
                 # add results to dict

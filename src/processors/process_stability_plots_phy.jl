@@ -61,7 +61,7 @@ function process_stability_plots_phy(processing_config, l200::LegendData, period
         @info "Reprocess all detectors"
     end
 
-    log_nt = NamedTuple{(:Detector, :usability, :Status, :Plot, :Error)}
+    log_nt = NamedTuple{(:Detector, :usability, :psd_usability, :Status, :Plot, :Error)}
 
     @info "Loading pulser data for period $period and run $run"
     puls = @process_step "pulser data loader" begin
@@ -99,11 +99,13 @@ function process_stability_plots_phy(processing_config, l200::LegendData, period
                     p = make_plot()
                     save_plot(p, l200, filekey, det, plot_name)
                 end
-                log_info_dict[plot_name] = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(1), plot_name, ""))
+                log_info_dict[plot_name] = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability),
+                                                   ProcessStatus(1), plot_name, ""))
                 processed_dict[plot_name] = true
             catch e
                 e isa ProcessStepError || rethrow()
-                log_info_dict[plot_name] = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(0), plot_name,
+                log_info_dict[plot_name] = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability),
+                                                   ProcessStatus(0), plot_name,
                                                    "$(truncate_error(e.exception))"))
                 processed_dict[plot_name] = false
             end
