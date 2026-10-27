@@ -145,13 +145,17 @@ function plot_qc_ml_sampling(l200::LegendData, fk::FileKey, cfg::PropDict, filek
         sel_e = sample.daqenergy[in_sample]
 
         e_edges = range(0, max(maximum(cand.daqenergy), maximum(sel_e), 1); length = 101)
+        # `lhist!` draws empty bins down to 1e-10 on a log axis, so the lower limit is fixed
         ax = Makie.Axis(gl[1, 1:n_cols]; xlabel = "daqenergy (ADC)", ylabel = "events", yscale = log10,
+                        limits = (nothing, (0.5, nothing)),
                         title = get_plottitle(fk, det,
                                               "QC ML sample: $(count(in_sample)) selected of $(count(pool)) pool rows in $(length(filekeys)) files"))
-        Makie.hist!(ax, cand.daqenergy[pool]; bins = e_edges, color = (:gray, 0.6), label = "pool")
-        any(excluded) && Makie.hist!(ax, cand.daqenergy[excluded]; bins = e_edges, color = (:seagreen, 0.5),
-                                     label = "excluded ($(join(excluded_names, ", ")))")
-        Makie.hist!(ax, sel_e; bins = e_edges, color = (:orangered, 0.8), label = "selected")
+        Makie.current_axis!(ax)
+        hist_style = (bins = e_edges, yscale = log10, legend_position = :none, watermark = false)
+        LegendMakie.lhist!(cand.daqenergy[pool]; hist_style..., fill = true, color = :gray, label = "pool")
+        any(excluded) && LegendMakie.lhist!(cand.daqenergy[excluded]; hist_style..., color = :seagreen,
+                                            label = "excluded ($(join(excluded_names, ", ")))")
+        LegendMakie.lhist!(sel_e; hist_style..., color = :orangered, label = "selected")
         Makie.axislegend(ax; position = :rt)
 
         for (j, s) in enumerate(strata_present)
