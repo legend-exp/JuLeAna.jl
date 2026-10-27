@@ -50,7 +50,7 @@ function process_energy_calibration_cal(processing_config, l200::LegendData, per
     end
 
     # create log line Tuple
-    log_nt = NamedTuple{(:Detector, :usability, :Status, Symbol("Energy Type"), Symbol("FWHM Qbb"), Symbol("FWHM FEP"),
+    log_nt = NamedTuple{(:Detector, :usability, :psd_usability, :Status, Symbol("Energy Type"), Symbol("FWHM Qbb"), Symbol("FWHM FEP"),
                          Symbol("Cal. Constant"), :Error)}
 
     # get worker pool
@@ -77,7 +77,8 @@ function process_energy_calibration_cal(processing_config, l200::LegendData, per
             for e_type in energy_types
                 if haskey(pars_db[det], e_type)
                     @debug "Filter $e_type already processed, skip"
-                    log_info = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(1), e_type, pars_db[det][e_type].fwhm.qbb,
+                    log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability),
+                                       ProcessStatus(1), e_type, pars_db[det][e_type].fwhm.qbb,
                                        pars_db[det][e_type].fit.Tl208FEP.fwhm, pars_db[det][e_type].cal.par[2],
                                        "Already processed --> skipped."))
                     processed_dict[e_type] = false
@@ -239,7 +240,8 @@ function process_energy_calibration_cal(processing_config, l200::LegendData, per
 
                 yield()
 
-                log_info = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(1), e_type, result_fwhm.qbb,
+                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), ProcessStatus(1),
+                                   e_type, result_fwhm.qbb,
                                    result_fit[:Tl208FEP].fwhm, result_calib.par[2], "-"))
 
                 result_energy = (m_cal_simple = m_cal_simple, fwhm = result_fwhm, cal = result_calib, fit = result_fit)
@@ -252,7 +254,8 @@ function process_energy_calibration_cal(processing_config, l200::LegendData, per
             catch e
                 # a failed `@process_step` has logged its error already
                 e isa ProcessStepError || @error "$e_type calibration failed for $det: $(truncate_error(e))"
-                log_info = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(0), e_type, "-", "-", "-", truncate_error(e)))
+                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), ProcessStatus(0),
+                                   e_type, "-", "-", "-", truncate_error(e)))
                 # add results to dict
                 log_info_dict[e_type] = log_info
                 processed_dict[e_type] = false

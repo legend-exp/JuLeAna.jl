@@ -64,7 +64,7 @@ function p_process_aoe_optimization_cal(processing_config, l200::LegendData, per
     end
 
     # create log line Tuple
-    log_nt = NamedTuple{(:Detector, :usability, :Partition, :Status, Symbol("Filter Type"), Symbol("Window length"),
+    log_nt = NamedTuple{(:Detector, :usability, :psd_usability, :Partition, :Status, Symbol("Filter Type"), Symbol("Window length"),
                          Symbol("Survival Fraction"), Symbol("Number of DEP"), Symbol("Number of SEP"), :Error)}
 
     # get worker pool
@@ -122,7 +122,8 @@ function p_process_aoe_optimization_cal(processing_config, l200::LegendData, per
         if (only_first_period && period != first(partinfo_det.period))
             @info "Only first period in partition $part for $period in $det ($ch)"
             for filter_type in aoe_filter
-                log_info = log_nt((det, detector_status(chinfo_det.usability), part, process_skipped, filter_type, fill("-", 4)...,
+                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                   process_skipped, filter_type, fill("-", 4)...,
                                    "Only first periods --> skipped."))
                 # add results to dict
                 log_info_dict[filter_type] = log_info
@@ -135,7 +136,8 @@ function p_process_aoe_optimization_cal(processing_config, l200::LegendData, per
             @debug "Detector $(det) already processed, check missing filters"
             for filter_type in aoe_filter
                 if haskey(pars_db_det[det], filter_type)
-                    log_info = log_nt((det, detector_status(chinfo_det.usability), part, ProcessStatus(1), filter_type,
+                    log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                       ProcessStatus(1), filter_type,
                                        pars_db_det[det][filter_type].wl, pars_db_det[det][filter_type].sf,
                                        pars_db_det[det][filter_type].n_dep, pars_db_det[det][filter_type].n_sep,
                                        "Already processed --> skipped."))
@@ -272,7 +274,8 @@ function p_process_aoe_optimization_cal(processing_config, l200::LegendData, per
                 @info """Found optimal window length at $(result_wl.wl) with survival fraction $(round(u"percent", result_wl.sf; digits=2)) for detector $det ($ch)"""
 
                 # write log
-                log_info = log_nt((det, detector_status(chinfo_det.usability), part, ProcessStatus(1), filter_type, result_wl.wl,
+                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                   ProcessStatus(1), filter_type, result_wl.wl,
                                    result_wl.sf, result_wl.n_dep, result_wl.n_sep, "-"))
 
                 log_info_dict[filter_type] = log_info
@@ -282,7 +285,8 @@ function p_process_aoe_optimization_cal(processing_config, l200::LegendData, per
                 yield()
             catch e
                 e isa ProcessStepError || @error "Filter: $filter_type filter optimization: $(truncate_error(e))"
-                log_info = log_nt((det, detector_status(chinfo_det.usability), part, ProcessStatus(0), filter_type, "-", "-", "-", "-",
+                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                   ProcessStatus(0), filter_type, "-", "-", "-", "-",
                                    "$(truncate_error(e))"))
                 # add results to dict
                 log_info_dict[filter_type] = log_info

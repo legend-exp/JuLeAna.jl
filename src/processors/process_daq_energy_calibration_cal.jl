@@ -54,7 +54,8 @@ function process_daq_energy_calibration_cal(processing_config, l200::LegendData,
     end
 
     # create log line Tuple
-    log_nt = NamedTuple{(:Detector, :usability, :Status, Symbol("Cal. Constant"), Symbol("Total Time"), Symbol("Total Allocated"), :Error)}
+    log_nt = NamedTuple{(:Detector, :usability, :psd_usability, :Status, Symbol("Cal. Constant"), Symbol("Total Time"),
+                         Symbol("Total Allocated"), :Error)}
 
     # flush stdout
     flush(stdout)
@@ -67,7 +68,8 @@ function process_daq_energy_calibration_cal(processing_config, l200::LegendData,
 
         if !reprocess && !redo_detector(det) && haskey(pars_db, det)
             @debug "Detector $det already processed, skip"
-            log_det = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(1), pars_db[det].c, "0", "0",
+            log_det = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), ProcessStatus(1),
+                              pars_db[det].c, "0", "0",
                               "Already processed --> skipped."))
             return (processed = false, log = log_det)
         end
@@ -111,7 +113,8 @@ function process_daq_energy_calibration_cal(processing_config, l200::LegendData,
                     LegendMakie.add_watermarks!(final = true)
                     save_plot(fig, l200, filekey, det, :daq_energy_failed)
                 end
-                log_det = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(0), "-", "-", "-", truncate_error(e.exception)))
+                log_det = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), ProcessStatus(0),
+                                  "-", "-", "-", truncate_error(e.exception)))
                 return (processed = false, log = log_det)
             end
         end
@@ -119,7 +122,8 @@ function process_daq_energy_calibration_cal(processing_config, l200::LegendData,
         total_time = canonicalize(Dates.Nanosecond(TimerOutputs.tottime(calibration_timer)))
         total_allocated = Base.format_bytes(TimerOutputs.totallocated(calibration_timer))
         calibration = (c = result_autocal.c * u"keV", func = "$(repr(result_autocal.c)) * daqenergy * keV")
-        log_det = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(1), calibration.c, "$total_time", total_allocated, ""))
+        log_det = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), ProcessStatus(1),
+                          calibration.c, "$total_time", total_allocated, ""))
         @info "Finished processing detector $det ($ch) in $total_time"
 
         return (result = calibration, processed = true, log = log_det)

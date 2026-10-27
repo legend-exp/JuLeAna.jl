@@ -47,7 +47,8 @@ function p_process_energy_cal(processing_config, l200::LegendData, period::DataP
     end
 
     # create log line Tuple
-    log_nt = NamedTuple{(:Detector, :usability, :Partition, :Status, Symbol("Energy Type"), Symbol("FWHM Qbb"), Symbol("FWHM FEP"),
+    log_nt = NamedTuple{(:Detector, :usability, :psd_usability, :Partition, :Status, Symbol("Energy Type"), Symbol("FWHM Qbb"),
+                         Symbol("FWHM FEP"),
                          Symbol("Cal. Constant"), :Error)}
 
     # get worker pool
@@ -91,7 +92,8 @@ function p_process_energy_cal(processing_config, l200::LegendData, period::DataP
         if (only_first_period && period != first(partinfo_det.period))
             @info "Only first period in partition $part for $period in $det ($ch)"
             for e_type in energy_types
-                log_info = log_nt((det, detector_status(chinfo_det.usability), part, process_skipped, e_type, fill("-", 3)...,
+                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                   process_skipped, e_type, fill("-", 3)...,
                                    "Only first periods --> skipped."))
                 # add results to dict
                 processed_dict[e_type] = false
@@ -105,7 +107,8 @@ function p_process_energy_cal(processing_config, l200::LegendData, period::DataP
             for e_type in energy_types
                 if haskey(pars_db_det[det], e_type)
                     @debug "Filter $e_type already processed, skip"
-                    log_info = log_nt((det, detector_status(chinfo_det.usability), part, ProcessStatus(1), e_type,
+                    log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                       ProcessStatus(1), e_type,
                                        pars_db_det[det][e_type].fwhm.qbb, pars_db_det[det][e_type].fit.Tl208FEP.fwhm,
                                        pars_db_det[det][e_type].cal.par[2], "Already processed --> skipped."))
                     processed_dict[e_type] = false
@@ -234,7 +237,8 @@ function p_process_energy_cal(processing_config, l200::LegendData, period::DataP
 
                 yield()
 
-                log_info = log_nt((det, detector_status(chinfo_det.usability), part, ProcessStatus(1), e_type, result_fwhm.qbb,
+                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                   ProcessStatus(1), e_type, result_fwhm.qbb,
                                    result_fit[:Tl208FEP].fwhm, result_calib.par[2], "-"))
 
                 result_energy = (fwhm = result_fwhm, cal = result_calib, fit = result_fit)
@@ -246,7 +250,8 @@ function p_process_energy_cal(processing_config, l200::LegendData, period::DataP
 
             catch e
                 e isa ProcessStepError || @error "Error in $e_type: $(truncate_error(e))"
-                log_info = log_nt((det, detector_status(chinfo_det.usability), part, ProcessStatus(0), e_type, "-", "-", "-",
+                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                   ProcessStatus(0), e_type, "-", "-", "-",
                                    truncate_error(e)))
 
                 # add results to dict

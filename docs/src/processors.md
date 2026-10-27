@@ -34,7 +34,9 @@ outside 350–700 µs.
 
 [`master_status`](@ref) combines the rows into the `Processor Status` at the top of the
 report. A row with a `usability` column counts according to the usability of its
-detector, a row without one counts as `on`:
+detector, a row without one counts as `on`. The reports of processors for HPGe detectors
+list the `psd_usability` of the detector (`on` or `off`) right after `usability`; it does not
+affect the processor status:
 
 | Row status | `on`    | `ac`    | `off`   |
 |:-----------|:--------|:--------|:--------|

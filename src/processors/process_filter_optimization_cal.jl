@@ -58,7 +58,8 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
     f_evaluate_qc = load_qc_evaluator(l200, filekey)
 
     # create log line Tuple
-    log_nt = NamedTuple{(:Detector, :usability, :Status, Symbol("Filter Type"), Symbol("Rise Time"), Symbol("Flat-Top Time"),
+    log_nt = NamedTuple{(:Detector, :usability, :psd_usability, :Status, Symbol("Filter Type"), Symbol("Rise Time"),
+                         Symbol("Flat-Top Time"),
                          Symbol("Min. FWHM"), :Error)}
 
     # get worker pool
@@ -89,7 +90,8 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
             for filter_type in e_filter
                 if haskey(pars_db[det], filter_type)
                     @debug "Filter $filter_type already processed, skip"
-                    log_info = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(1), filter_type,
+                    log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability),
+                                       ProcessStatus(1), filter_type,
                                        pars_db[det][filter_type].rt, pars_db[det][filter_type].ft, pars_db[det][filter_type].min_fwhm,
                                        "Already processed --> skipped."))
                     # add results to dict
@@ -212,7 +214,8 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
                     save_plot(p, l200, filekey, det, Symbol("fwhm_ft_scan_$(filter_type)"))
                 end
 
-                log_info = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(1), filter_type, result_rt.rt, result_ft.ft,
+                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), ProcessStatus(1),
+                                   filter_type, result_rt.rt, result_ft.ft,
                                    result_ft.min_fwhm, "-"))
 
                 # add results to dict
@@ -224,7 +227,8 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
                 yield()
             catch e
                 e isa ProcessStepError || @error "Filter: $filter_type filter optimization: $(truncate_error(e))"
-                log_info = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(0), filter_type, "-", "-", "-",
+                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), ProcessStatus(0),
+                                   filter_type, "-", "-", "-",
                                    "$(truncate_error(e))"))
                 # add results to dict
                 log_info_dict[filter_type] = log_info

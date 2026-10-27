@@ -47,7 +47,7 @@ function process_ct_correction_cal(processing_config, l200::LegendData, period::
     end
 
     # create log line Tuple
-    log_nt = NamedTuple{(:Detector, :usability, :Status, Symbol("Energy Type"), Symbol("FCT/1E6"), Symbol("FWHM Before"),
+    log_nt = NamedTuple{(:Detector, :usability, :psd_usability, :Status, Symbol("Energy Type"), Symbol("FCT/1E6"), Symbol("FWHM Before"),
                          Symbol("FWHM After"), :Error)}
 
     # get worker pool
@@ -82,7 +82,8 @@ function process_ct_correction_cal(processing_config, l200::LegendData, period::
             for e_type in energy_types
                 if haskey(pars_db[det], e_type)
                     @debug "Filter $e_type already processed, skip"
-                    log_info = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(1), e_type, pars_db[det][e_type].fct*1e6,
+                    log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability),
+                                       ProcessStatus(1), e_type, pars_db[det][e_type].fct*1e6,
                                        pars_db[det][e_type].fwhm_before, pars_db[det][e_type].fwhm_after, "Already processed --> skipped."))
                     processed_dict[e_type] = false
                     log_info_dict[e_type] = log_info
@@ -177,7 +178,8 @@ function process_ct_correction_cal(processing_config, l200::LegendData, period::
                 end
 
                 yield()
-                log_ch = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(1), "$e_type", result_ctc.fct*1e6,
+                log_ch = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), ProcessStatus(1),
+                                 "$e_type", result_ctc.fct*1e6,
                                  result_ctc.fwhm_before, result_ctc.fwhm_after, "-"))
 
                 # add results to dict
@@ -186,7 +188,8 @@ function process_ct_correction_cal(processing_config, l200::LegendData, period::
                 processed_dict[e_type] = true
             catch e
                 e isa ProcessStepError || @error "Error in $e_type CT correction: $(truncate_error(e))"
-                log_ch = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(0), "$e_type", "-", "-", "-",
+                log_ch = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), ProcessStatus(0),
+                                 "$e_type", "-", "-", "-",
                                  "$(truncate_error(e))"))
                 # add results to dict
                 log_info_dict[e_type] = log_ch

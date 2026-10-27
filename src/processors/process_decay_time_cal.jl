@@ -60,7 +60,7 @@ function process_decay_time_cal(processing_config, l200::LegendData, period::Dat
     f_evaluate_qc = load_qc_evaluator(l200, filekey)
 
     # create log line Tuple
-    log_nt = NamedTuple{(:Detector, :usability, :Status, Symbol("Decay Time"), Symbol("σ"), :Error)}
+    log_nt = NamedTuple{(:Detector, :usability, :psd_usability, :Status, Symbol("Decay Time"), Symbol("σ"), :Error)}
 
     # get worker pool
 
@@ -74,7 +74,8 @@ function process_decay_time_cal(processing_config, l200::LegendData, period::Dat
 
         if !reprocess && !redo_detector(det) && haskey(pars_db, det)
             @debug "Detector $det already processed, skip"
-            log_det = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(1), pars_db[det].τ, pars_db[det].fit.σ,
+            log_det = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), ProcessStatus(1),
+                              pars_db[det].τ, pars_db[det].fit.σ,
                               "Already processed --> skipped."))
             return (processed = false, log = log_det)
         end
@@ -158,7 +159,8 @@ function process_decay_time_cal(processing_config, l200::LegendData, period::Dat
             (process_warning, "Decay time $(result.μ) is outside the expected 350–700 µs window.")
         end
         status == process_warning && @warn "$det ($ch): $message"
-        log_det = log_nt((det, detector_status(chinfo_det.usability), status, result.μ, result.σ, message))
+        log_det = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), status, result.μ, result.σ,
+                          message))
         return (result = (τ = result.μ, fit = result), processed = true, log = log_det)
     end
 
