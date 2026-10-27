@@ -143,6 +143,7 @@ withenv("XDG_CONFIG_HOME" => TEST_CONFIG_HOME) do
         run_file("test_sync_helper.jl")
         run_file("test_sync_steps.jl")
         run_file("test_sync_production.jl")
+        run_file("test_sync_yaml_production.jl")
         run_file("test_sync_inventory.jl")
         run_file("test_sync_selection.jl")
         run_file("test_sync_extract_tree.jl")

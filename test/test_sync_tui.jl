@@ -387,7 +387,7 @@
         @test find_text(tb, "overlays: config_fixture.json, temp/config_site.yaml") !== nothing
 
         bare = Production(nested.name, nested.remote_root, nested.local_root, nothing,
-                          nested.config, nested.roots, String[])
+                          nested.config, nested.roots, String[], nested.config_file, nested.setup_config)
         @test find_text(draw(SyncPage(h, bare, options); width = 160), "overlays: none") !== nothing
     end
 

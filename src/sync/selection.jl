@@ -385,11 +385,14 @@ end
     mandatory_copies(p::Production)::Vector{String}
 
 The paths, relative to the remote root, that every mirror of `p` copies: the
-production's own config.json, the overlays applied to it and its metadata checkout.
-Without them the mirror cannot be opened.
+production's own config file, the overlays applied to it, its metadata checkout and,
+when the production has one, its `setup/config` folder with JuLeAna's processing config.
+Without them the mirror cannot be opened or processed.
 """
 function mandatory_copies(p::Production)
-    mandatory = [relative(p, joinpath(p.remote_root, p.name, "config.json")); p.overlays]
+    production = joinpath(p.remote_root, p.name)
+    mandatory = [relative(p, joinpath(production, p.config_file)); p.overlays]
+    p.setup_config && push!(mandatory, relative(p, joinpath(production, "setup", "config")))
     i = findfirst(kv -> first(kv) == "metadata", p.roots)
     i === nothing && throw(ArgumentError("production $(p.name) has no \"metadata\" path key; legend-metadata cannot be mirrored"))
     return push!(mandatory, relative(p, last(p.roots[i])))

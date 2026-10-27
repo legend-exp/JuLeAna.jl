@@ -23,7 +23,7 @@ Do not paste per-detector numbers or plots: sizes, file counts and timings only.
 - [ ] `enter` on a production that holds `jlevt` opens the two-pane layout,
       and the progress line reads `selected: 0 B copy (0 files), 0 links`.
 - [ ] The details pane of the production row reads `overlays: config_cslg4.json`.
-- [ ] The tree shows `config.json` and one row per configured path key of the
+- [ ] The tree shows `config.json` (or `config.yaml`) and one row per configured path key of the
       production, at minimum `metadata`, `par`, `tier`, `tier/jldsp`,
       `tier/jlpks`, `tier/raw`.
 - [ ] `enter` on `tier` lists it within a few seconds; the row shows `…listing`
@@ -59,7 +59,7 @@ Do not paste per-detector numbers or plots: sizes, file counts and timings only.
       file count and the `LEGEND_DATA_CONFIG` line.
 - [ ] The file is at the mirrored path and its size matches the remote one.
 - [ ] `<local-root>/<production>/config_local.yaml` exists;
-      `<local-root>/<production>/config.json` is byte-identical to the remote one.
+      `<local-root>/<production>/config.json` (or `config.yaml`) is byte-identical to the remote one.
 - [ ] Running `t` again transfers 0 bytes.
 
 ## Link `tier/raw` for the same run

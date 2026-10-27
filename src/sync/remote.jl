@@ -135,14 +135,23 @@ remote_command(::LocalHost, cmd::Cmd) = cmd
     run_remote(h::RemoteHost, cmd::Cmd)::String
 
 Run `cmd` on `h` and return its standard output. A nonzero exit is an error
-carrying the command and the captured standard error.
+carrying the command and the captured standard error. Exit code 255 on an
+[`SSHHost`](@ref) is ssh's own failure to reach the host, and the error says so
+first.
 """
 function run_remote(h::RemoteHost, cmd::Cmd)
     full = remote_command(h, cmd)
     out = IOBuffer()
     err = IOBuffer()
     proc = run(pipeline(ignorestatus(full); stdin = devnull, stdout = out, stderr = err))
-    success(proc) || throw(ErrorException("remote command failed with exit code $(proc.exitcode): $full\n$(String(take!(err)))"))
+    if !success(proc)
+        stderr_text = String(take!(err))
+        h isa SSHHost && proc.exitcode == 255 &&
+            throw(ErrorException("ssh could not reach $(h.alias). ssh runs without a password prompt, so a host that needs " *
+                                 "one or a shared connection (ControlMaster) has to be opened first with `ssh $(h.alias)`.\n" *
+                                 stderr_text))
+        throw(ErrorException("remote command failed with exit code $(proc.exitcode): $full\n$stderr_text"))
+    end
     return String(take!(out))
 end
 
@@ -186,19 +195,23 @@ function list_dir(::LocalHost, dir::AbstractString)
     end
 end
 
+# The data config file of a production; a production folder holds exactly one of them.
+const PRODUCTION_CONFIGS = ("config.json", "config.yaml")
+
 """
     list_productions(h::RemoteHost, remote_root::AbstractString)::Vector{String}
 
 The directories at most three levels below `remote_root` that hold a
-`config.json`, relative to `remote_root` and sorted. These are the productions;
-no other part of the tree is searched.
+`config.json` or a `config.yaml`, relative to `remote_root` and sorted. These are
+the productions; no other part of the tree is searched.
 
-The rule differs from `JuLeAna.find_productions`, which reads a local folder: it accepts `config.yaml`, stops at the first
-config it finds and reads four levels, while this one runs on the host and descends below a config.
+The rule differs from `JuLeAna.find_productions`, which reads a local folder: it stops at the first config it finds and
+reads four levels, while this one runs on the host and descends below a config.
 """
 function list_productions(h::SSHHost, remote_root::AbstractString)
-    text = run_remote(h, `find $remote_root -mindepth 2 -maxdepth 4 -name config.json -type f -printf '%h\n'`)
-    return sort!([relpath(line, remote_root) for line in eachsplit(chomp(text), '\n') if !isempty(line)])
+    text = run_remote(h,
+                      `find $remote_root -mindepth 2 -maxdepth 4 -type f '(' -name config.json -o -name config.yaml ')' -printf '%h\n'`)
+    return sort!(unique!([relpath(line, remote_root) for line in eachsplit(chomp(text), '\n') if !isempty(line)]))
 end
 
 function list_productions(::LocalHost, remote_root::AbstractString)
@@ -206,7 +219,7 @@ function list_productions(::LocalHost, remote_root::AbstractString)
     found = String[]
     for (dir, dirs, files) in walkdir(remote_root; follow_symlinks = false)
         depth = dir == remote_root ? 0 : length(splitpath(relpath(dir, remote_root)))
-        depth >= 1 && "config.json" in files && isfile(joinpath(dir, "config.json")) &&
+        depth >= 1 && any(f -> f in files && isfile(joinpath(dir, f)), PRODUCTION_CONFIGS) &&
             push!(found, relpath(dir, remote_root))
         depth >= 3 && empty!(dirs)
     end
@@ -251,7 +264,7 @@ end
 """
     read_file(h::RemoteHost, path::AbstractString)::String
 
-Read a small text file: the tool uses this for a production's `config.json`.
+Read a small text file: the tool uses this for a production's config file.
 """
 function read_file(h::SSHHost, path::AbstractString)
     run_remote(h, `test -f $path`)

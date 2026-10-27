@@ -145,6 +145,11 @@
         end
     end
 
+    @testset "an unreachable ssh host is named with the way to open it" begin
+        bogus = SSHHost("juleana-sync-no-such-host.invalid", nothing)
+        @test_throws "ssh could not reach juleana-sync-no-such-host.invalid" run_remote(bogus, `true`)
+    end
+
     @testset "SSHHost(alias) follows the ssh configuration" begin
         # Both outcomes are valid: the user's own master (nothing) or the tool's
         # socket under ~/.ssh, depending on the machine's ssh config.

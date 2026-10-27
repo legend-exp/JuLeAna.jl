@@ -18,7 +18,7 @@ The apps are installed with `Pkg.Apps.develop(path = "path/to/JuLeAna.jl")`, whi
 
 `--production` is the production's path relative to the remote root, for example
 `test`, `temp/jl-v0.6.0dev5` or `juleana/tmp/jl-v0.7.0dev1`. Without it, the
-screen lists every directory with a `config.json` up to three directories below the
+screen lists every directory with a `config.json` or a `config.yaml` up to three directories below the
 root and opens a list to choose from (`↑` `↓` move, `enter` opens, `r` lists again, `esc`
 closes it).
 
@@ -80,8 +80,10 @@ asks before it discards them (Discard or Keep).
 
 ### The tree and its keys
 
-- The tree shows the production's `config.json`, then one branch per
-  configured path key. Directories are listed when you open them, so nothing
+- The tree shows the production's config file (`config.json`, or `config.yaml` for a production that JuLeAna
+  created), then one branch per configured path key and, when the production has one, its `setup` folder with
+  JuLeAna's processing config (`setup/config`), software snapshots (`setup/software`) and metadata records
+  (`setup/metadata`). Directories are listed when you open them, so nothing
   walks the cluster's filesystem up front.
 - The details pane describes the row under the cursor.
 - When nothing runs, the progress line shows what the current selection would transfer on its left and where the
@@ -160,7 +162,9 @@ to work without a password from `cslg4`. Connect checks the system `rsync` on `c
 version found if it is not GNU rsync 3.1 or newer.
 
 Every ssh connection of the tool gives up connecting after 20 s and ends when the host stops answering for four
-15 s probes, so a dropped connection fails after about a minute with ssh's error instead of hanging.
+15 s probes, so a dropped connection fails after about a minute with ssh's error instead of hanging. ssh never asks for a
+password or a one-time code, so a host that needs one, or whose ssh config shares one connection (`ControlMaster`,
+as for `viper`), has to be opened first with `ssh <host>`; when ssh cannot reach the host, the error says so.
 
 ## Extracting detectors
 
@@ -353,12 +357,15 @@ Each site keeps a config next to its productions that redirects some path keys,
 for example `config_cslg4.json` in the root of `cslg4` and `config_viper.yaml` in
 `juleana/` on `viper`. The tool applies every file named
 `config_<site>.json`, `.yaml` or `.yml` in the directories from the remote root
-down to the parent of the production. The production's own `config.json` is read
+down to the parent of the production. The production's own config file is read
 first, then the overlays from the root downwards. A later file wins, so each
 overlay overrides the production and a deeper overlay overrides a shallower one.
 `$_` expands to the directory of the file it is written in. The overlays are
-always copied with the production, and `config_local.yaml` is derived from the
-merged config. The row of the production on the screen lists the overlays
+always copied with the production, together with its config file, its metadata
+checkout and, if it exists, its `setup/config` folder, so that `juleana` can process the
+mirror with the production's processing config. `config_local.yaml` is derived from the
+merged config. A production folder holding both `config.json` and `config.yaml` is
+refused, because only one of them can be the config that `LEGEND_DATA_CONFIG` names. The row of the production on the screen lists the overlays
 that were applied.
 
 ## Re-applying a selection
@@ -401,7 +408,7 @@ through the mount. With the mount absent, opening a linked file fails with
 ## What the tool never does
 
 It never writes to a remote data production, never deletes local data, and never
-rewrites the mirrored `config.json`. On the remote host it writes only below its own
+rewrites the mirrored config file. On the remote host it writes only below its own
 staging directory, apart from the Julia environment it offers to create (see above),
 and the only files it removes there are the ones it staged.
 Locally, the only things it removes are symlinks: one standing where a real copy is

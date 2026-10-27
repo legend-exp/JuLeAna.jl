@@ -169,7 +169,7 @@
     @testset "Selection requires a metadata root" begin
         no_metadata = Production(p.name, p.remote_root, p.local_root, p.mount_root,
                                  p.config, filter(kv -> first(kv) != "metadata", p.roots),
-                                 p.overlays)
+                                 p.overlays, p.config_file, p.setup_config)
         root = production_tree(h, no_metadata)
         @test_throws "has no \"metadata\" path key" Selection(no_metadata, "cslg4", root)
     end

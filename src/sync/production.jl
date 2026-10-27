@@ -7,13 +7,15 @@ A production of `remote_root` on `h`, together with the local directory that
 mirrors it. `name` is the production's path relative to `remote_root` and may
 have several components (`temp/jl-dev`); it must stay below the root.
 
-The production's `config.json` is read first, then every overlay returned by
+The production's config file, its `config.json` or `config.yaml`, is read first, then every overlay returned by
 [`overlay_files`](@ref), root first. `\$_` expands to the directory of the file it
 appears in, and the files are deep-merged so that a later file wins: an overlay
 overrides the production, and a deeper overlay overrides a shallower one. Every
 path of the merged `config` must lie inside `remote_root`, because a path outside
 it has no place in the mirror. `overlays` lists the overlay files applied, relative
-to `remote_root`.
+to `remote_root`. `config_file` is the name of the production's config file, and
+`setup_config` says whether the production has the folder `setup/config` that holds
+JuLeAna's processing config.
 """
 struct Production
     name::String
@@ -23,6 +25,8 @@ struct Production
     config::PropDict
     roots::Vector{Pair{String,String}}
     overlays::Vector{String}
+    config_file::String
+    setup_config::Bool
 end
 
 # A directory path without a trailing separator; the filesystem root normalizes
@@ -61,7 +65,14 @@ function Production(h::RemoteHost, name::AbstractString,
     name = rstrip(normpath(name), '/')
     dir = normdir(joinpath(root, name))
     startswith(dir, root * "/") || throw(ArgumentError("production name must be a relative path below the remote root, got \"$name\""))
-    files = [joinpath(name, "config.json"); overlay_files(h, root, name)]
+    entries = list_dir(h, dir)
+    configs = [e.name for e in entries if e.kind == :file && e.name in PRODUCTION_CONFIGS]
+    isempty(configs) && throw(ArgumentError("$dir holds neither config.json nor config.yaml, so it is not a production"))
+    length(configs) == 1 ||
+        throw(ArgumentError("$dir holds both config.json and config.yaml; keep the one LEGEND_DATA_CONFIG names and remove the other"))
+    setup = any(e -> e.kind == :dir && e.name == "setup", entries) &&
+            any(e -> e.kind == :dir && e.name == "config", list_dir(h, joinpath(dir, "setup")))
+    files = [joinpath(name, only(configs)); overlay_files(h, root, name)]
     config = nothing
     for file in files
         path = joinpath(root, file)
@@ -71,7 +82,7 @@ function Production(h::RemoteHost, name::AbstractString,
     end
     mount = mount_root === nothing ? nothing : normdir(mount_root)
     return Production(String(name), root, normdir(local_root), mount, config,
-                      production_roots(config, root), files[2:end])
+                      production_roots(config, root), files[2:end], only(configs), setup)
 end
 
 """
@@ -168,8 +179,8 @@ end
 """
     write_local_config(p::Production)::String
 
-Write `config_local.yaml` next to the mirrored `config.json` and return its path.
-The mirrored `config.json` stays byte-identical to the remote one, so rsync never
+Write `config_local.yaml` next to the mirrored config file and return its path.
+The mirrored config file stays byte-identical to the remote one, so rsync never
 sees it as locally modified.
 """
 function write_local_config(p::Production)

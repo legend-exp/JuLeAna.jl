@@ -54,7 +54,7 @@
         cfg2 = parse_production_config(two, joinpath(FIXTURE_ROOT, "test"))
         @test_throws "exactly one setup" production_roots(cfg2, FIXTURE_ROOT)
 
-        @test_throws "not a file" Production(h, "nosuch", FIXTURE_ROOT, LOCAL_ROOT)
+        @test_throws "not a directory" Production(h, "nosuch", FIXTURE_ROOT, LOCAL_ROOT)
 
         unknown = """
         {"setups": {"l200": {"paths": {"tier": "\$NOPE/tier"}}}}
@@ -69,7 +69,7 @@
         dir = joinpath(FIXTURE_ROOT, "test")
         cfg = parse_production_config(raw, dir)
         roots = production_roots(cfg, FIXTURE_ROOT)
-        pr = Production("test", FIXTURE_ROOT, LOCAL_ROOT, nothing, cfg, roots, String[])
+        pr = Production("test", FIXTURE_ROOT, LOCAL_ROOT, nothing, cfg, roots, String[], "config.json", false)
         paths = only(values(local_config(pr).setups)).paths
         # A value equal to the remote root maps into the mirror like any other
         # path inside it, not just one strictly nested below it.

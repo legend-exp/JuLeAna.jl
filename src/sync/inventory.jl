@@ -103,20 +103,23 @@ end
 """
     production_tree(h::RemoteHost, p::Production)::Node
 
-The tree root: the production's `config.json` followed by one `:section` per
-configured path key, in key order.
+The tree root: the production's config file followed by one `:section` per
+configured path key, in key order, and a `setup` section when the production has the
+`setup` folder in which JuLeAna keeps its processing config, software snapshots and
+metadata records.
 """
 function production_tree(h::RemoteHost, p::Production)
     dir = joinpath(p.remote_root, p.name)
     entries = list_dir(h, dir)
-    i = findfirst(e -> e.name == "config.json", entries)
-    i === nothing && throw(ArgumentError("no config.json in $dir"))
+    i = findfirst(e -> e.kind == :file && e.name == p.config_file, entries)
+    i === nothing && throw(ArgumentError("no $(p.config_file) in $dir"))
     root = Node("Production: $(p.name)", dir, :production)
-    children = Node[Node("config.json", joinpath(dir, "config.json"), :file;
+    children = Node[Node(p.config_file, joinpath(dir, p.config_file), :file;
                          size = entries[i].size)]
     for (key, path) in p.roots
         push!(children, Node(key, path, :section))
     end
+    any(e -> e.kind == :dir && e.name == "setup", entries) && push!(children, Node("setup", joinpath(dir, "setup"), :section))
     for child in children
         child.parent = root
     end
