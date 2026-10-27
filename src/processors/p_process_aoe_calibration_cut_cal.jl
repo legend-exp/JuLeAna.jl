@@ -319,7 +319,8 @@ function p_process_aoe_calibration_cut_cal(processing_config, l200::LegendData, 
                 if aoe_config_det.apply_ctc
                     result_aoe_ctc, report_aoe_ctc = @process_step "$aoe_type charge trapping correction" begin
                         qdrift_e = ljl_propfunc(qdrift_expression).(hit_cal)
-                        LegendSpecFits.ctc_aoe(aoe_corr, e_cal, qdrift_e, compton_bands_qc, aoe_expression = result_correction.func,
+                        LegendSpecFits.ctc_aoe(aoe_corr, e_cal, qdrift_e, compton_bands_qc; compton_window,
+                                               aoe_expression = result_correction.func,
                                                qdrift_expression = qdrift_expression)
                     end
 
