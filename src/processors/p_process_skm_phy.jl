@@ -33,7 +33,7 @@ function p_process_skm_phy(processing_config, l200::LegendData, period::DataPeri
     filekey = first(rinfo).phy.startkey
     @info "Found filekey $filekey"
 
-    chinfo = channelinfo(l200, period, :phy; system = :geds)
+    chinfo = channelinfo(l200, period, :phy; system = :geds) |> detector_filter(processing_config, :p_process_skm_phy)
     @info "Loaded channel info with $(length(chinfo)) detectors"
 
     exposure = get_exposure(l200, chinfo.detector, period; is_analysis_run = true,
@@ -134,7 +134,8 @@ function p_process_skm_phy(processing_config, l200::LegendData, period::DataPeri
 
     report = lreport()
     lreport!(report, "# Main Log")
-    lreport!(report, StructArray(var"Processor Status" = [master_status(result_skm)]))
+    lreport!(report,
+             StructArray(var"Processor Status" = [master_status(processing_config, :p_process_skm_phy, result_skm)]))
     lreport!(report, "Date of processing: $(utc_timestamp())")
     lreport!(report, "Total Processing time: $(canonicalize(now() - start_time))")
     lreport!(report, skm_log_text)

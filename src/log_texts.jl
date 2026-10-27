@@ -20,7 +20,7 @@ Markdown reports, in gray. [`master_status`](@ref) counts it as a success.
 const process_skipped = """<span style="color:gray">Skipped</span>"""
 
 """
-    master_status(results...)
+    master_status(results...; report_status = DEFAULT_REPORT_STATUS)
 
 Combine the report rows of a processor into one status: `process_succeeded`,
 `process_warning` or `process_failed`.
@@ -28,7 +28,13 @@ Combine the report rows of a processor into one status: `process_succeeded`,
 Each element of `results` is a collection of `itr => res` pairs as returned by
 [`parallel`](@ref), or `nothing`, which is ignored. `res.log` is a report row with a
 `Status` field, or a `Dict` of such rows. When a row has a `usability` column, the
-detector usability is read from `itr.usability`; otherwise the row counts as `:on`.
+detector usability is read from `itr.usability`; otherwise the row counts as `:on`, and so
+does any usability other than `:on`, `:ac` and `:off`.
+
+A row with the status success or skipped does not affect the result. `report_status`
+maps the usability and the row status (`:warning` for `process_warning`, `:failure` for
+any other status) to the status the row gives the processor, `:success`, `:warning` or
+`:failure`. With [`DEFAULT_REPORT_STATUS`](@ref):
 
 | Row status | `:on` | `:ac` | `:off` |
 |:-----------|:------|:------|:-------|
@@ -39,8 +45,10 @@ detector usability is read from `itr.usability`; otherwise the row counts as `:o
 
 The result is `process_failed` if any row fails, otherwise `process_warning` if any row
 warns, otherwise `process_succeeded`. Without any rows the result is `process_failed`.
+The `report_status` setting of a processor is set in the processing config, see
+[`ProcessorSpec`](@ref).
 """
-function master_status(results...)
+function master_status(results...; report_status::AbstractDict = DEFAULT_REPORT_STATUS)
     status = process_succeeded
     has_entries = false
     for result in results
@@ -49,14 +57,12 @@ function master_status(results...)
             logs = res.log isa Dict ? values(res.log) : (res.log,)
             for log in logs
                 has_entries = true
+                (log.Status == process_succeeded || log.Status == process_skipped) && continue
                 usability = haskey(log, :usability) ? itr.usability : :on
-                if log.Status == process_succeeded || log.Status == process_skipped || (usability == :off && log.Status == process_warning)
-                    continue
-                elseif (usability == :ac && log.Status == process_warning) || (usability == :off && log.Status == process_failed)
-                    status = process_warning
-                else
-                    return process_failed
-                end
+                rule = report_status[usability in REPORT_STATUS_USABILITIES ? usability : :on]
+                outcome = rule[log.Status == process_warning ? :warning : :failure]
+                outcome === :failure && return process_failed
+                outcome === :warning && (status = process_warning)
             end
         end
     end

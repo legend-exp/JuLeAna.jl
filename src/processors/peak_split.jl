@@ -1,14 +1,14 @@
 # Peak splitting of the `category` data of a run, shared by `process_peak_split_cal` and
 # `process_peak_split_phy`: the events of each peak window of the raw config, selected with
 # the DAQ energy calibration of the run, go to the `jlpks` file of the detector.
-function split_peaks(l200::LegendData, period::DataPeriod, run::DataRun, category::Symbol, process_name::Symbol; reprocess::Bool,
-                     timeout::Real, use_cache::Bool)
+function split_peaks(processing_config, l200::LegendData, period::DataPeriod, run::DataRun, category::Symbol, process_name::Symbol;
+                     reprocess::Bool, timeout::Real, use_cache::Bool)
     @info "Process $category peak splitting for period $period and run $run"
 
     filekey = start_filekey(l200, (period, run, category))
     @info "Found filekey $filekey"
 
-    chinfo = channelinfo(l200, filekey; system = :geds, only_processable = true)
+    chinfo = channelinfo(l200, filekey; system = :geds) |> detector_filter(processing_config, process_name)
     @info "Loaded channel info with $(length(chinfo)) detectors"
 
     raw_config = dataprod_config(l200).raw(filekey)
@@ -115,7 +115,8 @@ function split_peaks(l200::LegendData, period::DataPeriod, run::DataRun, categor
 
     report = lreport()
     lreport!(report, "# Main Log")
-    lreport!(report, StructArray(var"Processor Status" = [master_status(result_peaksplit)]))
+    lreport!(report,
+             StructArray(var"Processor Status" = [master_status(processing_config, process_name, result_peaksplit)]))
     lreport!(report, "Date of processing: $(utc_timestamp())")
     lreport!(report, "Total Processing time: $(canonicalize(now() - start_time))")
     lreport!(report, peak_splitting_log_text)

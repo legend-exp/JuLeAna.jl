@@ -107,6 +107,7 @@ process_dsp_cal:
   rank: 5
   log_level: info
   plot_level: info
+  detectors: "processable"
   kwargs:
     reprocess: true
     max_wvfs: 1000
@@ -146,8 +147,38 @@ All fields are required:
    plots; with `"debug"`, it also saves its debug plots. `config.processor_plot_level`,
    when set, replaces this value for all processors.
 
-One field is optional:
+Some processors select detectors with the `detectors` field:
 
+- **`detectors`**: the detectors the processor works on, as a string in the syntax of
+  `LegendDataManagement.ljl_propfunc`. The processor loads the channel info of its
+  system and keeps the rows for which the expression is true, so the expression can use
+  any column of the channel info table, for example `processable`, `usability`,
+  `system`, `det_type`, `low_aoe_status` or `lq_status`. Examples:
+  `"processable && usability != :off"` or
+  `"processable && usability == :on && (low_aoe_status == :valid || low_aoe_status == :present)"`.
+  Use `"true"` to keep every row. The expression is checked when the config is loaded;
+  a column that does not exist throws an error when the processor starts. A processor
+  that selects detectors and has no `detectors` entry stops with an error when it starts.
+  `process_evt_phy` does not select detectors and ignores the field. The shipped
+  config sets `"processable"` for all processors except the PSD processors, which also
+  require a valid `low_aoe_status` or `lq_status` (and `usability == :on` at run level),
+  and `process_dsp_aux_phy` and `p_process_skm_phy`, which keep all rows.
+
+Two fields are optional:
+
+- **`report_status`**: how the rows of the processor report give the `Processor
+  Status`, see [Report status](@ref). A table from the detector usability (`on`, `ac`
+  or `off`) to a table from the row status (`warning` or `failure`) to the status the
+  row gives the processor (`success`, `warning` or `failure`). Entries that are not set
+  keep the default of [`JuLeAna.DEFAULT_REPORT_STATUS`](@ref); an unknown usability, row
+  status or status is an error. Example, which makes a failing `off` detector a
+  success and a warning of an `ac` detector a failure:
+
+  ```yaml
+  report_status:
+    ac:  {warning: failure}
+    off: {failure: success}
+  ```
 - **`error_plots`**: `true` or `false` (the default). With `true`, a failed step of the
   processor saves the debug plot of its `on_error` hook, see [`JuLeAna.@process_step`](@ref).
   The plot is saved with the other plots of the detector, with a name starting with
