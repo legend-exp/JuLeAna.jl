@@ -26,7 +26,7 @@ const STUB_PROCESSORS = Dict{Symbol,Any}(:process_a => process_a, :p_process_b =
         @test !shipped.submit_jobs
         @test shipped.local_n == 64
         @test shipped.local_julia_settings == String[]
-        @test "--nodes=1" in shipped.slurm_flags && "--time=01:00:00" in shipped.slurm_flags
+        @test "--nodes=1" in shipped.slurm_flags && "--time=02:00:00" in shipped.slurm_flags
         @test shipped.env_variables["JULIA_WORKER_TIMEOUT"] == "240"
         @test shipped.log_level == JuLeAna.parse_log_level("info")
         @test shipped.periods == DataPeriod.([16, 18, 19, 20, 21, 22])
