@@ -211,7 +211,9 @@ Entry point of the `juleana` app and of `julia -m JuLeAna`: parse the command li
 options `args` (see `juleana --help`) and return the process exit code.
 
 With `--no-tui`, run all enabled steps with [`run_no_tui`](@ref) and return its exit
-code. Otherwise open the terminal user interface with [`run_tui`](@ref).
+code. With `--refresh-master-reports`, only write the master reports of the data production
+with [`JuLeAna.write_master_reports`](@ref). Otherwise open the terminal user interface with
+[`run_tui`](@ref).
 
 Install the app with `Pkg.Apps.add(path = "<path to JuLeAna.jl>")`; the `juleana`
 command then starts Julia with `--threads=8,1`, `--gcthreads=8,1` and without the user's
@@ -221,6 +223,10 @@ options placed before a `--` replace these defaults, e.g. `juleana --threads=16,
 function (@main)(args::AbstractVector{<:AbstractString})
     parsed_args = parse_commandline(args)
     isnothing(parsed_args) && return 0
+    if parsed_args["refresh_master_reports"]
+        @info "Wrote $(length(write_master_reports(LegendData(:l200)))) master reports"
+        return 0
+    end
     parsed_args["no_tui"] && return run_no_tui(parsed_args)
     run_tui(parsed_args)
     return 0

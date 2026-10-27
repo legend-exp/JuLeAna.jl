@@ -776,6 +776,7 @@ function apply!(ctrl::DataflowController, cmd::StartProcessing)
         @info "Processing $outcome"
         finished = now(UTC)
         write_history(ctrl, cfg, l200, outcome, finished)
+        refresh_master_reports(l200)
         @lock ctrl.lock begin
             ctrl.state, ctrl.outcome, ctrl.finished = :ready, outcome, finished
             ctrl.last_error = isnothing(err) ? nothing : truncate_error(err)
@@ -801,6 +802,18 @@ function write_history(ctrl::DataflowController, cfg::ProcessingConfig, l200, ou
         @info "Added the processing run to the history in $path"
     catch e
         @error "Writing the processing history failed" exception = (e, catch_backtrace())
+    end
+    return nothing
+end
+
+# Rewrite the master reports of `l200` from all reports on disk (see `write_master_reports`);
+# an error is logged and does not change the outcome.
+function refresh_master_reports(l200)
+    try
+        paths = write_master_reports(l200)
+        @info "Refreshed $(length(paths)) master reports in $(joinpath(l200.tier[:jlrep], "master"))"
+    catch e
+        @error "Writing the master reports failed" exception = (e, catch_backtrace())
     end
     return nothing
 end

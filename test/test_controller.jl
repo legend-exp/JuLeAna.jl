@@ -666,13 +666,14 @@ waituntil(cond; timeout = 60) = timedwait(cond, timeout; pollint = 0.05) === :ok
         failed = JuLeAna.report_path(l200, :process_energy_calibration_cal, :run, p2, DataRun(6), :cal)
         mkpath(dirname(failed))
         write(failed, RUN_REPORT)
-        before = sort!([joinpath(r, f) for (r, _, fs) in walkdir(jlrep) for f in fs])
 
         # the reports of the steps of the current or last run, none before the first run
         @test isempty(JuLeAna.report_index(ctrl))
         dispatch!(ctrl, StartProcessing())
         wait(ctrl)
         @test snapshot(ctrl).outcome === :finished
+        # the processing run writes the master reports, reading the reports creates nothing
+        before = sort!([joinpath(r, f) for (r, _, fs) in walkdir(jlrep) for f in fs])
         rows = JuLeAna.report_index(ctrl)
         energy = filter(r -> r.process === :process_energy_calibration_cal, rows)
         @test [(r.period, r.run, r.state) for r in energy] == [[(p2, r, r == DataRun(6) ? :failed : :missing) for r in DataRun.(0:7)];
