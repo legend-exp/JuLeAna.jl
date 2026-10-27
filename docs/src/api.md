@@ -76,6 +76,7 @@ SetRunmodeSettings
 SetCheckDependencies
 SetKwarg
 SetStepLevel
+SetStepSetting
 ResetKwargs
 ResetDependencyGraph
 StartProcessing

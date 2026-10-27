@@ -33,6 +33,14 @@ end
 
 press!(m, keys...) = foreach(k -> Tachikoma.update!(m, KeyEvent(k)), keys)
 
+# Put the cursor of the open settings editor on the row `key`, with `path` for a cell of the report status.
+function editor_goto!(m, key, path = ())
+    editor = m.setup.editor
+    proc = JuLeAna.editor_processor(editor, m.snap)
+    editor.cursor = findfirst(r -> r.key === key && r.path == collect(Symbol, path), JuLeAna.editor_rows(proc))
+    return editor.cursor
+end
+
 @testset "Setup page" begin
     @testset "tag colors" begin
         style(tag) = JuLeAna.setup_tag_style(tag)
@@ -301,9 +309,10 @@ press!(m, keys...) = foreach(k -> Tachikoma.update!(m, KeyEvent(k)), keys)
         press!(m, 'q', '2')
         @test !m.quit && m.page == 1
 
-        # the first rows are the log and the plot level; Enter sets the next level
+        # Enter on the log and the plot level sets the next level
         energy() = only(filter(p -> p.name === :process_energy_calibration_cal, m.snap.processors))
         @test occursin("  log level = info", join(row_text(render_setup_page(m), r) for r in 1:30))
+        editor_goto!(m, :log_level)
         press!(m, :enter, :down, :enter)
         @test setup_refreshed!(m)
         @test energy().log_level == Logging.Debug && energy().plot_level === :debug && energy().overridden == [:log_level, :plot_level]
@@ -318,7 +327,8 @@ press!(m, keys...) = foreach(k -> Tachikoma.update!(m, KeyEvent(k)), keys)
         @test isempty(energy().overridden)
 
         # then the kwargs in alphabetical order: channels, max_wvfs (both accepted, not set)
-        press!(m, :down, :down, :down, :enter)
+        editor_goto!(m, :max_wvfs)
+        press!(m, :enter)
         @test m.setup.editor.text == ""
         press!(m, '5', 'x', :backspace, :enter)
         @test setup_refreshed!(m)
@@ -355,6 +365,142 @@ press!(m, keys...) = foreach(k -> Tachikoma.update!(m, KeyEvent(k)), keys)
         @test isnothing(m.command_error)
     end
 
+    @testset "settings editor" begin
+        config_file = joinpath(mktempdir(), "processing_config.yaml")
+        cp(args["config"], config_file)
+        session = new_session()
+        session.args["config"] = config_file
+        m = new_tui(session)
+        @test setup_refreshed!(m)
+        energy() = only(filter(p -> p.name === :process_energy_calibration_cal, m.snap.processors))
+        screen() = join(row_text(render_setup_page(m), r) for r in 1:30)
+        type!(text) = press!(m, collect(text)...)
+        press!(m, :tab, 'e')
+        text = screen()
+        for label in ("enabled = selected", "category = cal", "rank = 1", "dependencies = none", "error plots = false",
+                      "detectors = not set", "report status on, warning row = failure", "report status off, failure row = warning")
+            @test occursin(label, text)
+        end
+
+        # Enter on `enabled` deselects the processor, again selects it; `u` returns to the config
+        editor_goto!(m, :enabled)
+        press!(m, :enter)
+        @test setup_refreshed!(m)
+        @test !energy().selected && :process_energy_calibration_cal ∉ m.snap.run_steps
+        @test occursin("* enabled = not selected   (config: selected)", screen())
+        press!(m, :enter)
+        @test setup_refreshed!(m)
+        @test energy().selected
+        press!(m, :enter, 'u')
+        @test setup_refreshed!(m)
+        @test energy().selected
+
+        # fixed values: Bool, category and the cells of the report status
+        editor_goto!(m, :error_plots)
+        press!(m, :enter)
+        editor_goto!(m, :category)
+        press!(m, :enter)
+        editor_goto!(m, :report_status, (:on, :warning))
+        press!(m, :enter)
+        @test setup_refreshed!(m)
+        @test energy().error_plots && energy().category === :phy && energy().report_status[:on][:warning] === :success
+        @test energy().report_status[:on][:failure] === :failure
+        @test energy().overridden == [:category, :error_plots, :report_status]
+        @test occursin("* report status on, warning row = success   (config: failure)", screen())
+        press!(m, :enter)
+        @test setup_refreshed!(m)
+        @test energy().report_status[:on][:warning] === :warning
+        press!(m, 'u')
+        @test setup_refreshed!(m)
+        @test energy().report_status == JuLeAna.DEFAULT_REPORT_STATUS
+
+        # text settings: an invalid text shows an error and leaves the setting unchanged
+        editor_goto!(m, :rank)
+        press!(m, :enter, :backspace, 'x', :enter)
+        @test m.setup.editor.error == "expected an integer, got `x`"
+        @test occursin("expected an integer", screen())
+        press!(m, :escape)
+        @test setup_refreshed!(m)
+        @test energy().rank == 1 && isnothing(m.command_error)
+        press!(m, :enter, :backspace, '5', :enter)
+        @test setup_refreshed!(m)
+        @test energy().rank == 5
+
+        editor_goto!(m, :detectors)
+        press!(m, :enter)
+        type!(")(")
+        press!(m, :enter)
+        @test occursin("not a valid detector expression", m.setup.editor.error)
+        press!(m, :escape)
+        @test setup_refreshed!(m)
+        @test isnothing(energy().detectors)
+        press!(m, :enter)
+        type!("processable && usability != :off")
+        press!(m, :enter)
+        @test setup_refreshed!(m)
+        @test energy().detectors == "processable && usability != :off"
+        @test isnothing(m.setup.editor.error)
+
+        editor_goto!(m, :dependencies)
+        press!(m, :enter)
+        type!("process_energy_calibration_cal")
+        press!(m, :enter)
+        @test occursin("names the processor itself", m.setup.editor.error)
+        press!(m, :escape, :enter)
+        type!("nope")
+        press!(m, :enter)
+        @test occursin("unknown processor `nope`", m.setup.editor.error)
+        press!(m, :escape, :enter)
+        type!("process_dsp_cal")
+        press!(m, :enter)
+        @test setup_refreshed!(m)
+        @test energy().dependencies == [:process_dsp_cal]
+        # a dependency cycle is refused
+        m.setup.editor = JuLeAna.KwargsEditor(:process_dsp_cal)
+        editor_goto!(m, :dependencies)
+        press!(m, :enter)
+        type!("process_energy_calibration_cal")
+        press!(m, :enter)
+        @test occursin("form a cycle", m.setup.editor.error)
+        press!(m, :escape, :escape)
+        @test isnothing(m.setup.editor)
+        @test setup_refreshed!(m)
+        @test isempty(only(filter(p -> p.name === :process_dsp_cal, m.snap.processors)).dependencies)
+
+        # the settings reach the config the workers get
+        eff = JuLeAna.effective_config(m.ctrl).processors[:process_energy_calibration_cal]
+        @test eff.rank == 5 && eff.category === :phy && eff.error_plots && eff.dependencies == [:process_dsp_cal]
+        @test eff.detectors == "processable && usability != :off"
+
+        # `w` writes them; the file reads back to the same settings
+        written = joinpath(mktempdir(), "written.yaml")
+        m.setup.editor = JuLeAna.KwargsEditor(:process_energy_calibration_cal)
+        editor_goto!(m, :report_status, (:ac, :failure))
+        press!(m, :enter)
+        @test setup_refreshed!(m)
+        JuLeAna.dispatch!(m.ctrl, WriteConfig(written))
+        loaded = ProcessingConfig(written).processors[:process_energy_calibration_cal]
+        @test loaded.rank == 5 && loaded.category === :phy && loaded.error_plots && loaded.dependencies == [:process_dsp_cal]
+        @test loaded.detectors == "processable && usability != :off"
+        @test loaded.report_status[:ac][:failure] === :success && loaded.report_status[:on] == JuLeAna.DEFAULT_REPORT_STATUS[:on]
+        saved = JuLeAna.effective_config(m.ctrl).processors[:process_energy_calibration_cal]
+        @test all(f -> getfield(loaded, f) == getfield(saved, f),
+                  (:name, :level, :category, :rank, :dependencies, :error_plots, :detectors, :report_status, :log_level, :plot_level))
+
+        # a reset that would make a dependency cycle is refused and changes nothing
+        aoe, dsp = :p_process_aoe_cut_cal, :process_dsp_cal
+        JuLeAna.dispatch!(m.ctrl, SetStepSetting(aoe, :dependencies, Symbol[]))
+        JuLeAna.dispatch!(m.ctrl, SetStepSetting(dsp, :dependencies, [aoe]))
+        overrides = deepcopy(m.ctrl.setting_overrides)
+        @test_throws "form a cycle" JuLeAna.dispatch!(m.ctrl, ResetKwargs(aoe, :dependencies))
+        @test m.ctrl.setting_overrides == overrides
+
+        # `U` drops every setting
+        press!(m, 'U')
+        @test setup_refreshed!(m)
+        @test isempty(energy().overridden) && energy().rank == 1 && isnothing(energy().detectors)
+    end
+
     @testset "write the config" begin
         config_file = joinpath(mktempdir(), "processing_config.yaml")
         cp(args["config"], config_file)
@@ -375,8 +521,9 @@ press!(m, keys...) = foreach(k -> Tachikoma.update!(m, KeyEvent(k)), keys)
             @test !ispath(written)
 
             # the config folder of the data production is created and the session config file becomes the written one
-            # the editor rows: log level, plot level, channels, max_wvfs
-            press!(m, :tab, 'e', :down, :down, :down, :enter, '7', :enter, :escape, 'w', 'y')
+            press!(m, :tab, 'e')
+            editor_goto!(m, :max_wvfs)
+            press!(m, :enter, '7', :enter, :escape, 'w', 'y')
             @test setup_refreshed!(m)
             @test isnothing(m.command_error)
             @test ProcessingConfig(written).processors[:process_energy_calibration_cal].kwargs[:max_wvfs] == 7

@@ -209,11 +209,60 @@ struct SetStepLevel <: ControllerCommand
 end
 
 """
+    SetStepSetting(step, key, value)
+
+Override a setting of the processor `step` for this session. The settings are
+`:category` (`:cal` or `:phy`), `:rank` (an `Int`), `:dependencies` (a vector of processor
+names), `:error_plots` (a `Bool`), `:detectors` (an `ljl_propfunc` expression as a
+string, or `nothing` for none) and `:report_status` (a table as in
+[`ProcessorSpec`](@ref), of which the unset entries take [`DEFAULT_REPORT_STATUS`](@ref)).
+The command throws an `ArgumentError` and leaves the session unchanged when the value does not
+fit the setting or the resulting processing config is invalid, for example for an
+invalid detector expression, a dependency on an unknown processor or a dependency cycle.
+Use [`SetKwarg`](@ref) for the keyword arguments, [`SetStepLevel`](@ref) for the log and the
+plot level and [`SelectSteps`](@ref) for whether the processor is selected.
+"""
+struct SetStepSetting <: ControllerCommand
+    step::Symbol
+    key::Symbol
+    value::Any
+    function SetStepSetting(step, key, value)
+        key = Symbol(key)
+        key in STEP_SETTINGS ||
+            throw(ArgumentError("SetStepSetting: the key must be one of $(join(STEP_SETTINGS, ", ")), got $(repr(key))"))
+        if key === :category
+            value isa Union{Symbol,AbstractString} ||
+                throw(ArgumentError("SetStepSetting: `category` must be :cal or :phy, got $(repr(value))"))
+            value = Symbol(value)
+        elseif key === :rank
+            value isa Int || throw(ArgumentError("SetStepSetting: `rank` must be an Int, got $(repr(value))"))
+        elseif key === :error_plots
+            value isa Bool || throw(ArgumentError("SetStepSetting: `error_plots` must be a Bool, got $(repr(value))"))
+        elseif key === :dependencies
+            value isa AbstractVector || throw(ArgumentError("SetStepSetting: `dependencies` must be a vector of names, got $(repr(value))"))
+            value = Symbol[Symbol(v) for v in value]
+        elseif key === :detectors
+            isnothing(value) ||
+                value isa AbstractString ||
+                throw(ArgumentError("SetStepSetting: `detectors` must be a string or nothing, got $(repr(value))"))
+            value = isnothing(value) ? nothing : String(value)
+        else
+            value isa AbstractDict || throw(ArgumentError("SetStepSetting: `report_status` must be a table, got $(repr(value))"))
+            value = _report_status(value, "report_status")
+        end
+        return new(Symbol(step), key, value)
+    end
+end
+
+"""
     ResetKwargs(step = nothing, key = nothing)
 
-Drop the kwarg and level overrides (see [`SetKwarg`](@ref) and [`SetStepLevel`](@ref)) of
-all processors, of the processor `step`, or only the override of `key` (a kwarg,
-`:log_level` or `:plot_level`) of the processor `step`.
+Drop the kwarg, level and setting overrides (see [`SetKwarg`](@ref), [`SetStepLevel`](@ref)
+and [`SetStepSetting`](@ref)) of all processors, of the processor `step`, or only the
+override of `key` (a kwarg, `:log_level`, `:plot_level` or a setting of `SetStepSetting`)
+of the processor `step`. The command throws an `ArgumentError` and changes nothing when
+the config without the dropped overrides is invalid, for example when a dependency cycle
+would result.
 """
 struct ResetKwargs <: ControllerCommand
     step::Union{Nothing,Symbol}
@@ -263,11 +312,12 @@ StopProcessing(; force::Bool = false) = StopProcessing(force)
     WriteConfig()
 
 Write the processing config file of the session to `path` with the current settings of
-the session: the kwarg overrides are applied to the processor entries, every processor
+the session: the kwarg, level and setting overrides are applied to the processor entries, every processor
 is `enabled` exactly when it is selected, and `processing.analysis_runs_only` is the
 setting in effect. Without `path`, the file is `processing_config.yaml` in the
 [`JuLeAna.production_config_dir`](@ref), which is created if needed. An existing file
-at the path is first copied to `path * ".bak"`. The file is written as YAML. The written file becomes the config file of the session, which
+at the path is first copied to `path * ".bak"`. The file is written as YAML from the parsed config, so comments and the formatting of the
+original file are not kept, and the keys are not in the order of the original file. The written file becomes the config file of the session, which
 [`ReloadConfig`](@ref) reads.
 """
 struct WriteConfig <: ControllerCommand
@@ -429,6 +479,8 @@ mutable struct DataflowController
     kwarg_overrides::Dict{Symbol,Dict{Symbol,Any}}
     # `:log_level` and `:plot_level` set by `SetStepLevel`, per processor
     level_overrides::Dict{Symbol,Dict{Symbol,Any}}
+    # settings in `STEP_SETTINGS` set by `SetStepSetting`, per processor
+    setting_overrides::Dict{Symbol,Dict{Symbol,Any}}
     task::Union{Nothing,Task}
     outcome::Union{Nothing,Symbol}
     last_error::Union{Nothing,String}
@@ -443,7 +495,8 @@ function DataflowController(args::AbstractDict; processors::AbstractDict{Symbol}
                               Threads.Atomic{Bool}(false), ProgressStore(), workers, record_software, record_metadata, String[], nothing,
                               nothing, :idle, nothing, DataPeriod[], DataPeriod[], Dict{DataPeriod,Vector{DataRun}}(), nothing, nothing,
                               nothing, nothing, nothing, Dict{Symbol,Any}(), true, Dict{Symbol,Dict{Symbol,Any}}(),
-                              Dict{Symbol,Dict{Symbol,Any}}(), nothing, nothing, nothing, nothing, nothing)
+                              Dict{Symbol,Dict{Symbol,Any}}(), Dict{Symbol,Dict{Symbol,Any}}(), nothing, nothing, nothing, nothing,
+                              nothing)
 end
 
 function DataflowController(session::DataflowSession; processors::AbstractDict{Symbol} = PROCESSORS,
@@ -495,16 +548,22 @@ function require_state(ctrl::DataflowController, cmd::ControllerCommand, states:
     return nothing
 end
 
-# Processor specs of `specs` with the session's kwarg overrides merged into their kwargs and
-# its level overrides replacing their log and plot levels.
-function with_overrides(specs::AbstractDict{Symbol,ProcessorSpec}, overrides::AbstractDict, levels::AbstractDict)
+# Processor specs of `specs` with the session's kwarg overrides merged into their kwargs, its
+# level overrides replacing their log and plot levels and its setting overrides replacing the
+# other settings.
+function with_overrides(specs::AbstractDict{Symbol,ProcessorSpec}, overrides::AbstractDict, levels::AbstractDict, settings::AbstractDict)
     return Dict{Symbol,ProcessorSpec}(name =>
-                                          !haskey(overrides, name) && !haskey(levels, name) ? spec :
-                                          ProcessorSpec(spec.name, spec.level, spec.enabled, spec.category, spec.rank, spec.dependencies,
-                                                        merge(spec.kwargs, get(overrides, name, Dict{Symbol,Any}())), spec.error_plots,
+                                          !haskey(overrides, name) && !haskey(levels, name) && !haskey(settings, name) ? spec :
+                                          ProcessorSpec(spec.name, spec.level, spec.enabled,
+                                                        get(get(settings, name, Dict{Symbol,Any}()), :category, spec.category),
+                                                        get(get(settings, name, Dict{Symbol,Any}()), :rank, spec.rank),
+                                                        get(get(settings, name, Dict{Symbol,Any}()), :dependencies, spec.dependencies),
+                                                        merge(spec.kwargs, get(overrides, name, Dict{Symbol,Any}())),
+                                                        get(get(settings, name, Dict{Symbol,Any}()), :error_plots, spec.error_plots),
                                                         get(get(levels, name, Dict{Symbol,Any}()), :log_level, spec.log_level),
                                                         get(get(levels, name, Dict{Symbol,Any}()), :plot_level, spec.plot_level),
-                                                        spec.detectors, spec.report_status)
+                                                        get(get(settings, name, Dict{Symbol,Any}()), :detectors, spec.detectors),
+                                                        get(get(settings, name, Dict{Symbol,Any}()), :report_status, spec.report_status))
                                       for (name, spec) in specs)
 end
 
@@ -513,7 +572,7 @@ end
 
 Return the session's [`ProcessingConfig`](@ref) with the kwarg overrides of the
 controller merged into the processor kwargs, its level overrides (see
-[`SetStepLevel`](@ref)) applied to the processors, and its `analysis_runs_only`, `runmode` and
+[`SetStepLevel`](@ref)) and setting overrides (see [`SetStepSetting`](@ref)) applied to the processors, and its `analysis_runs_only`, `runmode` and
 run mode settings (see [`SetRunmodeSettings`](@ref)) applied.
 """
 function effective_config(ctrl::DataflowController)
@@ -525,8 +584,8 @@ function effective_config(ctrl::DataflowController)
                             something(ctrl.analysis_runs_only, cfg.analysis_runs_only), cfg.only_partitions, cfg.only_runs,
                             cfg.max_parallel_steps, cfg.log_path, cfg.log_level, cfg.processor_log_level, cfg.processor_plot_level,
                             cfg.plot_formats, cfg.idle_timeout_minutes,
-                            with_overrides(cfg.processors, ctrl.kwarg_overrides, ctrl.level_overrides),
-                            with_overrides(cfg.p_processors, ctrl.kwarg_overrides, ctrl.level_overrides))
+                            with_overrides(cfg.processors, ctrl.kwarg_overrides, ctrl.level_overrides, ctrl.setting_overrides),
+                            with_overrides(cfg.p_processors, ctrl.kwarg_overrides, ctrl.level_overrides, ctrl.setting_overrides))
 end
 
 function processor_spec(cfg::ProcessingConfig, step::Symbol)
@@ -570,6 +629,7 @@ function apply!(ctrl::DataflowController, cmd::ReloadConfig)
             session.run_steps, session.partition_steps = selected_steps(config)
             empty!(ctrl.kwarg_overrides)
             empty!(ctrl.level_overrides)
+            empty!(ctrl.setting_overrides)
             reset_dependency_graph!(session)
             install_session!(ctrl, session)
         end
@@ -710,16 +770,44 @@ function apply!(ctrl::DataflowController, cmd::SetStepLevel)
     return nothing
 end
 
+function apply!(ctrl::DataflowController, cmd::SetStepSetting)
+    require_state(ctrl, cmd, :ready)
+    processor_spec(ctrl.session.config, cmd.step)
+    with_valid_overrides(ctrl) do
+        return get!(Dict{Symbol,Any}, ctrl.setting_overrides, cmd.step)[cmd.key] = cmd.value
+    end
+    return nothing
+end
+
+# Run `change()`, which edits the overrides of `ctrl`, and restore the overrides and rethrow
+# when the changed overrides make an invalid processing config.
+function with_valid_overrides(change, ctrl::DataflowController)
+    saved = map(deepcopy, (ctrl.kwarg_overrides, ctrl.level_overrides, ctrl.setting_overrides))
+    try
+        change()
+        effective_config(ctrl)
+    catch
+        for (overrides, old) in zip((ctrl.kwarg_overrides, ctrl.level_overrides, ctrl.setting_overrides), saved)
+            empty!(overrides)
+            merge!(overrides, old)
+        end
+        rethrow()
+    end
+    return nothing
+end
+
 function apply!(ctrl::DataflowController, cmd::ResetKwargs)
     require_state(ctrl, cmd, :ready)
-    for overrides in (ctrl.kwarg_overrides, ctrl.level_overrides)
-        if isnothing(cmd.step)
-            empty!(overrides)
-        elseif isnothing(cmd.key)
-            delete!(overrides, cmd.step)
-        elseif haskey(overrides, cmd.step)
-            delete!(overrides[cmd.step], cmd.key)
-            isempty(overrides[cmd.step]) && delete!(overrides, cmd.step)
+    with_valid_overrides(ctrl) do
+        for overrides in (ctrl.kwarg_overrides, ctrl.level_overrides, ctrl.setting_overrides)
+            if isnothing(cmd.step)
+                empty!(overrides)
+            elseif isnothing(cmd.key)
+                delete!(overrides, cmd.step)
+            elseif haskey(overrides, cmd.step)
+                delete!(overrides[cmd.step], cmd.key)
+                isempty(overrides[cmd.step]) && delete!(overrides, cmd.step)
+            end
         end
     end
     return nothing
@@ -831,6 +919,26 @@ function apply!(ctrl::DataflowController, cmd::WriteConfig)
         entry = props[spec.level === :run ? :processors : :p_processors][step]
         haskey(levels, :log_level) && (entry.log_level = only(name for (name, level) in LOG_LEVELS if level == levels[:log_level]))
         haskey(levels, :plot_level) && (entry.plot_level = string(levels[:plot_level]))
+    end
+    for (step, settings) in ctrl.setting_overrides
+        spec = processor_spec(session.config, step)
+        entry = props[spec.level === :run ? :processors : :p_processors][step]
+        for (key, value) in settings
+            if key === :category
+                entry.category = string(value)
+            elseif key === :dependencies
+                entry.dependencies = string.(value)
+            elseif key === :detectors
+                isnothing(value) ? delete!(entry, :detectors) : (entry.detectors = value)
+            elseif key === :report_status
+                # only the entries that differ from the default are written
+                changed = Dict(u => Dict(r => string(v) for (r, v) in rows if v !== DEFAULT_REPORT_STATUS[u][r]) for (u, rows) in value)
+                filter!(!isempty ∘ last, changed)
+                isempty(changed) ? delete!(entry, :report_status) : (entry.report_status = changed)
+            else
+                entry[key] = value
+            end
+        end
     end
     selected = union(session.run_steps, session.partition_steps)
     for section in (:processors, :p_processors), (name, entry) in props[section]
@@ -978,7 +1086,9 @@ end
 const ProcessorInfo = @NamedTuple{name::Symbol, level::Symbol, category::Symbol, rank::Int, enabled::Bool, selected::Bool,
                                   dependencies::Vector{Symbol}, kwargs::Dict{Symbol,Any}, config_kwargs::Dict{Symbol,Any},
                                   accepted::Union{Nothing,Vector{Symbol}}, overridden::Vector{Symbol}, log_level::LogLevel,
-                                  plot_level::Symbol, config_log_level::LogLevel, config_plot_level::Symbol}
+                                  plot_level::Symbol, config_log_level::LogLevel, config_plot_level::Symbol,
+                                  error_plots::Bool, detectors::Union{Nothing,String}, report_status::Dict{Symbol,Dict{Symbol,Symbol}},
+                                  config_spec::ProcessorSpec}
 const RunmodeSettings = @NamedTuple{local_n::Int, local_julia_settings::Vector{String}, slurm_flags::Vector{String},
                                     slurm_julia_settings::Vector{String}}
 const ControllerSnapshot = @NamedTuple{state::Symbol, outcome::Union{Nothing,Symbol}, last_error::Union{Nothing,String},
@@ -1013,9 +1123,12 @@ the controller state:
   `dependencies`, `kwargs` (with the overrides applied), `config_kwargs` (as in the
   config), `accepted` (the keyword arguments the processor function accepts besides the
   ones the dataflow passes itself, `nothing` if it accepts any), `overridden` (names of
-  the overridden kwargs, and `:log_level` and `:plot_level` if overridden), `log_level`,
-  `plot_level` (with the overrides of [`SetStepLevel`](@ref) applied) and
-  `config_log_level`, `config_plot_level` (as in the config);
+  the overridden kwargs, `:log_level` and `:plot_level`, and the settings of
+  [`SetStepSetting`](@ref) that are overridden), `log_level`,
+  `plot_level` (with the overrides of [`SetStepLevel`](@ref) applied),
+  `config_log_level`, `config_plot_level` (as in the config), `error_plots`, `detectors`
+  and `report_status` (with the overrides of [`SetStepSetting`](@ref) applied; `category`,
+  `rank` and `dependencies` above are too), and `config_spec`, the [`ProcessorSpec`](@ref) of the config;
 - `reprocess`, `processor_log_level`, `processor_plot_level`, `analysis_runs_only` and `runmode` (the settings in effect), `runmode_settings`
   (`local_n`, `local_julia_settings`, `slurm_flags` and `slurm_julia_settings` in effect, or
   `nothing` without a session), `check_dependencies`,
@@ -1036,9 +1149,11 @@ function snapshot(ctrl::DataflowController)
                            config_kwargs = copy(processor_spec(session.config, name).kwargs),
                            accepted = accepted_kwargs(ctrl.processors, spec),
                            overridden = sort!(collect(union(keys(get(ctrl.kwarg_overrides, name, Dict{Symbol,Any}())),
-                                                            keys(get(ctrl.level_overrides, name, Dict{Symbol,Any}()))))), spec.log_level,
+                                                            keys(get(ctrl.level_overrides, name, Dict{Symbol,Any}())),
+                                                            keys(get(ctrl.setting_overrides, name, Dict{Symbol,Any}()))))), spec.log_level,
                            spec.plot_level, config_log_level = processor_spec(session.config, name).log_level,
-                           config_plot_level = processor_spec(session.config, name).plot_level)
+                           config_plot_level = processor_spec(session.config, name).plot_level, spec.error_plots, spec.detectors,
+                           report_status = deepcopy(spec.report_status), config_spec = deepcopy(processor_spec(session.config, name)))
                           for name in vcat(run_steps(cfg; enabled_only = false), partition_steps(cfg; enabled_only = false))
                           for spec in (processor_spec(cfg, name),)]
         end

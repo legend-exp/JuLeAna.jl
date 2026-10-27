@@ -171,7 +171,7 @@ export run_processing, run_step, ProcessingStopped, ProgressStore, progress, bus
 export DataflowSession
 export DataflowController, dispatch!, snapshot, ControllerCommand, LoadSession, ReloadConfig, SelectPeriods, SelectRuns, SelectSteps,
        SetReprocess, SetProcessorLogLevel, SetProcessorPlotLevel, SetAnalysisRunsOnly, SetRunmode, SetRunmodeSettings, SetCheckDependencies,
-       SetKwarg, SetStepLevel, ResetKwargs, ResetDependencyGraph, StartProcessing, StopProcessing, WriteConfig, AddWorkers,
+       SetKwarg, SetStepLevel, SetStepSetting, ResetKwargs, ResetDependencyGraph, StartProcessing, StopProcessing, WriteConfig, AddWorkers,
        CancelAllocation, CancelAll, PostponeIdleCancel, EditStartScript, CreateProduction, SelectProduction, SelectDataset
 
 public production_setup_dir, effective_config, save_plot, @debug_plot, @debug_progress, root_exception, @process_step, ProcessStepError,

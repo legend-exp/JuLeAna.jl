@@ -6,7 +6,7 @@ const DOCS_URL = "https://legend-exp.github.io/JuLeAna.jl/stable/"
 const HELP_KEYS = (setup = (("Tab  Shift-Tab", "next, previous pane"), ("↑ ↓ PgUp PgDn Home End", "move in a pane"),
                             ("← → Enter", "fold, unfold a period"), ("Space", "check or uncheck the item"), ("a  n", "check all, none"),
                             ("/", "filter the list (Enter keeps, Esc clears)"), ("c  p", "check the cal, phy processors"),
-                            ("d", "add the steps that checked steps wait for"), ("e", "edit the keyword arguments of the processor"),
+                            ("d", "add the steps that checked steps wait for"), ("e", "edit the settings and keyword arguments of the processor"),
                             ("e", "edit the workers, flags and Julia settings of the run modes (Run mode row of the Options pane)"),
                             ("Space  Enter", "cycle the option in the Options pane; open the picker of the data production or dataset"),
                             ("s", "start processing"), ("x  X", "stop after the running items, stop at once"), ("r", "reload the config"),

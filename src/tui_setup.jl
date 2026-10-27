@@ -176,7 +176,7 @@ name unless it is the current one, and Escape closes the picker. While the produ
 every key goes to its text (see [`JuLeAna.root_key!`](@ref)). Otherwise the focused checklist gets the key
 first; a change of its selection sends `SelectRuns` or `SelectSteps`. Then: Tab and Shift-Tab move between the panes; in a processor pane
 `c` and `p` select the `cal` and `phy` processors of the pane, `d` adds the steps
-the selected steps wait for and `e` opens the kwargs editor for the processor under the
+the selected steps wait for and `e` opens the settings editor (see [`JuLeAna.kwargs_key!`](@ref)) for the processor under the
 cursor; in the options pane Up and Down choose a row, Space or
 Enter cycles its value and `e` on the Run mode row opens the editor of the settings of the run modes; in the production pane Up and Down choose the root, the production or the
 dataset, Space or Enter edits the root in place or opens the picker of the production or dataset

@@ -134,8 +134,8 @@ theme is saved in `prefs/JuLeAna/theme` in the Julia depot and used at the next 
 `--theme` selects one for a single start. The themes use the 256-color palette and leave
 the background of the terminal unchanged.
 
-1. **Setup**: select the periods, runs and processors, edit the keyword arguments of a
-   processor (`e`) and the options (reprocess, check dependencies, analysis runs only and the
+1. **Setup**: select the periods, runs and processors, edit the settings and keyword arguments of a
+   processor (`e`, see below) and the options (reprocess, check dependencies, analysis runs only and the
    run mode, `local` or `slurm`, of the next worker allocations; `e` on the Run mode row edits
    the settings of both run modes, see below), start processing (`s`), stop it (`x` after the
    running items, `X` at once), reload the config (`r`), write the settings to the
@@ -152,6 +152,40 @@ the background of the terminal unchanged.
    `datasets/runlists`). Choosing one cancels the worker allocations and reloads the
    session; it is possible while no processing runs. The Dataset pane below shows the runinfo of the
    period or run under the cursor of the periods.
+
+   `e` on a processor of the run-level or partition-level pane opens the settings editor of
+   that processor. It lists, one row per entry with the value in effect, `enabled`
+   (whether the processor is selected), `category`, `rank`, `dependencies`, `error plots`,
+   `log level`, `plot level`, `detectors`, the six cells of the `report status` table (for
+   each detector usability `on`, `ac` and `off`, the status that a report row with the
+   status `warning` or `failure` gives the processor), and the keyword arguments
+   (`kwargs`) in alphabetical order, including the ones the processor accepts but the
+   config does not set. `Up` and `Down` move; `Enter` selects or deselects the processor,
+   flips `error plots` and steps `category`, the levels and each report status cell through
+   their values, and on the other rows starts editing the text: an integer for `rank`,
+   processor names separated by commas for `dependencies`, an expression in the syntax of
+   `ljl_propfunc` for `detectors` (empty text removes it), and for a kwarg a value in the
+   type of the current value or a Julia literal (for example `[:V01, :V02]`; it is
+   only parsed, never evaluated). While a value is typed, `Enter` applies it only if it is
+   valid, with [`SetStepSetting`](@ref) or [`SetKwarg`](@ref); an invalid value (an
+   unparsable text, an invalid detector expression, a dependency on the processor itself
+   or on an unknown processor, a dependency cycle, a kwarg the processor does not accept)
+   shows its error in the editor and changes nothing. `Esc` drops the typed text or, when none
+   is typed, closes the editor. `u` resets the row under the cursor to the config value (for
+   `enabled`, the selection returns to `enabled` of the config), `U` resets all settings and
+   kwargs of the processor (not its selection). A changed value is marked `*` with the
+   config value. The changes apply to the next processing run of this session and to the
+   worker config; `r` (reload) drops them and `w` writes them to the config file, see
+   below. A change of `rank` changes the order of the listings and ties between ready
+   processors, not the order of the selected steps already set in the session.
+
+   `w` writes the processor settings with the other session settings into the config
+   file. The file is written as YAML from the parsed config: comments and formatting of
+   the original file are not kept and the keys are not in the order of the original file
+   (the previous file is kept as `.bak`). `dependencies` of an edited processor are written as the
+   list shown in the editor; for a config with `order: rank` this list includes the
+   dependencies on the previous processor in rank order. Of the `report status`
+   only the entries that differ from the defaults are written.
 
    `e` on the Run mode row of the Options pane opens the editor of the run mode settings,
    grouped under `local` and `slurm`: the number of local workers (`local_n`, a positive

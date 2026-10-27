@@ -46,7 +46,17 @@
                                                                                                      log_level = Logging.Info,
                                                                                                      plot_level = :info,
                                                                                                      config_log_level = Logging.Info,
-                                                                                                     config_plot_level = :info)
+                                                                                                     config_plot_level = :info,
+                                                                                                     error_plots = false,
+                                                                                                     detectors = "processable",
+                                                                                                     report_status = deepcopy(DEFAULT_REPORT_STATUS),
+                                                                                                     config_spec = ProcessorSpec(; name,
+                                                                                                                                 level,
+                                                                                                                                 category,
+                                                                                                                                 rank,
+                                                                                                                                 dependencies = deps,
+                                                                                                                                 kwargs,
+                                                                                                                                 detectors = "processable"))
         processors = [processor(:process_dsp_cal, :run, :cal, 1, Symbol[]),
                       processor(:process_energy_calibration_cal, :run, :cal, 2, [:process_dsp_cal];
                                 kwargs = Dict{Symbol,Any}(:max_wvfs => 10)),

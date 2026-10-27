@@ -660,6 +660,41 @@ waituntil(cond; timeout = 60) = timedwait(cond, timeout; pollint = 0.05) === :ok
         @test_throws "the key must be" SetStepLevel(:process_energy_calibration_cal, :max_wvfs, 1)
         @test_throws "unknown processor" dispatch!(ctrl, SetStepLevel(:nope, :log_level, "debug"))
     end
+    @testset "step settings" begin
+        ctrl = DataflowController(new_session(); processors, record_software = false, record_metadata = false)
+        energy() = only(filter(p -> p.name === :process_energy_calibration_cal, snapshot(ctrl).processors))
+        step = :process_energy_calibration_cal
+        dispatch!(ctrl, SetStepSetting(step, :rank, 7))
+        dispatch!(ctrl, SetStepSetting(step, :category, "phy"))
+        dispatch!(ctrl, SetStepSetting(step, :error_plots, true))
+        dispatch!(ctrl, SetStepSetting(step, :detectors, "processable"))
+        dispatch!(ctrl, SetStepSetting(step, :dependencies, ["process_dsp_cal"]))
+        table = deepcopy(JuLeAna.DEFAULT_REPORT_STATUS)
+        table[:off][:failure] = :failure
+        dispatch!(ctrl, SetStepSetting(step, :report_status, Dict(:off => Dict(:failure => :failure))))
+        @test energy().rank == 7 && energy().category === :phy && energy().error_plots && energy().detectors == "processable"
+        @test energy().dependencies == [:process_dsp_cal] && energy().report_status == table
+        @test energy().config_spec.rank == 1 && energy().config_spec.category === :cal && isnothing(energy().config_spec.detectors)
+        @test energy().overridden == sort([:rank, :category, :error_plots, :detectors, :dependencies, :report_status])
+        @test JuLeAna.effective_config(ctrl).processors[step].rank == 7
+
+        # invalid values are refused and leave the overrides unchanged
+        before = deepcopy(ctrl.setting_overrides)
+        @test_throws "not a valid detector expression" dispatch!(ctrl, SetStepSetting(step, :detectors, ")("))
+        @test_throws "names the processor itself" dispatch!(ctrl, SetStepSetting(step, :dependencies, [step]))
+        @test_throws "unknown processor" dispatch!(ctrl, SetStepSetting(step, :dependencies, [:nope]))
+        @test_throws "form a cycle" dispatch!(ctrl, SetStepSetting(:process_dsp_cal, :dependencies, [step]))
+        @test_throws "must be \"cal\" or \"phy\"" dispatch!(ctrl, SetStepSetting(step, :category, :other))
+        @test_throws "unknown processor" dispatch!(ctrl, SetStepSetting(:nope, :rank, 1))
+        @test_throws "the key must be" SetStepSetting(step, :enabled, true)
+        @test_throws "`rank` must be an Int" SetStepSetting(step, :rank, "1")
+        @test_throws "unknown key" SetStepSetting(step, :report_status, Dict(:nope => Dict()))
+        @test ctrl.setting_overrides == before
+
+        dispatch!(ctrl, ResetKwargs(step))
+        @test isempty(energy().overridden) && isempty(ctrl.setting_overrides)
+    end
+
     @testset "report_index and report_overview" begin
         ctrl = DataflowController(new_session(); processors, record_software = false, record_metadata = false)
         jlrep = l200.tier[:jlrep]

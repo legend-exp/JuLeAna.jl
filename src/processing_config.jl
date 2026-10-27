@@ -4,6 +4,9 @@
 const PLOT_LEVEL_VALUES = (:info, :debug)
 const PLOT_FORMAT_VALUES = (:png, :jls)
 
+# Settings of a processor that a session can override with `SetStepSetting`.
+const STEP_SETTINGS = (:category, :rank, :dependencies, :error_plots, :detectors, :report_status)
+
 # Keys and values of the `report_status` table of a processor: detector usabilities, the
 # statuses of a report row, and the statuses a row can give the processor.
 const REPORT_STATUS_USABILITIES = (:on, :ac, :off)
