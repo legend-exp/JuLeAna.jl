@@ -4,7 +4,7 @@ config:
   runmode_settings:
     slurm:
       flags:
-        - "--time=01:00:00"
+        - "--time=02:00:00"
         - "--mem-bind=local"
         - "--threads-per-core=1"
         - "--cpu-bind=cores"
