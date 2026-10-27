@@ -136,13 +136,19 @@ function p_process_psd_efficiencies_cal(processing_config, l200::LegendData, per
         e_cal, hit_cal = @process_step "E data loading" begin
             hpge_kwargs = get_ged_evt_kwargs(l200, filekey_det)
             if !all([haskey(processed_dict, psd_classifier) for psd_classifier in psd_classifiers])
+                # only the energy and the cut columns are used below
+                hit_columns = Tuple(unique(vcat(e_type,
+                                                [col for (aoe_classifier, _, lq_classifier) in values(psd_classifiers_dict)
+                                                 for col in (Symbol(aoe_classifier), Symbol("$(aoe_classifier)_low_cut"),
+                                                             Symbol("$(lq_classifier)_high_cut"))])))
                 hit_cal = fast_flatten([let
                                             qc_mask = read_ldata(@pf($is_single_pulse && !$is_pulser), l200, :jlqcs, pinfo.cal.startkey,
                                                                  det)
                                             dsp = read_ldata(l200, :jldsp, :cal, pinfo.period, pinfo.run, det)[qc_mask]
                                             @debug "Calibrating $(pinfo.period)-$(pinfo.run)"
-                                            calibrate_ged_detector_data(l200, pinfo.cal.startkey, det, dsp; keep_detdata = true,
-                                                                        hpge_kwargs...)
+                                            hit = calibrate_ged_detector_data(l200, pinfo.cal.startkey, det, dsp; keep_detdata = false,
+                                                                              hpge_kwargs...)
+                                            Table(NamedTuple{hit_columns}(map(col -> getproperty(hit, col), hit_columns)))
                                         end
                                         for pinfo in partinfo_det])
                 collect(getproperty(hit_cal, e_type)), hit_cal
