@@ -115,7 +115,6 @@ function process_daq_energy_calibration_cal(processing_config, l200::LegendData,
                 return (processed = false, log = log_det)
             end
         end
-        GC.gc()
 
         total_time = canonicalize(Dates.Nanosecond(TimerOutputs.tottime(calibration_timer)))
         total_allocated = Base.format_bytes(TimerOutputs.totallocated(calibration_timer))

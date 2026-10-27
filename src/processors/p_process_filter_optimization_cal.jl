@@ -181,7 +181,6 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
             @debug "Get QDrift"
             dsp_qdrift_flt_optimization(wvfs_det_wdw, blmean_wdw, dsp_config_det, pars_tau[det].τ)
         end
-        GC.gc()
 
         @debug_progress "Computing $det ..." for filter_type in e_filter
             if haskey(processed_dict, filter_type)
@@ -205,7 +204,6 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
                                                                                                                             ft = optimization_config_flt.ft_fixed)
                 end
                 yield()
-                GC.gc()
                 result_rt, report_rt = @process_step "$filter_type rise time extraction" begin
                     fit_enc_sigmas(enc_grid, e_grid_rt, optimization_config_flt.min_enc, optimization_config_flt.max_enc,
                                    optimization_config_flt.nbins_enc_sigmas, optimization_config_flt.rel_cut_fit_enc_sigmas)
@@ -222,7 +220,6 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
 
                 # optimize FT
                 yield()
-                GC.gc()
                 e_grid = @process_step "$filter_type FT DSP for FEP" begin
                     @debug "Generate $filter_type FT energy grid"
                     legend_dsp_function("dsp_$(filter_type)_ft_optimization", "dsp.flt_optimization.e_filter.$filter_type")(wvfs_det_pre,
@@ -231,7 +228,6 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
                                                                                                                             mvalue(result_rt.rt))
                 end
                 yield()
-                GC.gc()
                 result_ft, report_ft = @process_step "$filter_type flat-top time extraction" begin
                     fit_fwhm_ft(e_grid, e_grid_ft, qdrift, result_rt.rt, optimization_config_flt.min_e_fep,
                                 optimization_config_flt.max_e_fep, optimization_config_flt.rel_cut_fit_e_fep,
@@ -259,7 +255,6 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
                 processed_dict[filter_type] = true
 
                 # call garbage collector
-                GC.gc()
                 yield()
             catch e
                 e isa ProcessStepError || @error "Filter: $filter_type filter optimization: $(truncate_error(e))"

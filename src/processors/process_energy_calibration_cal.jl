@@ -125,7 +125,6 @@ function process_energy_calibration_cal(processing_config, l200::LegendData, per
                         getproperty(data_det_after_qc, e_type_name), "$e_type_name"
                     end
                 end
-                GC.gc()
 
                 # with error plots on, a failed simple calibration saves the uncalibrated spectrum
                 plot_uncal_spectrum() = begin
@@ -142,7 +141,6 @@ function process_energy_calibration_cal(processing_config, l200::LegendData, per
                                        energy_config_det.right_window_sizes, ; calib_type = :th228, quantile_perc = quantile_perc,
                                        binning_peak_window = energy_config_det.binning_peak_window)
                 end
-                GC.gc()
 
                 # get simple calibration constant
                 m_cal_simple = result_simple.c
@@ -160,7 +158,6 @@ function process_energy_calibration_cal(processing_config, l200::LegendData, per
                     fit_peaks(result_simple.peakhists, result_simple.peakstats, th228_names; e_unit = result_simple.unit,
                               calib_type = :th228, fit_func = Symbol.(energy_config_det.th228_fit_func), m_cal_simple = m_cal_simple)
                 end
-                GC.gc()
 
                 @debug_plot @process_step "$e_type peak fits plot" begin
                     p = LegendMakie.lplot(report_fit, figsize = (600, 400*length(report_fit)),
@@ -252,7 +249,6 @@ function process_energy_calibration_cal(processing_config, l200::LegendData, per
                 log_info_dict[e_type] = log_info
                 processed_dict[e_type] = true
 
-                GC.gc()
             catch e
                 # a failed `@process_step` has logged its error already
                 e isa ProcessStepError || @error "$e_type calibration failed for $det: $(truncate_error(e))"

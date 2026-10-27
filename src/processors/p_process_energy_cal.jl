@@ -116,31 +116,25 @@ function p_process_energy_cal(processing_config, l200::LegendData, period::DataP
         th228_names = Symbol.(energy_config_det.th228_names)
         th228_lines_dict = Dict(th228_names .=> energy_config_det.th228_lines)
 
-        for e_type in energy_types
-            if haskey(processed_dict, e_type)
-                continue
-            end
+        # the calibrated energies of all energy types that are not processed yet, read in one pass
+        e_types_todo = filter(e_type -> !haskey(processed_dict, e_type), energy_types)
+        hit_cal = @process_step "data loader" begin
+            isempty(e_types_todo) ? nothing :
+            read_hit_cal(l200, det, zip(partinfo_det.period, partinfo_det.run), [Symbol("$(e_type)_cal") for e_type in e_types_todo], [])
+        end
+
+        for e_type in e_types_todo
             try
                 @debug "Calibrate $e_type"
 
-                energy = @process_step "$e_type data loader" begin
-                    fast_flatten([begin
-                                      @debug "Reading from $(pinfo.period)-$(pinfo.run)"
-                                      qc_mask = read_ldata(@pf($is_single_pulse && !$is_pulser), l200, :jlqcs, pinfo.cal.startkey, det)
-                                      read_ldata(ljl_propfunc(l200.par.rpars.ecal[pinfo.period, pinfo.run][det][e_type].cal.func), l200,
-                                                 :jldsp, :cal, pinfo.period, pinfo.run, det)[qc_mask]
-                                  end
-                                  for pinfo in partinfo_det])
-                end
-                GC.gc()
+                energy = collect(getproperty(hit_cal, Symbol("$(e_type)_cal")))
 
                 e_unit = u"keV"
                 peakhists, peakstats, _, _ = @process_step "$e_type simple calibration" begin
                     @debug "Get $e_type peakhists and peakstats"
-                    peakhists_gamma(collect(energy), energy_config_det.th228_lines, energy_config_det.left_window_sizes,
+                    peakhists_gamma(energy, energy_config_det.th228_lines, energy_config_det.left_window_sizes,
                                     energy_config_det.right_window_sizes)
                 end
-                GC.gc()
 
                 @process_step "$e_type energy spectrum plot" begin
                     p = LegendMakie.lplot(fit(Histogram, ustrip.(e_unit, energy), 0:0.5:3000), xlabel = "Energy ($e_unit)",
@@ -169,7 +163,6 @@ function p_process_energy_cal(processing_config, l200::LegendData, period::DataP
                     fit_peaks(peakhists, peakstats, th228_names; e_unit = e_unit, fit_func = Symbol.(energy_config_det.th228_fit_func),
                               calib_type = :th228)
                 end
-                GC.gc()
 
                 @debug_plot @process_step "$e_type peak fits plot" begin
                     p = LegendMakie.lplot(report_fit, figsize = (600, 400 * length(report_fit)),
@@ -250,7 +243,6 @@ function p_process_energy_cal(processing_config, l200::LegendData, period::DataP
                 log_info_dict[e_type] = log_info
                 processed_dict[e_type] = true
 
-                GC.gc()
             catch e
                 e isa ProcessStepError || @error "Error in $e_type: $(truncate_error(e))"
                 log_info = log_nt((det, detector_status(chinfo_det.usability), part, ProcessStatus(0), e_type, "-", "-", "-",

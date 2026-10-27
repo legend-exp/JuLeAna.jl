@@ -285,7 +285,6 @@ function p_process_aoe_cut_cal(processing_config, l200::LegendData, period::Data
                 log_info_dict[aoe_classifier] = log_info
                 processed_dict[aoe_classifier] = true
 
-                GC.gc()
             catch e
                 e isa ProcessStepError || @error "Error in $aoe_classifier cut generation: $(truncate_error(e))"
                 log_info = log_nt((det, detector_status(chinfo_det.usability), part, ProcessStatus(0), aoe_classifier, "-", "-", "-",

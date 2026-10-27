@@ -122,7 +122,6 @@ function process_decay_time_cal(processing_config, l200::LegendData, period::Dat
             @debug "Survival Fraction: $(round(count(qc) / length(qc) * 100, digits=2))%"
             wvfs_det
         end
-        GC.gc()
 
         # DSP
         decay_times = @process_step "$peakname DSP" begin
