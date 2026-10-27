@@ -135,7 +135,7 @@ format_setting(::Val, value) = string(value)
 format_setting(key::Symbol, value) = format_setting(Val(key), value)
 
 # Label of a row.
-function row_label(row)
+function setting_label(row)
     row.kind === :report && return "report status $(row.path[1]), $(row.path[2]) row"
     return replace(string(row.key), "_" => " ")
 end
@@ -280,7 +280,7 @@ function render_kwargs(editor::KwargsEditor, snap, area::Tachikoma.Rect, buf::Ta
         else
             value, config = row_value(proc, row), row_value(proc, row; config = true)
             changed = value != config
-            "$(changed ? "*" : " ") $(row_label(row)) = $(format_setting(row.key, value))" *
+            "$(changed ? "*" : " ") $(setting_label(row)) = $(format_setting(row.key, value))" *
             (changed ? "   (config: $(format_setting(row.key, config)))" : "")
         end
         push!(lines, (line, i == editor.cursor ? highlight : row.isset ? text : dim))
