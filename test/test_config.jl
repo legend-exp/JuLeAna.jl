@@ -141,7 +141,7 @@ end
 
     @testset "load_qc_evaluator" begin
         fk = start_filekey(l200, (p2, DataRun(6), :cal))
-        @test ismissing(@test_logs (:info, r"The ML quality cut is disabled") match_mode = :any load_qc_evaluator(l200, fk))
+        @test ismissing(@test_logs (:info, r"No QC ML parameter entry valid") match_mode = :any load_qc_evaluator(l200, fk))
     end
 
     @testset "mirror_override_folders" begin
