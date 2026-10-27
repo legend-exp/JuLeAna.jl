@@ -8,7 +8,6 @@ For each detector with `usability == :on` and `low_aoe_status` of `:valid` or `:
 in `aoe_funcs` is normalized and the Compton bands (`compton_bands`) are fitted. The fitted mean and width are
 described with energy-dependent correction functions, optionally refined by a combined fit (`use_combined_fit`).
 If `apply_ctc` is set, a charge trapping correction against the effective drift time (`qdrift_expression`) follows.
-`use_combined_fit` and `apply_ctc` are each either a Bool for all A/E types or a mapping from every A/E type to a Bool.
 For each classifier in `aoe_classifiers`, the low A/E cut is searched on the DEP, the high cut is set from
 `sigma_high_sided`, and survival fractions are computed for the configured peaks and the Qbb window with the low cut
 alone and with both cuts (`ds`).
@@ -100,10 +99,6 @@ function process_aoe_calibration_cut_cal(processing_config, l200::LegendData, pe
         aoe_types = collect(keys(aoe_config_det.aoe_funcs))
         aoe_funcs = aoe_config_det.aoe_funcs
         qdrift_expression = aoe_config_det.qdrift_expression
-        # `apply_ctc` and `use_combined_fit` are a Bool for all A/E types or a mapping from A/E type to Bool
-        apply_ctc, use_combined_fit = [setting isa Bool ? Dict(t => setting for t in aoe_types) :
-                                       Dict(t => Bool(setting[t]) for t in aoe_types)
-                                       for setting in (aoe_config_det.apply_ctc, aoe_config_det.use_combined_fit)]
 
         aoe_classifiers = Symbol.(aoe_config_det.aoe_classifiers)
 
@@ -140,7 +135,7 @@ function process_aoe_calibration_cut_cal(processing_config, l200::LegendData, pe
             if !all([haskey(processed_dict, aoe_type) for aoe_type in aoe_types]) ||
                !all([haskey(processed_dict, aoe_classifier) for aoe_classifier in aoe_classifiers])
                 hit_cal = read_hit_cal(l200, det, [(period, run)], [e_type],
-                                       vcat(collect(values(aoe_funcs)), any(values(apply_ctc)) ? [qdrift_expression] : []))
+                                       vcat(collect(values(aoe_funcs)), aoe_config_det.apply_ctc ? [qdrift_expression] : []))
                 e_cal = collect(getproperty(hit_cal, e_type))
                 e_unit = unit(eltype(e_cal))
                 e_cal, hit_cal, e_unit
@@ -211,7 +206,7 @@ function process_aoe_calibration_cut_cal(processing_config, l200::LegendData, pe
                 end
 
                 # perform A/E combined fit
-                if use_combined_fit[aoe_type]
+                if aoe_config_det.use_combined_fit
                     result_fit_combined, report_fit_combined = @process_step "$aoe_type combined compton band fitting" begin
                         fit_aoe_compton_combined(peakhists, peakstats, compton_bands_qc, result_fit_single; e_expression = e_type,
                                                  aoe_expression = aoe_expression, uncertainty = true)
@@ -262,7 +257,7 @@ function process_aoe_calibration_cut_cal(processing_config, l200::LegendData, pe
 
                 # charge trapping correction
                 result_aoe_ctc, report_aoe_ctc = NamedTuple(), NamedTuple()
-                if apply_ctc[aoe_type]
+                if aoe_config_det.apply_ctc
                     result_aoe_ctc, report_aoe_ctc = @process_step "$aoe_type charge trapping correction" begin
                         qdrift_e = ljl_propfunc(qdrift_expression).(hit_cal)
                         LegendSpecFits.ctc_aoe(aoe_corr, e_cal, qdrift_e, compton_bands_qc; compton_window,
@@ -297,7 +292,7 @@ function process_aoe_calibration_cut_cal(processing_config, l200::LegendData, pe
 
                 # create result
                 result = (func = get(result_aoe_ctc, :func, result_correction.func), ctc = result_aoe_ctc, correction = result_correction,
-                          apply_ctc = apply_ctc[aoe_type], use_combined_fit = use_combined_fit[aoe_type])
+                          apply_ctc = aoe_config_det.apply_ctc, use_combined_fit = aoe_config_det.use_combined_fit)
                 # add results to dict
                 result_dict[aoe_type] = result
                 log_info_dict[aoe_type] = log_info
