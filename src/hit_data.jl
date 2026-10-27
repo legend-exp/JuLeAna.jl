@@ -7,18 +7,20 @@ Read the single-pulse, non-pulser events (`jlqcs` tier) of the `cal` data of det
 for each `(period, run)` in `runs` and return them as one `Table`.
 
 The table holds the `jldsp` columns that `expressions` (PropertyFunction expressions, e.g.
-the A/E functions of the PSD config) and the run-level energy calibration functions of
-`e_types` use, plus `timestamp`, and for each name in `e_types` a column with the energy
-calibrated with the calibration function of each run (`l200.par.rpars.ecal[period, run][det]`).
-The names in `e_types` are those of the calibrated energies, e.g. `:e_cusp_ctc_cal`, whose
-calibration function is that of the energy without the `_cal` suffix. An expression may use
-these columns; they are not read from `jldsp`.
+the A/E functions of the PSD config) and the run-level energy calibration functions use, plus
+`timestamp`, and for each name in `e_types` a column with the energy calibrated with the
+calibration function of each run (`l200.par.rpars.ecal`, cached per process by
+LegendDataManagement). The names in `e_types` are those of the calibrated energies, e.g.
+`:e_cusp_ctc_cal`, whose calibration function is that of the energy without the `_cal` suffix.
+An expression may use these columns; they are not read from `jldsp`.
 """
 function read_hit_cal(l200::LegendData, det, runs, e_types::AbstractVector{Symbol}, expressions)
     e_types_uncal = [Symbol(first(split(string(e_type), "_cal"))) for e_type in e_types]
-    # `rpars.ecal[period, run]` parses the parameter file of all detectors, once per run
-    cal_funcs = [let pars_det = l200.par.rpars.ecal[period, run][det]
-                     [ljl_propfunc(pars_det[e_type].cal.func) for e_type in e_types_uncal]
+    # LegendDataManagement caches the parameters of each run in the process (`get_ged_cal_propfunc` would also read
+    # the columns of all configured energy types)
+    cal_funcs = [let sel = start_filekey(l200, (period, run, :cal))
+                     [ljl_propfunc(LegendDataManagement._get_e_cal_propsfunc_str(l200, sel, DetectorId(det), e_type))
+                      for e_type in e_types_uncal]
                  end
                  for (period, run) in runs]
     pfs = vcat(reduce(vcat, cal_funcs), [ljl_propfunc(expr) for expr in expressions])
