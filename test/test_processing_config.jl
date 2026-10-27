@@ -45,7 +45,7 @@ const STUB_PROCESSORS = Dict{Symbol,Any}(:process_a => process_a, :p_process_b =
         from_strings = ProcessingConfig(base)
         @test run_steps(from_strings; enabled_only = false) == run_steps(shipped; enabled_only = false)
         @test from_strings.processors[:process_dsp_cal].kwargs == spec.kwargs
-        @test sprint(show, shipped) == "ProcessingConfig(runmode=:slurm, 0/20 run and 0/12 partition processors enabled)"
+        @test sprint(show, shipped) == "ProcessingConfig(runmode=:slurm, 0/20 run and 0/14 partition processors enabled)"
         @test occursin("rank=6", sprint(show, spec))
     end
 
@@ -61,7 +61,7 @@ const STUB_PROCESSORS = Dict{Symbol,Any}(:process_a => process_a, :p_process_b =
         all_steps = run_steps(shipped; enabled_only = false)
         @test length(all_steps) == 20 && first(all_steps) === :process_daq_energy_calibration_cal
         @test issorted(all_steps; by = s -> shipped.processors[s].rank)
-        @test length(partition_steps(shipped; enabled_only = false)) == 12
+        @test length(partition_steps(shipped; enabled_only = false)) == 14
     end
 
     @testset "overrides" begin

@@ -41,6 +41,8 @@ using LegendDSP: LegendDSP, DSPConfig, dsp_decay_times, dsp_icpc_compressed, dsp
 using LegendEventAnalysis: LegendEventAnalysis, TimeEvolution, calibrate_all, calibrate_ged_detector_data, flag_coincidences, rate,
                            relative, smooth
 using LegendHDF5IO: LegendHDF5IO, delete_entry!, lh5open
+using LegendMachineLearning: UNLABELED, qc_ml_config, qc_pars_entry_name, qc_pars_entry_path, qc_sample_filename, raw_filekeys, read_sample,
+                             run_qc_sampling, scan_candidates, training_filekey
 import LegendMakie
 using LegendSpecFits: LegendSpecFits, autocal_energy, ctc_energy, cut_single_peak, fit_aoe_compton, fit_aoe_compton_combined,
                       fit_aoe_corrections, fit_calibration, fit_enc_sigmas, fit_fwhm, fit_fwhm_ft, fit_peaks, fit_sf_wl,
@@ -64,6 +66,7 @@ using ProgressLogging: ProgressLogging
 using ProgressMeter: ProgressMeter, Progress, next!, update!
 using PropDicts: PropDicts, PropDict
 using PropertyFunctions: PropertyFunctions, @pf, filterby
+using Random: Xoshiro
 using StatsBase: StatsBase, Histogram, fit, mean, median, quantile, sample, std
 using StructArrays: StructArray
 using Tachikoma: Tachikoma
@@ -124,6 +127,8 @@ include("processors/p_process_energy_cal.jl")
 include("processors/p_process_filter_optimization_cal.jl")
 include("processors/p_process_lq_calibration_cut_cal.jl")
 include("processors/p_process_psd_efficiencies_cal.jl")
+include("processors/p_process_qc_ml_sampling_cal.jl")
+include("processors/p_process_qc_ml_sampling_phy.jl")
 include("processors/p_process_sipm_calibration_phy.jl")
 include("processors/p_process_sipm_optimization_phy.jl")
 include("processors/p_process_skm_phy.jl")

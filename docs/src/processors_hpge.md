@@ -29,3 +29,10 @@ JuLeAna.process_ct_correction_cal
 JuLeAna.process_energy_calibration_cal
 JuLeAna.p_process_energy_cal
 ```
+
+## QC machine learning
+
+```@docs
+JuLeAna.p_process_qc_ml_sampling_cal
+JuLeAna.p_process_qc_ml_sampling_phy
+```

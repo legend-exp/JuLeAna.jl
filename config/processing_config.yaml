@@ -449,3 +449,23 @@ p_processors:
       timeout: 0
     dependencies:
       - p_process_skm_phy
+
+  p_process_qc_ml_sampling_cal:
+    enabled: false
+    category: cal
+    log_level: info
+    plot_level: info
+    rank: 13
+    kwargs:
+      reprocess: false
+    dependencies: []
+
+  p_process_qc_ml_sampling_phy:
+    enabled: false
+    category: phy
+    log_level: info
+    plot_level: info
+    rank: 14
+    kwargs:
+      reprocess: false
+    dependencies: []

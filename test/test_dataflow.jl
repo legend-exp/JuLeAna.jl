@@ -80,10 +80,10 @@ const REPORT = """
 
 @testset "dataflow" begin
     @testset "processor registry" begin
-        @test length(JuLeAna.PROCESSORS) == 32
+        @test length(JuLeAna.PROCESSORS) == 34
         @test all(((name, f),) -> nameof(f) === name, JuLeAna.PROCESSORS)
         @test all(name -> occursin(r"^(p_)?process_", string(name)), keys(JuLeAna.PROCESSORS))
-        @test count(name -> startswith(string(name), "p_process_"), keys(JuLeAna.PROCESSORS)) == 12
+        @test count(name -> startswith(string(name), "p_process_"), keys(JuLeAna.PROCESSORS)) == 14
 
         n = length(JuLeAna.PROCESSORS)
         @test_throws "processor `process_dsp_cal` is already registered" JuLeAna.register_processor!(JuLeAna.process_dsp_cal)
