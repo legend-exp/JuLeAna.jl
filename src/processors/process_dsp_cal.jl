@@ -44,7 +44,7 @@ function process_dsp_cal(processing_config, l200::LegendData, period::DataPeriod
     filekey = start_filekey(l200, (period, run, :cal))
     @info "Found start filekey $filekey"
 
-    chinfo = channelinfo(l200, filekey; system = :geds, only_processable = true)
+    chinfo = channelinfo(l200, filekey; system = :geds) |> detector_filter(processing_config, :process_dsp_cal)
     @info "Loaded channel info with $(length(chinfo)) detectors"
 
     dsp_config_pd = dataprod_config(l200).dsp(filekey)
@@ -210,7 +210,8 @@ function process_dsp_cal(processing_config, l200::LegendData, period::DataPeriod
 
     report = lreport()
     lreport!(report, "# Main Log")
-    lreport!(report, StructArray(var"Processor Status" = [master_status(result_dsp)]))
+    lreport!(report,
+             StructArray(var"Processor Status" = [master_status(processing_config, :process_dsp_cal, result_dsp)]))
     lreport!(report, "Date of processing: $(utc_timestamp())")
     lreport!(report, "Total Processing time: $(canonicalize(now() - start_time))")
     lreport!(report, dsp_cal_log_text)

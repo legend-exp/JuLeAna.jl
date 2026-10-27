@@ -26,7 +26,7 @@ const STUB_PROCESSORS = Dict{Symbol,Any}(:process_a => process_a, :p_process_b =
         @test !shipped.submit_jobs
         @test shipped.local_n == 64
         @test shipped.local_julia_settings == String[]
-        @test "--nodes=1" in shipped.slurm_flags && "--time=01:00:00" in shipped.slurm_flags
+        @test "--nodes=1" in shipped.slurm_flags && "--time=02:00:00" in shipped.slurm_flags
         @test shipped.env_variables["JULIA_WORKER_TIMEOUT"] == "240"
         @test shipped.log_level == JuLeAna.parse_log_level("info")
         @test shipped.periods == DataPeriod.([16, 18, 19, 20, 21, 22])
@@ -347,5 +347,81 @@ const STUB_PROCESSORS = Dict{Symbol,Any}(:process_a => process_a, :p_process_b =
 
         @test_logs ProcessingConfig(base)
         @test all(((old, new),) -> haskey(JuLeAna.PROCESSORS, new) && !haskey(JuLeAna.PROCESSORS, old), JuLeAna.RENAMED_PROCESSORS)
+    end
+
+    @testset "detectors and report_status" begin
+        edited(f) = (d = deepcopy(base); f(d); d)
+        entry(d) = d["processors"]["process_energy_calibration_cal"]
+
+        # every processor except the event builder has a detector selection
+        selecting = filter(s -> s.name !== :process_evt_phy,
+                           vcat(collect(values(shipped.processors)), collect(values(shipped.p_processors))))
+        @test all(s -> s.detectors isa String, selecting)
+        @test isnothing(shipped.processors[:process_evt_phy].detectors)
+        @test shipped.processors[:process_energy_calibration_cal].detectors == "processable"
+        @test shipped.p_processors[:p_process_skm_phy].detectors == "true"
+
+        # the expressions use columns of the channel info table only
+        chinfo = JuLeAna.Table(; detector = [:a, :b, :c, :d], channel = 1:4, system = [:geds, :geds, :geds, :geds],
+                               processable = [true, true, true, false], usability = [:on, :ac, :off, :on], psd_usability = fill(:on, 4),
+                               low_aoe_status = [:valid, :present, :missing, :valid], high_aoe_status = fill(:valid, 4),
+                               lq_status = [:valid, :missing, :present, :valid], ann_status = fill(:valid, 4),
+                               coax_rt_status = fill(:valid, 4),
+                               is_bb_like = fill(false, 4), det_type = fill(:icpc, 4))
+        selected(name) = JuLeAna.detector_filter(shipped, name)(chinfo).detector
+        @test all(s -> !isempty(selected(s.name)), selecting)
+        @test selected(:process_energy_calibration_cal) == [:a, :b, :c]
+        @test selected(:process_aoe_optimization_cal) == [:a]
+        @test selected(:p_process_aoe_optimization_cal) == [:a, :b]
+        @test selected(:process_lq_calibration_cut_cal) == [:a]
+        @test selected(:p_process_lq_calibration_cut_cal) == [:a, :c]
+        @test selected(:p_process_skm_phy) == [:a, :b, :c, :d]
+
+        custom = ProcessingConfig(edited(d -> entry(d)["detectors"] = "processable && usability != :off"))
+        @test JuLeAna.detector_filter(custom, :process_energy_calibration_cal)(chinfo).detector == [:a, :b]
+
+        @test_throws "key `processors.process_energy_calibration_cal.detectors` must be a AbstractString" ProcessingConfig(edited(d -> entry(d)["detectors"] = 1))
+        @test_throws "key `processors.process_energy_calibration_cal.detectors` is not a valid detector expression" ProcessingConfig(edited(d -> entry(d)["detectors"] = "processable &&"))
+        @test_throws "key `p_processors.p_process_energy_cal.detectors` is not a valid detector expression" ProcessingConfig(edited(d -> d["p_processors"]["p_process_energy_cal"]["detectors"] = "usability in (:on, :ac)"))
+        # a column that the channel info table lacks fails when the expression is applied
+        bogus = ProcessingConfig(edited(d -> entry(d)["detectors"] = "bogus_column"))
+        @test_throws "bogus_column" JuLeAna.detector_filter(bogus, :process_energy_calibration_cal)(chinfo)
+
+        # a processor without the setting stops with a clear error
+        missing_detectors = ProcessingConfig(edited(d -> delete!(entry(d), "detectors")))
+        @test isnothing(missing_detectors.processors[:process_energy_calibration_cal].detectors)
+        @test_throws "key `processors.process_energy_calibration_cal.detectors` is missing" JuLeAna.detector_filter(missing_detectors,
+                                                                                                                    :process_energy_calibration_cal)
+        @test_throws "unknown processor `process_nope`" JuLeAna.detector_filter(shipped, :process_nope)
+
+        # report_status: the default reproduces the fixed table, entries are overridden one by one
+        @test shipped.processors[:process_energy_calibration_cal].report_status == JuLeAna.DEFAULT_REPORT_STATUS
+        @test JuLeAna.processor_spec(shipped, :p_process_skm_phy).report_status == JuLeAna.DEFAULT_REPORT_STATUS
+        tuned = ProcessingConfig(edited(d -> entry(d)["report_status"] = Dict("off" => Dict("failure" => "success"),
+                                                                              "ac" => Dict("warning" => "failure"))))
+        rules = JuLeAna.processor_spec(tuned, :process_energy_calibration_cal).report_status
+        @test rules[:off] == Dict(:warning => :success, :failure => :success)
+        @test rules[:ac] == Dict(:warning => :failure, :failure => :failure)
+        @test rules[:on] == JuLeAna.DEFAULT_REPORT_STATUS[:on]
+        @test JuLeAna.DEFAULT_REPORT_STATUS[:off][:failure] === :warning
+
+        @test_throws "unknown key `processors.process_energy_calibration_cal.report_status.dead`" ProcessingConfig(edited(d -> entry(d)["report_status"] = Dict("dead" =>
+                                                                                                                                                                    Dict("failure" => "warning"))))
+        @test_throws "unknown key `processors.process_energy_calibration_cal.report_status.on.error`" ProcessingConfig(edited(d -> entry(d)["report_status"] = Dict("on" =>
+                                                                                                                                                                        Dict("error" => "warning"))))
+        @test_throws "key `processors.process_energy_calibration_cal.report_status.on.failure` must be one of success, warning, failure, got \"fail\"" ProcessingConfig(edited(d -> entry(d)["report_status"] = Dict("on" =>
+                                                                                                                                                                                                                         Dict("failure" => "fail"))))
+        @test_throws "key `processors.process_energy_calibration_cal.report_status` must be a AbstractDict" ProcessingConfig(edited(d -> entry(d)["report_status"] = "off"))
+        @test_throws "report_status.off.failure" ProcessingConfig(edited(d -> d["processors"]["process_energy_calibration_cal"]["report_status"] = Dict("off" =>
+                                                                                                                                                            Dict("failure" => "ok"))))
+        @test_throws "key `p_processors.x.report_status` must set every usability and row status" ProcessorSpec(:x, :partition, true, :cal,
+                                                                                                                1, Symbol[],
+                                                                                                                Dict{Symbol,Any}(),
+                                                                                                                false, Logging.Info, :info,
+                                                                                                                nothing,
+                                                                                                                Dict{Symbol,
+                                                                                                                     Dict{Symbol,Symbol}}())
+        @test_throws "report_status.on.failure" ProcessorSpec(; name = :x, level = :run, category = :cal, rank = 1,
+                                                              report_status = Dict(:on => Dict(:failure => :bad)))
     end
 end

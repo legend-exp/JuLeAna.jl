@@ -4,6 +4,46 @@
 const PLOT_LEVEL_VALUES = (:info, :debug)
 const PLOT_FORMAT_VALUES = (:png, :jls)
 
+# Keys and values of the `report_status` table of a processor: detector usabilities, the
+# statuses of a report row, and the statuses a row can give the processor.
+const REPORT_STATUS_USABILITIES = (:on, :ac, :off)
+const REPORT_STATUS_ROWS = (:warning, :failure)
+const REPORT_STATUS_RESULTS = (:success, :warning, :failure)
+
+"""
+    DEFAULT_REPORT_STATUS::Dict{Symbol,Dict{Symbol,Symbol}}
+
+The `report_status` of a processor that sets none: for each detector usability (`:on`,
+`:ac`, `:off`), the status a report row with the status `:warning` or `:failure` gives
+the processor (`:success`, `:warning` or `:failure`), see [`master_status`](@ref).
+"""
+const DEFAULT_REPORT_STATUS = Dict{Symbol,Dict{Symbol,Symbol}}(:on => Dict(:warning => :failure, :failure => :failure),
+                                                               :ac => Dict(:warning => :warning, :failure => :failure),
+                                                               :off => Dict(:warning => :success, :failure => :warning))
+
+# The `report_status` table `overrides` completed with the entries of `DEFAULT_REPORT_STATUS`;
+# throws on an unknown usability, row status or processor status. `path` is the key path
+# of `overrides`.
+function _report_status(overrides::AbstractDict, path::AbstractString)
+    out = Dict{Symbol,Dict{Symbol,Symbol}}(u => copy(rows) for (u, rows) in DEFAULT_REPORT_STATUS)
+    for (usability, rows) in overrides
+        usability = Symbol(usability)
+        usability in REPORT_STATUS_USABILITIES ||
+            throw(ArgumentError("processing_config: unknown key `$path.$usability`; the usabilities are $(join(REPORT_STATUS_USABILITIES, ", "))"))
+        rows isa AbstractDict ||
+            throw(ArgumentError("processing_config: key `$path.$usability` must be a table of row status to status, got $(repr(rows))"))
+        for (row, status) in rows
+            row = Symbol(row)
+            row in REPORT_STATUS_ROWS ||
+                throw(ArgumentError("processing_config: unknown key `$path.$usability.$row`; the row statuses are $(join(REPORT_STATUS_ROWS, ", "))"))
+            status isa Union{AbstractString,Symbol} && Symbol(status) in REPORT_STATUS_RESULTS ||
+                throw(ArgumentError("processing_config: key `$path.$usability.$row` must be one of $(join(REPORT_STATUS_RESULTS, ", ")), got $(repr(status))"))
+            out[usability][row] = Symbol(status)
+        end
+    end
+    return out
+end
+
 """
     struct ProcessorSpec
 
@@ -28,12 +68,24 @@ Fields:
   required.
 - `plot_level::Symbol`: `:info` saves the normal plots of the processor, `:debug` also its
   debug plots; key `plot_level` of the processor entry (`"info"` or `"debug"`), required.
+- `detectors::Union{Nothing,String}`: expression that selects the detectors the processor
+  works on, in the syntax of `ljl_propfunc` from LegendDataManagement, applied to the
+  channel info table, e.g. `"processable && usability != :off"`; key `detectors` of the
+  processor entry. `nothing` when the entry has none; the processor then throws an
+  `ArgumentError` when it starts (see [`detector_filter`](@ref)).
+- `report_status::Dict{Symbol,Dict{Symbol,Symbol}}`: for each detector usability (`:on`,
+  `:ac`, `:off`) the status (`:success`, `:warning` or `:failure`) that a report row with
+  the status `:warning` or `:failure` gives the processor, see [`master_status`](@ref);
+  key `report_status` of the processor entry, optional, [`DEFAULT_REPORT_STATUS`](@ref)
+  for the entries it does not set.
 
 The positional constructor takes the fields in the order listed above,
-`ProcessorSpec(name, level, enabled, category, rank, dependencies, kwargs, error_plots, log_level, plot_level)`;
+`ProcessorSpec(name, level, enabled, category, rank, dependencies, kwargs, error_plots, log_level, plot_level, detectors, report_status)`;
 `ProcessorSpec(; name, level, category, rank, enabled=true, dependencies=Symbol[],
-kwargs=Dict{Symbol,Any}(), error_plots=false, log_level=Logging.Info, plot_level=:info)` builds a spec from keywords. Every constructor throws an `ArgumentError` when `level` is not `:run` or
-`:partition`, `category` is not `:cal` or `:phy`, or the processor depends on itself.
+kwargs=Dict{Symbol,Any}(), error_plots=false, log_level=Logging.Info, plot_level=:info, detectors=nothing,
+report_status=Dict())` builds a spec from keywords; `report_status` is completed with [`DEFAULT_REPORT_STATUS`](@ref). Every constructor throws an `ArgumentError` when `level` is not `:run` or
+`:partition`, `category` is not `:cal` or `:phy`, the processor depends on itself, `detectors` is not a valid
+`ljl_propfunc` expression, or `report_status` has an unknown or missing entry.
 """
 struct ProcessorSpec
     name::Symbol
@@ -46,22 +98,36 @@ struct ProcessorSpec
     error_plots::Bool
     log_level::LogLevel
     plot_level::Symbol
+    detectors::Union{Nothing,String}
+    report_status::Dict{Symbol,Dict{Symbol,Symbol}}
 
-    function ProcessorSpec(name, level, enabled, category, rank, dependencies, kwargs, error_plots, log_level, plot_level)
-        spec = new(name, level, enabled, category, rank, dependencies, kwargs, error_plots, log_level, plot_level)
+    function ProcessorSpec(name, level, enabled, category, rank, dependencies, kwargs, error_plots, log_level, plot_level, detectors,
+                           report_status)
+        spec = new(name, level, enabled, category, rank, dependencies, kwargs, error_plots, log_level, plot_level, detectors, report_status)
         spec.level in (:run, :partition) ||
             throw(ArgumentError("processing_config: processor `$(spec.name)` has level $(repr(spec.level)), expected :run or :partition"))
         path = "$(spec.level === :run ? "processors" : "p_processors").$(spec.name)."
         spec.category in (:cal, :phy) ||
             throw(ArgumentError("processing_config: key `$(path)category` must be \"cal\" or \"phy\", got $(repr(spec.category))"))
         spec.name in spec.dependencies && throw(ArgumentError("processing_config: key `$(path)dependencies` names the processor itself"))
+        if !isnothing(spec.detectors)
+            try
+                ljl_propfunc(spec.detectors)
+            catch err
+                throw(ArgumentError("processing_config: key `$(path)detectors` is not a valid detector expression, got $(repr(spec.detectors)): $(sprint(showerror, err))"))
+            end
+        end
+        spec.report_status == _report_status(spec.report_status, "$(path)report_status") ||
+            throw(ArgumentError("processing_config: key `$(path)report_status` must set every usability and row status"))
         return spec
     end
 end
 
 function ProcessorSpec(; name, level, category, rank, enabled = true, dependencies = Symbol[], kwargs = Dict{Symbol,Any}(),
-                       error_plots = false, log_level = Logging.Info, plot_level = :info)
-    return ProcessorSpec(name, level, enabled, category, rank, dependencies, kwargs, error_plots, log_level, plot_level)
+                       error_plots = false, log_level = Logging.Info, plot_level = :info, detectors = nothing, report_status = Dict())
+    path = "$(level === :run ? "processors" : "p_processors").$name."
+    return ProcessorSpec(name, level, enabled, category, rank, dependencies, kwargs, error_plots, log_level, plot_level, detectors,
+                         _report_status(report_status, "$(path)report_status"))
 end
 
 """
@@ -303,7 +369,8 @@ function rank_order_dependencies(specs::AbstractDict{Symbol,ProcessorSpec})
     for (k, name) in pairs(order)
         s = specs[name]
         deps = k == firstindex(order) || order[k - 1] in s.dependencies ? copy(s.dependencies) : vcat(s.dependencies, order[k - 1])
-        out[name] = ProcessorSpec(s.name, s.level, s.enabled, s.category, s.rank, deps, s.kwargs, s.error_plots, s.log_level, s.plot_level)
+        out[name] = ProcessorSpec(s.name, s.level, s.enabled, s.category, s.rank, deps, s.kwargs, s.error_plots, s.log_level, s.plot_level,
+                                  s.detectors, s.report_status)
     end
     return out
 end
@@ -329,7 +396,8 @@ function _processor_specs(table::AbstractDict, level::Symbol, section::Symbol, r
     for (name, entry) in table
         path = "$section.$name."
         entry isa AbstractDict || throw(ArgumentError("processing_config: key `$section.$name` must be a table, got $(repr(entry))"))
-        _check_keys(entry, (:enabled, :category, :rank, :kwargs, :dependencies, :log_level, :plot_level), path; optional = (:error_plots,))
+        _check_keys(entry, (:enabled, :category, :rank, :kwargs, :dependencies, :log_level, :plot_level), path;
+                    optional = (:error_plots, :detectors, :report_status))
         category = _typed(entry, :category, AbstractString, path)
         kwargs = Dict{Symbol,Any}()
         for (k, v) in _typed(entry, :kwargs, AbstractDict, path)
@@ -340,7 +408,11 @@ function _processor_specs(table::AbstractDict, level::Symbol, section::Symbol, r
         specs[name] = ProcessorSpec(name, level, _typed(entry, :enabled, Bool, path), Symbol(category), _typed(entry, :rank, Int, path),
                                     Symbol.(_strings(entry, :dependencies, path)), kwargs,
                                     haskey(entry, :error_plots) && _typed(entry, :error_plots, Bool, path),
-                                    _log_level(entry, :log_level, path), _plot_level(entry, :plot_level, path))
+                                    _log_level(entry, :log_level, path), _plot_level(entry, :plot_level, path),
+                                    haskey(entry, :detectors) ? String(_typed(entry, :detectors, AbstractString, path)) : nothing,
+                                    _report_status(haskey(entry, :report_status) ? _typed(entry, :report_status, AbstractDict, path) :
+                                                   Dict(),
+                                                   "$(path)report_status"))
     end
     return specs
 end
@@ -371,7 +443,11 @@ The config must contain exactly these keys; a missing or unknown key throws an
   default, or `"dependencies"`) and `max_parallel_steps` (an `Int`, default 0: no limit)
 - `processors`, `p_processors`: tables of processor name to
   `{enabled::Bool, category ("cal" or "phy"), rank::Int, kwargs, dependencies,
-  log_level ("debug", "info", "warn" or "error"), plot_level ("info" or "debug")}`, and optionally `error_plots::Bool`
+  log_level ("debug", "info", "warn" or "error"), plot_level ("info" or "debug")}`, and optionally `error_plots::Bool`,
+  `detectors` (a string in the syntax of `ljl_propfunc`, e.g. `"processable && usability != :off"`, which the
+  processor applies to its channel info; see [`detector_filter`](@ref)) and `report_status` (a table of detector usability
+  `on`, `ac` or `off` to a table of report row status `warning` or `failure` to the processor status
+  `success`, `warning` or `failure`; unset entries take [`DEFAULT_REPORT_STATUS`](@ref))
 
 Processor names must be unique across both tables, every dependency must name a
 configured processor of either level, and at least one processor must be enabled. String
@@ -566,6 +642,32 @@ function check_processor_kwargs(cfg::ProcessingConfig; processors::AbstractDict{
     end
     isempty(problems) || throw(ArgumentError("processing_config: processor kwargs mismatch:\n  " * join(problems, "\n  ")))
     return nothing
+end
+
+"""
+    detector_filter(cfg::ProcessingConfig, name::Symbol)
+
+Return the function that selects the detectors of the processor `name` from a channel info
+table: `filterby` of the `ljl_propfunc` expression in the `detectors` setting of the
+processor in `cfg`. Throw an `ArgumentError` if the processor is not in `cfg` or has no
+`detectors` setting.
+"""
+function detector_filter(cfg::ProcessingConfig, name::Symbol)
+    spec = processor_spec(cfg, name)
+    isnothing(spec.detectors) &&
+        throw(ArgumentError("processing_config: key `$(spec.level === :run ? "processors" : "p_processors").$name.detectors` is missing; " *
+                            "set it to an expression that selects the detectors, e.g. \"processable\""))
+    return filterby(ljl_propfunc(spec.detectors))
+end
+
+"""
+    master_status(cfg::ProcessingConfig, name::Symbol, results...)
+
+[`master_status`](@ref) of `results` with the `report_status` setting of the processor
+`name` in `cfg`. Throw an `ArgumentError` if the processor is not in `cfg`.
+"""
+function master_status(cfg::ProcessingConfig, name::Symbol, results...)
+    return master_status(results...; report_status = processor_spec(cfg, name).report_status)
 end
 
 function Base.show(io::IO, spec::ProcessorSpec)

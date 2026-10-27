@@ -4,7 +4,7 @@ config:
   runmode_settings:
     slurm:
       flags:
-        - "--time=01:00:00"
+        - "--time=02:00:00"
         - "--mem-bind=local"
         - "--threads-per-core=1"
         - "--cpu-bind=cores"
@@ -37,6 +37,7 @@ processors:
     category: cal
     log_level: info
     plot_level: info
+    detectors: "processable"
     rank: 1
     kwargs:
       reprocess: false
@@ -48,6 +49,7 @@ processors:
     category: cal
     log_level: info
     plot_level: info
+    detectors: "processable"
     rank: 2
     kwargs:
       reprocess: false
@@ -61,6 +63,7 @@ processors:
     category: cal
     log_level: info
     plot_level: info
+    detectors: "processable"
     rank: 3
     kwargs:
       reprocess: false
@@ -73,6 +76,7 @@ processors:
     category: cal
     log_level: info
     plot_level: info
+    detectors: "processable"
     rank: 4
     kwargs:
       reprocess: false
@@ -85,6 +89,7 @@ processors:
     category: cal
     log_level: info
     plot_level: info
+    detectors: "processable && usability == :on && (low_aoe_status == :valid || low_aoe_status == :present)"
     rank: 5
     kwargs:
       reprocess: false
@@ -97,6 +102,7 @@ processors:
     category: cal
     log_level: info
     plot_level: info
+    detectors: "processable"
     rank: 6
     kwargs:
       reprocess: false
@@ -113,6 +119,7 @@ processors:
     category: cal
     log_level: info
     plot_level: info
+    detectors: "processable"
     rank: 7
     kwargs:
       reprocess: false
@@ -126,6 +133,7 @@ processors:
     category: cal
     log_level: info
     plot_level: info
+    detectors: "processable"
     rank: 8
     kwargs:
       reprocess: false
@@ -138,6 +146,7 @@ processors:
     category: cal
     log_level: info
     plot_level: info
+    detectors: "processable"
     rank: 9
     kwargs:
       reprocess: false
@@ -150,6 +159,7 @@ processors:
     category: cal
     log_level: info
     plot_level: info
+    detectors: "processable && usability == :on && (low_aoe_status == :valid || low_aoe_status == :present)"
     rank: 10
     kwargs:
       reprocess: false
@@ -162,6 +172,7 @@ processors:
     category: cal
     log_level: info
     plot_level: info
+    detectors: "processable && usability == :on && (lq_status == :valid || lq_status == :present)"
     rank: 11
     kwargs:
       reprocess: false
@@ -174,6 +185,7 @@ processors:
     category: cal
     log_level: info
     plot_level: info
+    detectors: "processable && usability == :on && (low_aoe_status == :valid || low_aoe_status == :present)"
     rank: 12
     kwargs:
       reprocess: false
@@ -191,6 +203,7 @@ processors:
     category: phy
     log_level: info
     plot_level: info
+    detectors: "processable"
     rank: 13
     kwargs:
       reprocess: false
@@ -204,6 +217,7 @@ processors:
     category: phy
     log_level: info
     plot_level: info
+    detectors: "true"
     rank: 14
     kwargs:
       reprocess: false
@@ -216,6 +230,7 @@ processors:
     category: phy
     log_level: info
     plot_level: info
+    detectors: "processable"
     rank: 15
     kwargs:
       reprocess: false
@@ -228,6 +243,7 @@ processors:
     category: phy
     log_level: info
     plot_level: info
+    detectors: "processable"
     rank: 16
     kwargs:
       reprocess: false
@@ -246,6 +262,7 @@ processors:
     category: phy
     log_level: info
     plot_level: info
+    detectors: "processable"
     rank: 17
     kwargs:
       reprocess: false
@@ -259,6 +276,7 @@ processors:
     category: phy
     log_level: info
     plot_level: info
+    detectors: "processable"
     rank: 18
     kwargs:
       reprocess: false
@@ -292,6 +310,7 @@ processors:
     category: phy
     log_level: info
     plot_level: info
+    detectors: "processable"
     rank: 20
     kwargs:
       reprocess: false
@@ -305,6 +324,7 @@ p_processors:
     category: cal
     log_level: info
     plot_level: info
+    detectors: "processable"
     rank: 1
     kwargs:
       reprocess: false
@@ -317,6 +337,7 @@ p_processors:
     category: cal
     log_level: info
     plot_level: info
+    detectors: "processable"
     rank: 2
     kwargs:
       reprocess: false
@@ -329,6 +350,7 @@ p_processors:
     category: cal
     log_level: info
     plot_level: info
+    detectors: "processable && (low_aoe_status == :valid || low_aoe_status == :present)"
     rank: 3
     kwargs:
       reprocess: false
@@ -342,6 +364,7 @@ p_processors:
     category: cal
     log_level: info
     plot_level: info
+    detectors: "processable"
     rank: 4
     kwargs:
       reprocess: false
@@ -354,6 +377,7 @@ p_processors:
     category: cal
     log_level: info
     plot_level: info
+    detectors: "processable && (low_aoe_status == :valid || low_aoe_status == :present)"
     rank: 5
     kwargs:
       reprocess: false
@@ -366,6 +390,7 @@ p_processors:
     category: cal
     log_level: info
     plot_level: info
+    detectors: "processable && (low_aoe_status == :valid || low_aoe_status == :present)"
     rank: 6
     kwargs:
       reprocess: false
@@ -379,6 +404,7 @@ p_processors:
     category: cal
     log_level: info
     plot_level: info
+    detectors: "processable && (lq_status == :valid || lq_status == :present)"
     rank: 7
     kwargs:
       reprocess: false
@@ -392,6 +418,7 @@ p_processors:
     category: cal
     log_level: info
     plot_level: info
+    detectors: "processable && (low_aoe_status == :valid || low_aoe_status == :present)"
     rank: 8
     kwargs:
       reprocess: false
@@ -406,6 +433,7 @@ p_processors:
     category: phy
     log_level: info
     plot_level: info
+    detectors: "processable"
     rank: 9
     kwargs:
       reprocess: false
@@ -418,6 +446,7 @@ p_processors:
     category: phy
     log_level: info
     plot_level: info
+    detectors: "processable"
     rank: 10
     kwargs:
       reprocess: false
@@ -430,6 +459,7 @@ p_processors:
     category: phy
     log_level: info
     plot_level: info
+    detectors: "true"
     rank: 11
     kwargs:
       reprocess: false
@@ -443,6 +473,7 @@ p_processors:
     category: phy
     log_level: info
     plot_level: info
+    detectors: "processable"
     rank: 12
     kwargs:
       reprocess: false

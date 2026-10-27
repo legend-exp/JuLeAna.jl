@@ -34,7 +34,7 @@ function process_daq_energy_calibration_cal(processing_config, l200::LegendData,
     filekey = start_filekey(l200, (period, run, :cal))
     @info "Found filekey $filekey"
 
-    chinfo = channelinfo(l200, filekey; system = :geds, only_processable = true)
+    chinfo = channelinfo(l200, filekey; system = :geds) |> detector_filter(processing_config, :process_daq_energy_calibration_cal)
     @info "Loaded channel info with $(length(chinfo)) detectors"
 
     raw_config = dataprod_config(l200).raw(filekey)
@@ -141,7 +141,8 @@ function process_daq_energy_calibration_cal(processing_config, l200::LegendData,
 
     report = lreport()
     lreport!(report, "# Main Log")
-    lreport!(report, StructArray(var"Processor Status" = [master_status(result_calib)]))
+    lreport!(report,
+             StructArray(var"Processor Status" = [master_status(processing_config, :process_daq_energy_calibration_cal, result_calib)]))
     lreport!(report, "Date of processing: $(utc_timestamp())")
     lreport!(report, "Total Processing time: $(canonicalize(now() - start_time))")
     lreport!(report, daq_energy_calibration_log_text)

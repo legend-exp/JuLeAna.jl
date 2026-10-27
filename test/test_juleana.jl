@@ -134,6 +134,17 @@ end
         @test master_status([det(:on) => row(JuLeAna.process_skipped), det(:ac) => row(process_succeeded)]) == process_succeeded
         @test master_status(nothing, [det(:on) => row(process_succeeded)]) == process_succeeded
         @test master_status(Pair[]) == process_failed
+
+        # per-processor report_status
+        rules = Dict(:on => Dict(:warning => :success, :failure => :warning), :ac => Dict(:warning => :failure, :failure => :failure),
+                     :off => Dict(:warning => :success, :failure => :success))
+        @test master_status([det(:on) => row(process_warning)]; report_status = rules) == process_succeeded
+        @test master_status([det(:on) => row(process_failed)]; report_status = rules) == process_warning
+        @test master_status([det(:ac) => row(process_warning)]; report_status = rules) == process_failed
+        @test master_status([det(:off) => row(process_failed)]; report_status = rules) == process_succeeded
+        @test master_status([det(:off) => row(process_failed), det(:on) => row(process_failed)]; report_status = rules) == process_warning
+        # a usability other than on, ac and off counts as on
+        @test master_status([det(:unknown) => row(process_warning)]) == process_failed
     end
 
     fk = FileKey("l200-p03-r000-cal-20230311T235840Z")

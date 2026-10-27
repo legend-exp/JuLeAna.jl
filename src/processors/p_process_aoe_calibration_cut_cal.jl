@@ -48,8 +48,8 @@ function p_process_aoe_calibration_cut_cal(processing_config, l200::LegendData, 
     filekey = first(rinfo).cal.startkey
     @info "Found filekey $filekey"
 
-    chinfo_unfolded = channelinfo(l200, period, :cal; system = :geds, only_processable = true, explode_partitions = true) |>
-                      filterby(@pf $low_aoe_status in [:valid, :present])
+    chinfo_unfolded = channelinfo(l200, period, :cal; system = :geds, explode_partitions = true) |>
+                      detector_filter(processing_config, :p_process_aoe_calibration_cut_cal)
     @info "Loaded channel info with $(length(chinfo_unfolded)) detector-partitions"
 
     if reprocess
@@ -314,7 +314,8 @@ function p_process_aoe_calibration_cut_cal(processing_config, l200::LegendData, 
                 if aoe_config_det.apply_ctc
                     result_aoe_ctc, report_aoe_ctc = @process_step "$aoe_type charge trapping correction" begin
                         qdrift_e = ljl_propfunc(qdrift_expression).(hit_cal)
-                        LegendSpecFits.ctc_aoe(aoe_corr, e_cal, qdrift_e, compton_bands_qc, aoe_expression = result_correction.func,
+                        LegendSpecFits.ctc_aoe(aoe_corr, e_cal, qdrift_e, compton_bands_qc; compton_window,
+                                               aoe_expression = result_correction.func,
                                                qdrift_expression = qdrift_expression)
                     end
 
@@ -532,7 +533,8 @@ function p_process_aoe_calibration_cut_cal(processing_config, l200::LegendData, 
 
     report = lreport()
     lreport!(report, "# Main Log")
-    lreport!(report, StructArray(var"Processor Status" = [master_status(result_aoe)]))
+    lreport!(report,
+             StructArray(var"Processor Status" = [master_status(processing_config, :p_process_aoe_calibration_cut_cal, result_aoe)]))
     lreport!(report, "Date of processing: $(utc_timestamp())")
     lreport!(report, "Total Processing time: $(canonicalize(now() - start_time))")
     lreport!(report, aoe_partition_log_text)

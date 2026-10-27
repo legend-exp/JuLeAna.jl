@@ -51,8 +51,7 @@ function process_aoe_calibration_cut_cal(processing_config, l200::LegendData, pe
     filekey = start_filekey(l200, (period, run, :cal))
     @info "Found filekey $filekey"
 
-    chinfo = channelinfo(l200, filekey; system = :geds, only_processable = true) |>
-             filterby(@pf $usability == :on && $low_aoe_status in [:valid, :present])
+    chinfo = channelinfo(l200, filekey; system = :geds) |> detector_filter(processing_config, :process_aoe_calibration_cut_cal)
     @info "Loaded channel info with $(length(chinfo)) detectors"
 
     aoe_config = dataprod_config(l200).psd(filekey).aoe
@@ -260,7 +259,8 @@ function process_aoe_calibration_cut_cal(processing_config, l200::LegendData, pe
                 if aoe_config_det.apply_ctc
                     result_aoe_ctc, report_aoe_ctc = @process_step "$aoe_type charge trapping correction" begin
                         qdrift_e = ljl_propfunc(qdrift_expression).(hit_cal)
-                        LegendSpecFits.ctc_aoe(aoe_corr, e_cal, qdrift_e, compton_bands_qc, aoe_expression = result_correction.func,
+                        LegendSpecFits.ctc_aoe(aoe_corr, e_cal, qdrift_e, compton_bands_qc; compton_window,
+                                               aoe_expression = result_correction.func,
                                                qdrift_expression = qdrift_expression)
                     end
 
@@ -460,7 +460,8 @@ function process_aoe_calibration_cut_cal(processing_config, l200::LegendData, pe
 
     report = lreport()
     lreport!(report, "# Main Log")
-    lreport!(report, StructArray(var"Processor Status" = [master_status(result_aoe)]))
+    lreport!(report,
+             StructArray(var"Processor Status" = [master_status(processing_config, :process_aoe_calibration_cut_cal, result_aoe)]))
     lreport!(report, "Date of processing: $(utc_timestamp())")
     lreport!(report, "Total Processing time: $(canonicalize(now() - start_time))")
     lreport!(report, aoe_log_text)
