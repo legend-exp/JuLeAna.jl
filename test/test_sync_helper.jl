@@ -10,6 +10,10 @@
         @test collect(remote_command(ssh, `echo 'a b'`).exec) ==
               ["ssh", "-n", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4",
                "cslg4", "echo 'a b'"]
+        # The remote shell receives every argument unchanged.
+        args = ["(", ")", "a;b", "a|b", "*", "~/x", "\$HOME", "it's", "%h\t%f"]
+        remote = last(remote_command(ssh, `printf '%s\n' $args`).exec)
+        @test readlines(`sh -c $remote`) == args
     end
 
     @testset "stream_remote delivers lines and returns standard error" begin

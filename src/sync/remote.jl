@@ -126,9 +126,11 @@ rsync_transport(::LocalHost) = String[]
     remote_command(h::RemoteHost, cmd::Cmd)::Cmd
 
 The command that runs `cmd` on `h`: wrapped in `ssh` for an `SSHHost`, unchanged
-for `LocalHost`.
+for `LocalHost`. ssh hands its command to the remote shell as one string, so every
+argument is quoted for a POSIX shell and reaches the remote program unchanged,
+including characters such as `(`, `;`, `|`, `*`, `~` and `\$`.
 """
-remote_command(h::SSHHost, cmd::Cmd) = ssh_command(h, Base.shell_escape(cmd))
+remote_command(h::SSHHost, cmd::Cmd) = ssh_command(h, Base.shell_escape_posixly(cmd))
 remote_command(::LocalHost, cmd::Cmd) = cmd
 
 """
