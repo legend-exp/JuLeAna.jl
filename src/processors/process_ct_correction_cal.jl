@@ -31,7 +31,7 @@ function process_ct_correction_cal(processing_config, l200::LegendData, period::
     filekey = start_filekey(l200, (period, run, :cal))
     @info "Found filekey $filekey"
 
-    chinfo = Table(channelinfo(l200, filekey; system = :geds, only_processable = true))
+    chinfo = Table(channelinfo(l200, filekey; system = :geds) |> detector_filter(processing_config, :process_ct_correction_cal))
     @info "Loaded channel info with $(length(chinfo)) detectors"
 
     energy_config = dataprod_config(l200).energy(filekey)
@@ -212,7 +212,8 @@ function process_ct_correction_cal(processing_config, l200::LegendData, period::
 
     report = lreport()
     lreport!(report, "# Main Log")
-    lreport!(report, StructArray(var"Processor Status" = [master_status(result_ctc)]))
+    lreport!(report,
+             StructArray(var"Processor Status" = [master_status(processing_config, :process_ct_correction_cal, result_ctc)]))
     lreport!(report, "Date of processing: $(utc_timestamp())")
     lreport!(report, "Total Processing time: $(canonicalize(now() - start_time))")
     lreport!(report, energy_ctc_log_text)

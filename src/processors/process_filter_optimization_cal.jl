@@ -32,7 +32,7 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
     filekey = start_filekey(l200, (period, run, :cal))
     @info "Found filekey $filekey"
 
-    chinfo = channelinfo(l200, filekey; system = :geds, only_processable = true)
+    chinfo = channelinfo(l200, filekey; system = :geds) |> detector_filter(processing_config, :process_filter_optimization_cal)
     @info "Loaded channel info with $(length(chinfo)) detectors"
 
     dsp_config_pd = dataprod_config(l200).dsp(filekey)
@@ -251,7 +251,8 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
 
     report = lreport()
     lreport!(report, "# Main Log")
-    lreport!(report, StructArray(var"Processor Status" = [master_status(result_flt)]))
+    lreport!(report,
+             StructArray(var"Processor Status" = [master_status(processing_config, :process_filter_optimization_cal, result_flt)]))
     lreport!(report, "Date of processing: $(utc_timestamp())")
     lreport!(report, "Total Processing time: $(canonicalize(now() - start_time))")
     lreport!(report, filter_optimization_log_text)

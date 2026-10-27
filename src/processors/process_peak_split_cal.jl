@@ -30,7 +30,7 @@ Return `nothing`.
 """
 function process_peak_split_cal(processing_config, l200::LegendData, period::DataPeriod, run::DataRun; reprocess::Bool = false,
                                 timeout::Real = 0, use_cache::Bool = false)
-    return split_peaks(l200, period, run, :cal, :process_peak_split_cal; reprocess, timeout, use_cache)
+    return split_peaks(processing_config, l200, period, run, :cal, :process_peak_split_cal; reprocess, timeout, use_cache)
 end
 
 register_processor!(process_peak_split_cal; output_tiers = [:jlpks])

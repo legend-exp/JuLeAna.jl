@@ -46,9 +46,9 @@ function process_dsp_phy(processing_config, l200::LegendData, period::DataPeriod
     filekey = start_filekey(l200, (period, run, :phy))
     @info "Found start filekey $filekey"
 
-    chinfo = channelinfo(l200, filekey; system = :geds, only_processable = true)
-    chinfo_sipm = channelinfo(l200, filekey; system = :spms, only_processable = true)
-    chinfo_pmts = channelinfo(l200, filekey; system = :pmts, only_processable = true)
+    chinfo = channelinfo(l200, filekey; system = :geds) |> detector_filter(processing_config, :process_dsp_phy)
+    chinfo_sipm = channelinfo(l200, filekey; system = :spms) |> detector_filter(processing_config, :process_dsp_phy)
+    chinfo_pmts = channelinfo(l200, filekey; system = :pmts) |> detector_filter(processing_config, :process_dsp_phy)
     @info "Loaded channel info with $(length(chinfo)) detectors"
 
     dsp_config_pd = dataprod_config(l200).dsp(filekey)
@@ -356,7 +356,8 @@ function process_dsp_phy(processing_config, l200::LegendData, period::DataPeriod
 
     report = lreport()
     lreport!(report, "# Main Log")
-    lreport!(report, StructArray(var"Processor Status" = [master_status(result_dsp)]))
+    lreport!(report,
+             StructArray(var"Processor Status" = [master_status(processing_config, :process_dsp_phy, result_dsp)]))
     lreport!(report, "Date of processing: $(utc_timestamp())")
     lreport!(report, "Total Processing time: $(canonicalize(now() - start_time))")
     lreport!(report, dsp_cal_log_text)

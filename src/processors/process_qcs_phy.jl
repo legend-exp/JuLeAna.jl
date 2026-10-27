@@ -40,7 +40,7 @@ function process_qcs_phy(processing_config, l200::LegendData, period::DataPeriod
     filekey = start_filekey(l200, (period, run, :phy))
     @info "Found filekey $filekey"
 
-    chinfo = channelinfo(l200, filekey; system = :geds, only_processable = true)
+    chinfo = channelinfo(l200, filekey; system = :geds) |> detector_filter(processing_config, :process_qcs_phy)
     @info "Loaded channel info with $(length(chinfo)) detectors"
     qc_config = dataprod_config(l200).qc(filekey)
     @debug "Loaded QC config: $(lstring(qc_config))"
@@ -226,7 +226,8 @@ function process_qcs_phy(processing_config, l200::LegendData, period::DataPeriod
 
     report = lreport()
     lreport!(report, "# Main Log")
-    lreport!(report, StructArray(var"Processor Status" = [master_status(result_qc)]))
+    lreport!(report,
+             StructArray(var"Processor Status" = [master_status(processing_config, :process_qcs_phy, result_qc)]))
     lreport!(report, "Date of processing: $(utc_timestamp())")
     lreport!(report, "Total processing time: $(canonicalize(now() - start_time))")
     lreport!(report, qcs_phy_log_text)

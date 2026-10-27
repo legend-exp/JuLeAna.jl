@@ -43,8 +43,7 @@ function process_aoe_optimization_cal(processing_config, l200::LegendData, perio
     filekey = start_filekey(l200, (period, run, :cal))
     @info "Found filekey $filekey"
 
-    chinfo = channelinfo(l200, filekey; system = :geds, only_processable = true) |>
-             filterby(@pf $usability == :on && $low_aoe_status in [:valid, :present])
+    chinfo = channelinfo(l200, filekey; system = :geds) |> detector_filter(processing_config, :process_aoe_optimization_cal)
     @info "Loaded channel info with $(length(chinfo)) detectors"
 
     dsp_config_pd = dataprod_config(l200).dsp(filekey)
@@ -253,7 +252,8 @@ function process_aoe_optimization_cal(processing_config, l200::LegendData, perio
 
     report = lreport()
     lreport!(report, "# Main Log")
-    lreport!(report, StructArray(var"Processor Status" = [master_status(result_sg)]))
+    lreport!(report,
+             StructArray(var"Processor Status" = [master_status(processing_config, :process_aoe_optimization_cal, result_sg)]))
     lreport!(report, "Date of processing: $(utc_timestamp())")
     lreport!(report, "Total Processing time: $(canonicalize(now() - start_time))")
     lreport!(report, sg_filter_optimization_log_text)

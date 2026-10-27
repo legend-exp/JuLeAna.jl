@@ -146,6 +146,8 @@ JuLeAna.register_processor!
 JuLeAna.PROCESSOR_TRAITS
 JuLeAna.display_name
 JuLeAna.RENAMED_PROCESSORS
+JuLeAna.DEFAULT_REPORT_STATUS
+JuLeAna.detector_filter
 ```
 
 ## Helpers for processors

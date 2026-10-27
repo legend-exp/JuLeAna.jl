@@ -45,7 +45,7 @@ function process_sipm_calibration_phy(processing_config, l200::LegendData, perio
     filekey = start_filekey(l200, (period, run, :phy))
     @info "Found filekey $filekey"
 
-    chinfo = channelinfo(l200, filekey; system = :spms, only_processable = true)
+    chinfo = channelinfo(l200, filekey; system = :spms) |> detector_filter(processing_config, :process_sipm_calibration_phy)
     @info "Loaded channel info with $(length(chinfo)) detectors"
 
     calibration_config = dataprod_config(l200).sipm(filekey).calibration
@@ -249,7 +249,8 @@ function process_sipm_calibration_phy(processing_config, l200::LegendData, perio
 
     report = lreport()
     lreport!(report, "# Main Log")
-    lreport!(report, StructArray(var"Processor Status" = [master_status(result_sipm_calibration)]))
+    lreport!(report,
+             StructArray(var"Processor Status" = [master_status(processing_config, :process_sipm_calibration_phy, result_sipm_calibration)]))
     lreport!(report, "Date of processing: $(utc_timestamp())")
     lreport!(report, "Total Processing time: $(canonicalize(now() - start_time))")
     lreport!(report, sipm_calibration_log_text)

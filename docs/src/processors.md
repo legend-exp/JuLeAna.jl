@@ -8,6 +8,10 @@ the partitions that contain it. All of them take the [`ProcessingConfig`](@ref) 
 work over the worker pool with [`parallel`](@ref): a detector or file that fails is
 recorded as a failure in the report, and the processor continues with the others.
 
+Most processors select their detectors from the channel info with the `detectors` entry
+of the processor in the config, an expression such as `"processable && usability != :off"`
+(see [`JuLeAna.detector_filter`](@ref)).
+
 Each partition processor returns `true` when it skipped a detector whose partition
 starts in an earlier period (with `only_first_period`); [`run_processing`](@ref) then
 waits for the same processor to finish for the previous period.
@@ -38,6 +42,10 @@ detector, a row without one counts as `on`:
 | Warning    | failure | warning | –       |
 | Failure    | failure | failure | warning |
 
+This table is the default. The `report_status` field of a processor in the
+[processing config](@ref Configuration) replaces single entries of it, for example
+`report_status: {off: {failure: success}}`.
+
 The processor status is `Failure` if any row counts as a failure, otherwise `Warning` if
 any row counts as a warning, otherwise `Success`. A report without rows is a `Failure`.
 
@@ -61,7 +69,11 @@ the processing config. To add one:
 2. Add `include("processors/process_xxx.jl")` to `src/JuLeAna.jl`.
 3. End the file with `register_processor!(process_xxx)`.
 4. Add an entry `process_xxx` to the `processors` (or `p_processors`) section of the
-   processing config.
+   processing config. A processor that selects detectors loads the channel info with
+   only the `system` keyword and applies
+   `|> detector_filter(processing_config, :process_xxx)`; it passes
+   `processing_config` and `:process_xxx` as the first two arguments of
+   [`master_status`](@ref).
 5. Add the function to the processor page of its topic.
 
 When the dataflow starts, every enabled processor of the config must be registered and

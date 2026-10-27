@@ -51,8 +51,8 @@ function p_process_aoe_optimization_cal(processing_config, l200::LegendData, per
     filekey = first(rinfo).cal.startkey
     @info "Found filekey $filekey"
 
-    chinfo_unfolded = channelinfo(l200, period, :cal; system = :geds, only_processable = true, explode_partitions = true) |>
-                      filterby(@pf $low_aoe_status in [:valid, :present])
+    chinfo_unfolded = channelinfo(l200, period, :cal; system = :geds, explode_partitions = true) |>
+                      detector_filter(processing_config, :p_process_aoe_optimization_cal)
     @info "Loaded channel info with $(length(chinfo_unfolded)) detector-partitions"
 
     f_evaluate_qc = load_qc_evaluator(l200, filekey)
@@ -316,7 +316,8 @@ function p_process_aoe_optimization_cal(processing_config, l200::LegendData, per
 
     report = lreport()
     lreport!(report, "# Main Log")
-    lreport!(report, StructArray(var"Processor Status" = [master_status(result_sg)]))
+    lreport!(report,
+             StructArray(var"Processor Status" = [master_status(processing_config, :p_process_aoe_optimization_cal, result_sg)]))
     lreport!(report, "Date of processing: $(utc_timestamp())")
     lreport!(report, "Total Processing time: $(canonicalize(now() - start_time))")
     lreport!(report, sg_filter_optimization_log_text)

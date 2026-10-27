@@ -42,7 +42,7 @@ function process_stability_plots_phy(processing_config, l200::LegendData, period
     filekey = start_filekey(l200, (period, run, :phy))
     @info "Found filekey $filekey"
 
-    chinfo = channelinfo(l200, filekey; system = :geds, only_processable = true)
+    chinfo = channelinfo(l200, filekey; system = :geds) |> detector_filter(processing_config, :process_stability_plots_phy)
     @info "Loaded channel info with $(length(chinfo)) detectors"
 
     qc_config = dataprod_config(l200).qc(filekey)
@@ -184,7 +184,8 @@ function process_stability_plots_phy(processing_config, l200::LegendData, period
 
     report = lreport()
     lreport!(report, "# Main Log")
-    lreport!(report, StructArray(var"Processor Status" = [master_status(result_stability)]))
+    lreport!(report,
+             StructArray(var"Processor Status" = [master_status(processing_config, :process_stability_plots_phy, result_stability)]))
     lreport!(report, "Date of processing: $(utc_timestamp())")
     lreport!(report, "Total Processing time: $(canonicalize(now() - start_time))")
     lreport!(report, "# Metadata")

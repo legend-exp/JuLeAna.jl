@@ -39,7 +39,7 @@ function process_dsp_aux_phy(processing_config, l200::LegendData, period::DataPe
     filekey = start_filekey(l200, (period, run, :phy))
     @info "Found filekey $filekey"
 
-    chinfo = channelinfo(l200, filekey)
+    chinfo = channelinfo(l200, filekey) |> detector_filter(processing_config, :process_dsp_aux_phy)
     @info "Loaded channel info with $(length(chinfo)) channels"
 
     chinfo_aux = filterby(get_aux_evt_detsel_propfunc(l200, filekey))(chinfo)
@@ -145,7 +145,8 @@ function process_dsp_aux_phy(processing_config, l200::LegendData, period::DataPe
 
     report = lreport()
     lreport!(report, "# Main Log")
-    lreport!(report, StructArray(var"Processor Status" = [master_status(result_dsp_aux)]))
+    lreport!(report,
+             StructArray(var"Processor Status" = [master_status(processing_config, :process_dsp_aux_phy, result_dsp_aux)]))
     lreport!(report, "Date of processing: $(utc_timestamp())")
     lreport!(report, "Total Processing time: $(canonicalize(now() - start_time))")
     lreport!(report, "# Metadata")
