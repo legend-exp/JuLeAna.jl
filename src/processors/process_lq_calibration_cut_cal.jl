@@ -153,13 +153,7 @@ function process_lq_calibration_cut_cal(processing_config, l200::LegendData, per
         hit_cal, e_cal, dep_σ = @process_step "data loader" begin
             if !all([haskey(processed_dict, lq_type) for lq_type in lq_types]) ||
                !all([haskey(processed_dict, lq_classifier) for lq_classifier in lq_classifiers])
-                hit_cal = let e_type_cal=e_type, e_type=Symbol(first(split(string(e_type), "_cal")))
-
-                    @debug "Reading from $(period)-$(run)"
-                    cal_func = ljl_propfunc(l200.par.rpars.ecal[period, run][det][e_type].cal.func)
-                    qc_mask = read_ldata(@pf($is_single_pulse && !$is_pulser), l200, :jlqcs, filekey, det)
-                    read_ldata(row -> merge(NamedTuple{(e_type_cal,)}((cal_func(row),)), row), l200, :jldsp, :cal, period, run, det)[qc_mask]
-                end
+                hit_cal = read_hit_cal(l200, det, [(period, run)], e_type, vcat(collect(values(lq_funcs)), [qdrift_expression]))
                 e_cal = collect(getproperty(hit_cal, e_type))
                 dep_σ = mvalue(pars_energy[det][Symbol(first(split(string(e_type), "_cal")))].fit.Tl208DEP.fwhm / (2 * sqrt(2 * log(2))))
                 hit_cal, e_cal, dep_σ

@@ -134,13 +134,8 @@ function process_aoe_calibration_cut_cal(processing_config, l200::LegendData, pe
         e_cal, hit_cal, e_unit = @process_step "hit data loading" begin
             if !all([haskey(processed_dict, aoe_type) for aoe_type in aoe_types]) ||
                !all([haskey(processed_dict, aoe_classifier) for aoe_classifier in aoe_classifiers])
-                hit_cal = let e_type_cal=e_type, e_type=Symbol(first(split(string(e_type), "_cal")))
-
-                    @debug "Reading from $(period)-$(run)"
-                    cal_func = ljl_propfunc(l200.par.rpars.ecal[period, run][det][e_type].cal.func)
-                    qc_mask = read_ldata(@pf($is_single_pulse && !$is_pulser), l200, :jlqcs, filekey, det)
-                    read_ldata(row -> merge(NamedTuple{(e_type_cal,)}((cal_func(row),)), row), l200, :jldsp, :cal, period, run, det)[qc_mask]
-                end
+                hit_cal = read_hit_cal(l200, det, [(period, run)], e_type,
+                                       vcat(collect(values(aoe_funcs)), aoe_config_det.apply_ctc ? [qdrift_expression] : []))
                 e_cal = collect(getproperty(hit_cal, e_type))
                 e_unit = unit(eltype(e_cal))
                 e_cal, hit_cal, e_unit
