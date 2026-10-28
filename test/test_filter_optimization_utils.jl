@@ -4,7 +4,9 @@ using Test
 using LegendDataManagement, LegendDSP, LegendSpecFits, LegendHDF5IO
 using TypedTables, PropDicts, StatsBase, Unitful, Random
 using OffsetArrays
+using Logging
 import Measurements
+import LegendMakie, Makie
 using Measurements: value as mvalue
 
 # stand-in for the logging helper of src/log_texts.jl
@@ -61,6 +63,12 @@ include(joinpath(@__DIR__, "..", "src", "filter_optimization_utils.jl"))
         @test crosscheck_warning(base, failed_sep; max_shift_sigma = 0.5) == "SEP fit failed (new)"
         both = crosscheck_warning(failed_dep, failed_sep; max_shift_sigma = 0.5)
         @test occursin("DEP fit failed (legacy)", both) && occursin("SEP fit failed (new)", both)
+        # without a FEP fit the other peaks and the slow-pulse residual have no scale and are not compared
+        failed_fep = (shifts = NamedTuple(), slow_mean_residual = NaN,
+                      rows = ((peak = "FEP", status = "failed: BoundsError"), (peak = "DEP", status = "ok"), (peak = "SEP", status = "ok")))
+        @test crosscheck_warning(failed_fep, base; max_shift_sigma = 0.5) == "FEP fit failed (legacy)"
+        @test crosscheck_warning(base, failed_fep; max_shift_sigma = 0.5) == "FEP fit failed (new)"
+        @test crosscheck_warning(failed_fep, failed_fep; max_shift_sigma = 0.5) == "FEP fit failed (legacy, new)"
     end
 
     @testset "write_fltopt_tables" begin
@@ -80,6 +88,14 @@ include(joinpath(@__DIR__, "..", "src", "filter_optimization_utils.jl"))
             @test collect(ev.converged) == [true, true, false]
             @test collect(ev.n_events) == [0, 5000, 4900]
             @test collect(h["residuals"].rise_time) == [0.5, 0.7] .* u"µs"
+        end
+    end
+
+    @testset "write_fltopt_tables with empty columns" begin
+        path = joinpath(mktempdir(), "empty.lh5")
+        write_fltopt_tables(path, (residuals = (residual = Float64[], rise_time = typeof(1.0u"µs")[]),))
+        lh5open(path) do h
+            @test length(h["residuals"].residual) == 0
         end
     end
 
@@ -119,6 +135,8 @@ include(joinpath(@__DIR__, "..", "src", "filter_optimization_utils.jl"))
         @test fit.w90 ≈ 3.29 * σ * u"keV" rtol = 0.1
         @test fit.n_events == count(e -> line - first(DEP_WINDOW) < e < line + last(DEP_WINDOW), e_cal)
         @test fit.f_fit(ustrip(u"keV", line)) > 0
+        @test fit.report.h === fit.h
+        @test fit.report.f_fit(ustrip(u"keV", line)) == fit.f_fit(ustrip(u"keV", line))
         @test_throws ArgumentError fit_crosscheck_peak(e_cal[begin:begin+49], line, DEP_WINDOW; containment = 0.9)
     end
 
@@ -129,11 +147,65 @@ include(joinpath(@__DIR__, "..", "src", "filter_optimization_utils.jl"))
         fit, status = try_fit_crosscheck_peak(e_cal, line, DEP_WINDOW; containment = 0.9)
         @test status == "ok"
         @test fit.μ ≈ line atol = 0.1u"keV"
-        # a fit failure is recorded
-        fit, status = try_fit_crosscheck_peak(e_cal[begin:begin+49], line, DEP_WINDOW; containment = 0.9)
-        @test isnothing(fit) && startswith(status, "failed: ")
-        # anything else propagates
-        @test_throws MethodError try_fit_crosscheck_peak(ustrip.(u"keV", e_cal), line, DEP_WINDOW; containment = 0.9)
+        # an ArgumentError is recorded and logged with the exception and the context
+        fit, status = @test_logs (:warn, r"Crosscheck fit of the peak at 1592.51 keV failed \(DEP\)") try_fit_crosscheck_peak(
+            e_cal[begin:begin+49], line, DEP_WINDOW; containment = 0.9, context = " (DEP)")
+        @test isnothing(fit) && startswith(status, "failed: ArgumentError")
+        # so is every other exception: two narrow lines make the fit throw a BoundsError
+        spikes = (ustrip(u"keV", line) .+ vcat(zeros(100), ones(100)) .+ 1e-3 .* randn(MersenneTwister(3), 200)) .* u"keV"
+        fit, status = @test_logs (:warn, r"Crosscheck fit of the peak at 1592.51 keV failed") try_fit_crosscheck_peak(spikes, line, DEP_WINDOW; containment = 0.9)
+        @test isnothing(fit) && startswith(status, "failed: BoundsError")
+        # a MethodError of the call itself is recorded too
+        fit, status = @test_logs (:warn, r"failed") try_fit_crosscheck_peak(ustrip.(u"keV", e_cal), line, DEP_WINDOW; containment = 0.9)
+        @test isnothing(fit) && startswith(status, "failed: MethodError")
+    end
+
+    @testset "crosscheck_peak_figure" begin
+        rng = MersenneTwister(1)
+        line = 1592.51u"keV"
+        e_cal = (ustrip(u"keV", line) .+ randn(rng, 5000)) .* u"keV"
+        check = (name = :DEP, e_cal = e_cal, line = line, window = DEP_WINDOW)
+        fit, status = try_fit_crosscheck_peak(e_cal, line, DEP_WINDOW; containment = 0.9)
+        @test crosscheck_peak_figure(check, fit, status; title = "fit") isa Makie.Figure
+        # failed fits show the window histogram and the error text, also without any event in the window
+        for e in (e_cal[begin:begin+49], typeof(line)[])
+            failed = merge(check, (e_cal = e,))
+            fit, status = with_logger(NullLogger()) do
+                try_fit_crosscheck_peak(e, line, DEP_WINDOW; containment = 0.9)
+            end
+            fig = crosscheck_peak_figure(failed, fit, status; title = "failed")
+            @test fig isa Makie.Figure
+            ax = only(filter(x -> x isa Makie.Axis, fig.content))
+            @test any(p -> p isa Makie.Text && occursin("failed: ArgumentError: Only", only(p.text[])), ax.scene.plots)
+        end
+    end
+
+    @testset "crosscheck_optimum records failed fits" begin
+        # stand-in energies: the stub returns them regardless of the filter times
+        LegendDSP.dsp_energy_rtft(prep::NamedTuple{(:energies,)}, config::Nothing, rt::Unitful.Time, ft::Unitful.Time, flt::Symbol) = prep.energies
+        rng = MersenneTwister(5)
+        keV_per_adc = 2614.51 / 200000
+        adc(e_keV) = e_keV / keV_per_adc
+        n = 4000
+        qdrift = 1.0 .+ rand(rng, n)
+        sets = (fep = (prep = (energies = 200000.0 .+ 80.0 .* randn(rng, n),), qdrift = qdrift),
+                dep = (prep = (energies = adc(1592.51) .+ 80.0 .* randn(rng, 600),), qdrift = qdrift[1:600]),
+                sep = (prep = (energies = adc(2103.51) .+ adc(3.0) .* vcat(zeros(150), ones(150)) .+ 1e-3 .* randn(rng, 300),), qdrift = qdrift[1:300]))
+        pulse = (t10 = fill(1.0u"µs", n), t90 = 1.0u"µs" .+ rand(rng, n) .* u"µs")
+        opt_config = PropDict(:peak => 2614.51u"keV", :left_window_size => 35.0u"keV", :right_window_size => 30.0u"keV",
+            :containment => 0.9, :apply_ctc => false)
+        flt_config = PropDict(:min_e_fep => 80000.0, :max_e_fep => 480000.0, :rel_cut_fit_e_fep => 0.5, :nbins_e_fep => 200)
+        cc = @test_logs (:warn, r"Crosscheck fit of the peak at 2103.51\d* keV failed \(SEP of trap at rt = 4.0 .s, ft = 2.0 .s\)") match_mode = :any crosscheck_optimum(
+            sets, pulse, ones(n), nothing, opt_config, flt_config, :trap, 4.0u"µs", 2.0u"µs")
+        @test map(r -> r.peak, cc.rows) == ["FEP", "DEP", "SEP"]
+        @test map(r -> r.status == "ok", cc.rows) == [true, true, false]
+        @test startswith(cc.rows[3].status, "failed: ")
+        @test isnan(cc.rows[3].μ) && cc.rows[3].n_events == 0
+        @test keys(cc.fits) == (:FEP, :DEP)
+        @test keys(cc.shifts) == (:DEP,)
+        @test map(c -> c.name, cc.checks) == [:FEP, :DEP, :SEP]
+        @test isfinite(cc.slow_mean_residual)
+        @test occursin("SEP fit failed (legacy, new)", crosscheck_warning(cc, cc; max_shift_sigma = 0.5))
     end
 
     @testset "snap_seed" begin
@@ -152,6 +224,40 @@ include(joinpath(@__DIR__, "..", "src", "filter_optimization_utils.jl"))
         @test rt ≈ 0.9u"µs" && ft ≈ 1.2u"µs"
         @test_throws "Filter trap: no feasible seed" snap_seed(0.9u"µs", 3.0u"µs", rtb, ftb, lattice, (rt, ft) -> false, :trap)
         @test_throws "no lattice point inside the bounds" snap_seed(0.9u"µs", 1.0u"µs", rtb, (0.4u"µs", 0.5u"µs"), lattice, always, :trap)
+    end
+
+    @testset "lattice search with realizable flat tops" begin
+        # CUSP-like setting: odd filter length in samples, so only odd flat-top sample counts are applied as requested
+        dt, flt_length = 0.128u"µs", 38.0u"µs"
+        feasible(rt, ft) = ft < flt_length && realized_flattop(ft, flt_length, dt, :cusp) == ft
+        @test feasible(9dt, 0.0u"µs" + 9dt) && !feasible(12dt, 12dt)
+        rtb, ftb = (1.0u"µs", 16.0u"µs"), (1.0u"µs", 4.0u"µs")
+        # a seed at a flat top that is applied one sample longer moves to the sample below
+        rt, ft = snap_seed(5.0u"µs", 12dt, rtb, ftb, dt, feasible, :cusp)
+        @test ft == 11dt && feasible(rt, ft)
+        rt, ft = snap_seed(5.0u"µs", 13dt, rtb, ftb, dt, feasible, :cusp)
+        @test ft == 13dt
+
+        # the width of the stand-in line is smallest at rt = 5.0 µs, ft = 21 samples
+        z = randn(MersenneTwister(11), 3000)
+        f_energy(rt, ft) = 200000.0 .+ 80.0 .* (1 + 0.05 * ((rt - 5.0u"µs") / 1.0u"µs")^2 + 0.05 * ((ft - 21dt) / 1.0u"µs")^2) .* z
+        evaluated = Tuple{typeof(1.0u"µs"), typeof(1.0u"µs")}[]
+        lk = ReentrantLock()
+        f_recorded = function (rt, ft)
+            lock(() -> push!(evaluated, (uconvert(u"µs", rt), uconvert(u"µs", ft))), lk)
+            f_energy(rt, ft)
+        end
+        # the flat-top step is a power of two samples: odd steps would make every flat-top move infeasible
+        result, report = optimize_rtft(f_recorded, ones(length(z)), 4.0u"µs", 13dt; rt_bounds = rtb, ft_bounds = ftb, feasible,
+            step0 = (0.5u"µs", 4dt), lattice = dt, max_evals = 80, peak = 2614.51u"keV", window = (35.0u"keV", 30.0u"keV"),
+            min_e = 80000.0, max_e = 480000.0, rel_cut_fit = 0.5, n_bins = 200, apply_ctc = false)
+        @test result.converged
+        @test feasible(result.rt, result.ft)
+        @test all(((rt, ft),) -> feasible(rt, ft), evaluated)
+        @test allunique(evaluated)
+        @test abs(result.ft - 21dt) <= 2dt
+        @test abs(result.rt - 5.0u"µs") <= 0.5u"µs"
+        @test result.n_evals < 80
     end
 
     @testset "config validation" begin
