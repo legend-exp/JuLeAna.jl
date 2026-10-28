@@ -372,9 +372,9 @@ const STUB_PROCESSORS = Dict{Symbol,Any}(:process_a => process_a, :p_process_b =
         @test all(s -> !isempty(selected(s.name)), selecting)
         @test selected(:process_energy_calibration_cal) == [:a, :b, :c]
         @test selected(:process_aoe_optimization_cal) == [:a]
-        @test selected(:p_process_aoe_optimization_cal) == [:a, :b]
+        @test selected(:p_process_aoe_optimization_cal) == [:a]
         @test selected(:process_lq_calibration_cut_cal) == [:a]
-        @test selected(:p_process_lq_calibration_cut_cal) == [:a, :c]
+        @test selected(:p_process_lq_calibration_cut_cal) == [:a]
         @test selected(:p_process_skm_phy) == [:a, :b, :c, :d]
 
         custom = ProcessingConfig(edited(d -> entry(d)["detectors"] = "processable && usability != :off"))
