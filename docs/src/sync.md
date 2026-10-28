@@ -395,6 +395,20 @@ readable and keeps working as new runs appear under a chosen directory.
 - A copied directory's remote symlinks, such as a `current` pointer, are
   mirrored as symlinks rather than resolved.
 
+## Transfer speed
+
+rsync runs over ssh, and when the ssh config shares one connection (`ControlMaster`), it uses that
+connection with the options the connection was opened with. With `Compression yes`, ssh compresses
+everything with zlib on a single core. LEGEND HDF5 files shrink by less than a third, and compressing them
+caps the transfer at roughly 15–30 MB/s. Between raven and cslg4 the same file moved at 15 MB/s with
+compression and at about 180 MB/s without. The extraction on the host is rarely the slow part: it reduces
+hundreds of files in about a minute.
+
+To turn compression off, set `Compression no` in the `Host` or `Match` blocks of `~/.ssh/config` that cover
+the host and any jump host (for the MPCDF hosts, both the `gate*` block and the `raven*,viper*` block).
+The setting applies to new connections only; close a shared connection with `ssh -O exit <host>` and
+open it again with `ssh <host>`.
+
 ## Link mode
 
 A linked row is not copied: the tool puts a symlink at its place in the mirror
