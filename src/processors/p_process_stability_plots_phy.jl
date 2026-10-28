@@ -14,11 +14,12 @@ plot does not stop the others.
   fields `timestamp`, `blmean`, `blsigma` and `e_10410`; events with non-finite values are
   dropped.
 - `jlaux` tier fields `aux_trig` and the pulser energy (`stability_plots.puls_e_type`) of the
-  pulser channel named by
-  `dataprod_config(l200).qc(filekey).pulser.puls_detector`, over the same runs.
+  pulser channel `stability_plots.puls_detector`, over the same runs. This is not
+  `pulser.puls_detector`, the channel used for pulser tagging.
 - `dataprod_config(l200).qc(filekey).stability_plots`: `n_ref` (number of events for the
-  reference value), `n_smooth` (smoothing window of `20 * n_smooth` seconds), `Qbb` and
-  `puls_e_type` (the `jlaux` field of the pulser energy, e.g. `e_max`).
+  reference value), `n_smooth` (smoothing window of `20 * n_smooth` seconds), `Qbb`,
+  `puls_detector` (the pulser channel, e.g. `PULS01ANA`) and `puls_e_type` (the `jlaux` field
+  of the pulser energy, e.g. `e_10410`).
 
 # Outputs
 - Plots per detector and partition: `stability_time_vs_bl`, `stability_time_vs_blsigma`,
@@ -91,10 +92,11 @@ function p_process_stability_plots_phy(processing_config, l200::LegendData, peri
         n_smooth = qc_config.stability_plots.n_smooth
         Qbb = qc_config.stability_plots.Qbb
         haskey(qc_config.stability_plots, :puls_e_type) || throw(ArgumentError("No stability_plots.puls_e_type in the QC config"))
+        haskey(qc_config.stability_plots, :puls_detector) || throw(ArgumentError("No stability_plots.puls_detector in the QC config"))
         puls_e_type = Symbol(qc_config.stability_plots.puls_e_type)
         smooth_window = 20n_smooth * u"s"
 
-        chinfo_puls = channelinfo(l200, filekey_det, Symbol(qc_config.pulser.puls_detector))
+        chinfo_puls = channelinfo(l200, filekey_det, Symbol(qc_config.stability_plots.puls_detector))
         det_puls = chinfo_puls.detector
         @debug "Loaded pulser channel info for partition $part: $chinfo_puls"
 
