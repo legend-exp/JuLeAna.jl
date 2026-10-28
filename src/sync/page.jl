@@ -960,7 +960,10 @@ function render_sync(m::SyncPage, area::Rect, buf::Buffer)
     render_progress(m, rows[3], buf)
     m.picking && render_picker(m, rows[2], buf)
     m.modal_kind == :firstn && return render_prompt(m, area, buf)
-    m.modal === nothing || render(m.modal, area, buf)
+    m.modal === nothing && return nothing
+    # A dialog blanks the whole area; the progress row is drawn again on top so a running step stays visible.
+    render(m.modal, area, buf)
+    m.step === nothing || render_progress(m, rows[3], buf)
     return nothing
 end
 

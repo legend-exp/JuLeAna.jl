@@ -504,6 +504,10 @@
         @test occursin("[3/3] checking files to copy", last_row(m)) && occursin("1:15", last_row(m))
         step(StepProgress("extracting on the host", 1, 3, 1, 4, 2048, ""))
         @test m.step_started > time() - 5                 # a new step restarts the clock
+        m.modal = Tachikoma.Modal(title = "Transferring", message = "starting…", confirm_label = "", cancel_label = "")
+        m.modal_kind = :transfer
+        @test occursin("[1/3] extracting on the host 1/4", last_row(m))      # the dialog leaves the progress row visible
+        m.modal, m.modal_kind = nothing, :none
         m.running += 1
         update!(m, TaskEvent(Symbol("sync:estimate"), (Estimate(0, 0, 0, true), false, nothing, nothing)))
         @test m.step === nothing && m.modal_kind == :estimate
