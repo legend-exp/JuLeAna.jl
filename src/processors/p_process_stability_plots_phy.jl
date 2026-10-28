@@ -13,10 +13,12 @@ plot does not stop the others.
 - `dsp` tier (`DataTier(:jldsp)`) of the `phy` data of all runs of each detector's partition,
   fields `timestamp`, `blmean`, `blsigma` and `e_10410`; events with non-finite values are
   dropped.
-- `jlaux` tier fields `e_10410` and `aux_trig` of the pulser channel named by
+- `jlaux` tier fields `aux_trig` and the pulser energy (`stability_plots.puls_e_type`) of the
+  pulser channel named by
   `dataprod_config(l200).qc(filekey).pulser.puls_detector`, over the same runs.
 - `dataprod_config(l200).qc(filekey).stability_plots`: `n_ref` (number of events for the
-  reference value), `n_smooth` (smoothing window of `20 * n_smooth` seconds) and `Qbb`.
+  reference value), `n_smooth` (smoothing window of `20 * n_smooth` seconds), `Qbb` and
+  `puls_e_type` (the `jlaux` field of the pulser energy, e.g. `e_max`).
 
 # Outputs
 - Plots per detector and partition: `stability_time_vs_bl`, `stability_time_vs_blsigma`,
@@ -88,6 +90,8 @@ function p_process_stability_plots_phy(processing_config, l200::LegendData, peri
         n_ref = qc_config.stability_plots.n_ref
         n_smooth = qc_config.stability_plots.n_smooth
         Qbb = qc_config.stability_plots.Qbb
+        haskey(qc_config.stability_plots, :puls_e_type) || throw(ArgumentError("No stability_plots.puls_e_type in the QC config"))
+        puls_e_type = Symbol(qc_config.stability_plots.puls_e_type)
         smooth_window = 20n_smooth * u"s"
 
         chinfo_puls = channelinfo(l200, filekey_det, Symbol(qc_config.pulser.puls_detector))
@@ -99,16 +103,17 @@ function p_process_stability_plots_phy(processing_config, l200::LegendData, peri
         end
 
         puls = @process_step "pulser data loader" begin
-            read_ldata((:e_10410, :aux_trig), l200, DataTier(:jlaux), :phy, partinfo_det, det_puls)
+            read_ldata((puls_e_type, :aux_trig), l200, DataTier(:jlaux), :phy, partinfo_det, det_puls)
         end
+        puls_energy = getproperty(puls, puls_e_type)
 
-        timestamp, time_s, bl_f, σbl, e10410, puls_e10410, aux_trig = @process_step "finite event filter" begin
-            length(puls.e_10410) == length(data.timestamp) ||
-                throw(DimensionMismatch("pulser data of $det_puls ($(length(puls.e_10410)) events) does not match the data of $det ($(length(data.timestamp)) events) in partition $part"))
+        timestamp, time_s, bl_f, σbl, e10410, puls_e, aux_trig = @process_step "finite event filter" begin
+            length(puls_energy) == length(data.timestamp) ||
+                throw(DimensionMismatch("pulser data of $det_puls ($(length(puls_energy)) events) does not match the data of $det ($(length(data.timestamp)) events) in partition $part"))
             finite_data = isfinite.(data.timestamp) .&& isfinite.(data.blmean) .&& isfinite.(data.blsigma) .&& isfinite.(data.e_10410)
             timestamp = data.timestamp[finite_data]
             (timestamp, ustrip.(timestamp), float.(data.blmean[finite_data]), float.(data.blsigma[finite_data]),
-             float.(data.e_10410[finite_data]), puls.e_10410[finite_data], puls.aux_trig[finite_data])
+             float.(data.e_10410[finite_data]), puls_energy[finite_data], puls.aux_trig[finite_data])
         end
 
         log_info_dict = Dict{Symbol,NamedTuple}()
@@ -177,10 +182,10 @@ function p_process_stability_plots_phy(processing_config, l200::LegendData, peri
             end
         end
 
-        mask_gain = isfinite.(puls_e10410) .&& mask_trig
+        mask_gain = isfinite.(puls_e) .&& mask_trig
         if count(mask_gain) > n_ref
             run_plot(:stability_gain_stability) do
-                pulser_gain = smooth(relative(TimeEvolution(timestamp[mask_gain], puls_e10410[mask_gain]), n_ref), smooth_window)
+                pulser_gain = smooth(relative(TimeEvolution(timestamp[mask_gain], puls_e[mask_gain]), n_ref), smooth_window)
                 energy_gain = smooth(relative(TimeEvolution(timestamp[mask_gain], e10410[mask_gain]), n_ref), smooth_window)
                 pulser_gain = TimeEvolution(pulser_gain.time, pulser_gain.values .* (Qbb / 100))
                 energy_gain = TimeEvolution(energy_gain.time, energy_gain.values .* (Qbb / 100))
