@@ -23,6 +23,18 @@ Test.@testset "ExplicitImports" begin
                                                     :IOError,
                                                     # Base's check of `JULIA_DEBUG`, also used by LoggingExtras (`ProcessorLevelLogger`).
                                                     :CoreLogging, :env_override_minlevel,
+                                                    # Tachikoma widget helpers of the sync screen: documented, not marked public.
+                                                    :tree_visible_count,
+                                                    # The DetectorId and ChannelId name tests, used to read the layout of a file (Sync).
+                                                    :_can_convert_to,
+                                                    # The command that starts the running Julia and YAML's file writer, for the helper process
+                                                    # and the local config of a production (Sync).
+                                                    :julia_cmd, :write_file,
+                                                    # PropDicts' variable substitution and dictionary view, which resolve the `$_` of a
+                                                    # production's config.json (Sync).
+                                                    :substitute_vars!, :_dict,
+                                                    # YAML's parse errors, caught to name the broken configuration file (Sync).
+                                                    :ScannerError, :ParserError, :ComposerError, :ConstructorError,
                                                     # Non-public names of the LEGEND and utility packages used by the processors.
                                                     :fast_flatten, :set_timelimit, :_fix_vov, :AchatBlue, :BEGeOrange, :CoaxGreen,
                                                     :add_watermarks!, :parameterplot!, :tottime, :totallocated, :format_bytes,

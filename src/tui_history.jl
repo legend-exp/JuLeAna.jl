@@ -347,7 +347,7 @@ Otherwise:
   - `r` reads the grid anew.
   - `a` switches between the selected periods and runs of the session (the default) and
     all periods and runs of the data production.
-  - Other keys, such as `1` to `7` and `q`, are not used.
+  - Other keys, such as `1` to `8` and `q`, are not used.
 """
 function history_key!(page::HistoryPage, evt::Tachikoma.KeyEvent)::Bool
     if !isnothing(page.viewer_path)

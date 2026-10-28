@@ -1,0 +1,9 @@
+{
+    "setups": {
+        "l200": {
+            "paths": {
+                "tier/jlpks": "$_/preprod/jlpeaks/"
+            }
+        }
+    }
+}

@@ -227,9 +227,15 @@ withenv("LEGEND_DATA_CONFIG" => joinpath(mktempdir(), "config.json")) do
                 # the tab bar's bottom line is not touched
                 @test count(==('─'), row_text(wide, 4)) > 100
                 # the root is clipped from the left
-                clipped = branding_render(m, 104, 36)
+                clipped = branding_render(m, 114, 36)
                 @test endswith(row_text(clipped, 3), "jl-v9.9.9  …/l200│") &&
                       endswith(rstrip(row_text(clipped, 2), '│'), "JuLeAna " * version)
+                # the bar is truncated: no logo beside it, and all tabs are shown at 120 columns
+                truncated = branding_render(m, 90, 36)
+                @test length(m.tabs._tab_rects) < length(JuLeAna.TUI_PAGES)
+                @test !any(y -> occursin(version, row_text(truncated, y)) || occursin("jl-v9.9.9", row_text(truncated, y)), 1:4)
+                branding_render(m, 120, 36)
+                @test length(m.tabs._tab_rects) == length(JuLeAna.TUI_PAGES)
                 # no room right of the tabs: nothing in the rows of the tab bar (the Setup page
                 # shows the production in its Production pane)
                 narrow = branding_render(m, 100, 36)

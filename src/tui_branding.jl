@@ -42,7 +42,15 @@ const HELP_KEYS = (setup = (("Tab  Shift-Tab", "next, previous pane"), ("↑ ↓
                               ("Enter on a report", "open the report (history cells have none)"), ("r", "read the grid again"),
                               ("↑ ↓ PgUp PgDn Home End", "scroll an open report"), ("Esc  q", "close the open report"),
                               ("Mouse", "click a cell, wheel moves the cursor")),
-                   common = (("1-7", "open a page"), ("q  Ctrl-C", "quit"), ("?", "show these keys"),
+                   sync = (("Tab  Shift-Tab", "next, previous field, button; the tree after the last"),
+                           ("Enter", "edit a field (Production: choose from the list), press a button, expand a row"),
+                           ("Esc", "cancel an edit, close the list, back to the tree"),
+                           ("c  o  s", "Connect, Load selection, Save selection"), ("e  t", "estimate, estimate and sync"),
+                           ("p", "show or hide the settings"),
+                           ("Space  l", "copy, link the row (a detector row of a per-detector tier: its files)"),
+                           ("x", "extract the detector row"), ("n", "copy the first N filekeys of a run"),
+                           ("Mouse", "click fields, buttons and rows; the wheel scrolls")),
+                   common = (("1-$(length(TUI_PAGES))", "open a page"), ("q  Ctrl-C", "quit"), ("?", "show these keys"),
                              ("T", "next color theme, kept for the next start"),
                              ("Ctrl-G", "toggle mouse reporting (off allows selecting text)"),
                              ("Ctrl-Y", "copy the screen as text to the clipboard"),
@@ -178,9 +186,10 @@ end
 # Draw the name `JuLeAna` with the version, and below it the current data production, right
 # aligned at the right end of the tab row `area`. Both lines need to fit right of the tabs;
 # the root path of the production is clipped from the left, and nothing is drawn if even the
-# first line does not fit.
+# first line does not fit or a tab is hidden by the width of the bar.
 function render_corner_logo(m::JuLeAnaTUI, area::Tachikoma.Rect, buf::Tachikoma.Buffer)
-    used = isempty(m.tabs._tab_rects) ? area.x - 1 : maximum(Tachikoma.right, m.tabs._tab_rects)
+    length(m.tabs._tab_rects) < length(TUI_PAGES) && return nothing
+    used = maximum(Tachikoma.right, m.tabs._tab_rects)
     right = Tachikoma.right(area)
     available = right - used - 1
     title = vcat(logo_name_spans(), [(" " * juleana_version(), Tachikoma.tstyle(:text_dim))])
@@ -212,6 +221,7 @@ function render_help(m::JuLeAnaTUI, area::Tachikoma.Rect, buf::Tachikoma.Buffer)
     m.page == 5 && push!(sections, ("Log page", HELP_KEYS.log))
     m.page == 6 && push!(sections, ("Reports page", HELP_KEYS.reports))
     m.page == 7 && push!(sections, ("History page", HELP_KEYS.history))
+    m.page == 8 && push!(sections, ("Sync page", HELP_KEYS.sync))
     push!(sections, ("All pages", HELP_KEYS.common))
     key_width = maximum(textwidth(k) for (_, entries) in sections for (k, _) in entries) + 2
     lines = Vector{Tuple{String,Tachikoma.Style}}[]

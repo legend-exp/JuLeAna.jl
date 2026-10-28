@@ -94,7 +94,7 @@ withenv("LEGEND_DATA_CONFIG" => joinpath(mktempdir(), "config.json")) do
             @test occursin("f follow", row_text(render_tui(m, 120, 32), 31))
             Tachikoma.update!(m, KeyEvent('3'))
             keys_row = row_text(render_tui(m, 120, 32), 31)
-            @test occursin("a add", keys_row) && occursin("1-7 page  q quit", keys_row) && !occursin("follow", keys_row)
+            @test occursin("a add", keys_row) && occursin("1-8 page  q quit", keys_row) && !occursin("follow", keys_row)
             # a narrow screen cuts the key row at the frame
             @test !occursin("quit", row_text(render_tui(m, 12, 32), 31))
         end
@@ -151,7 +151,7 @@ withenv("LEGEND_DATA_CONFIG" => joinpath(mktempdir(), "config.json")) do
             m = JuLeAna.JuLeAnaTUI(DataflowController(new_session(); processors, record_software = false, record_metadata = false))
             Tachikoma.update!(m, KeyEvent('6'))
             @test m.page == 6
-            Tachikoma.update!(m, KeyEvent('8'))
+            Tachikoma.update!(m, KeyEvent('9'))
             @test m.page == 6
             Tachikoma.update!(m, KeyEvent('7'))
             @test m.page == 7

@@ -13,7 +13,7 @@
     # the interface logs on its first frame; nothing is printed while precompiling
     @compile_workload Logging.with_logger(Logging.NullLogger()) do
         ctrl = DataflowController(Dict{String,Any}("config" => nothing); loader = nothing)
-        m = JuLeAnaTUI(ctrl; splash_seconds = 0.0)
+        m = JuLeAnaTUI(ctrl; splash_seconds = 0.0, sync_settings = offline_sync_settings())
         # ends the task that runs the commands of the interface
         close(m.commands)
         m.snap = snapshot(ctrl)

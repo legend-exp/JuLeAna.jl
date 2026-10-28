@@ -113,9 +113,14 @@ include("tui_history.jl")
 include("tui_workers.jl")
 include("tui_production.jl")
 include("tui_timing.jl")
+include("sync/Sync.jl")
+using .Sync: SyncPage, SyncSettings, SSHHost, PACKAGED_HOSTS_FILE, sync_key!, sync_mouse!, sync_task!, render_sync, sync_hints,
+             sync_text_input, sync_start!, shielded, user_settings, preselect_production, host_remote_roots, sync_dirty, sync_busy,
+             save!, selection_path, normdir
 include("tui.jl")
 include("tui_logo.jl")
 include("tui_branding.jl")
+include("tui_sync.jl")
 
 include("processors/p_process_aoe_calibration_cut_cal.jl")
 include("processors/p_process_aoe_cut_cal.jl")
@@ -183,6 +188,6 @@ public production_setup_dir, effective_config, save_plot, @debug_plot, @debug_pr
        allocations, mark_activity!, idle_deadline, check_idle!, workers_overview, ProductionSpec, check_production, create_production,
        data_config_text, running_manifest, snapshot_software, record_software, software_version, record_metadata, production_log,
        ProductionForm, production_fields, production_spec, complete_path, production_key!, production_answer!, production_sync!,
-       render_production, @using_packages, ReportPlot, StepOutput, display_report, processors
+       render_production, @using_packages, ReportPlot, StepOutput, display_report, processors, Sync
 
 end # module

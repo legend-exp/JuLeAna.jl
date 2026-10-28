@@ -1,0 +1,9 @@
+{
+    "default": {
+        "ecal": {
+            "cal": {
+                "fit_status": "ok"
+            }
+        }
+    }
+}

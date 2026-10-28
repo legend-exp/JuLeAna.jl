@@ -1,0 +1,12 @@
+{
+    "setups": {
+        "l200": {
+            "paths": {
+                "metadata": "$_/legend-metadata/",
+                "tier": "@REMOTE_ROOT@/temp/jl-dev/generated/tier/",
+                "tier/jlhit": "@REMOTE_ROOT@/temp/jl-dev/generated/tier/jlhit/",
+                "par": "$_/generated/jlpar/"
+            }
+        }
+    }
+}
