@@ -21,6 +21,8 @@ crosscheck peak (the fitted position relative to its FEP-calibrated expectation,
 width), and `slow_mean_residual`, the mean FEP residual in units of σ of the slowest five
 percent of events by `t90 - t10`. Both also carry `rows`, the crosscheck table rows with `peak` and
 `status`; every peak whose status is not `"ok"` is reported with the optima at which its fit failed.
+Without a FEP fit the other shifts and the slow-pulse residual are scaled with nothing and are
+not compared.
 
 Only degradations are flagged: a peak when `abs(new shift) > abs(legacy shift) +
 max_shift_sigma * σ` with σ at the new optimum, or when it is missing at one of the two optima;
@@ -34,7 +36,7 @@ function crosscheck_warning(legacy::NamedTuple, new::NamedTuple; max_shift_sigma
         row.status == "ok" || push!(get!(failed, row.peak, String[]), label)
     end
     for peak in union(keys(legacy.shifts), keys(new.shifts))
-        haskey(failed, String(peak)) && continue
+        (haskey(failed, String(peak)) || haskey(failed, "FEP")) && continue
         if !(haskey(legacy.shifts, peak) && haskey(new.shifts, peak))
             push!(warnings, "$peak crosscheck missing at the $(haskey(new.shifts, peak) ? "legacy" : "new") optimum")
             continue
@@ -55,10 +57,12 @@ function crosscheck_warning(legacy::NamedTuple, new::NamedTuple; max_shift_sigma
         push!(warnings, "$peak fit failed ($(join(failed[peak], ", ")))")
     end
     r_legacy, r_new = legacy.slow_mean_residual, new.slow_mean_residual
-    if !(isfinite(r_legacy) && isfinite(r_new))
-        push!(warnings, "slow-pulse residual not finite")
-    elseif abs(r_new) > abs(r_legacy) + max_shift_sigma
-        push!(warnings, "slow-pulse residual grew from $(round(r_legacy, digits = 2))σ to $(round(r_new, digits = 2))σ")
+    if !haskey(failed, "FEP")
+        if !(isfinite(r_legacy) && isfinite(r_new))
+            push!(warnings, "slow-pulse residual not finite")
+        elseif abs(r_new) > abs(r_legacy) + max_shift_sigma
+            push!(warnings, "slow-pulse residual grew from $(round(r_legacy, digits = 2))σ to $(round(r_new, digits = 2))σ")
+        end
     end
     return join(warnings, "; ")
 end
@@ -155,9 +159,10 @@ end
 Fit the calibrated energies `e_cal` inside `line - window[1] .. line + window[2]` with
 `fit_single_peak_th228` and compute `peak_width_metrics` of the fitted signal shape.
 
-Returns `(μ, σ, fwhm, w90, asym, tail_fraction, tail_scale, centroid, n_events, h, f_fit)`;
+Returns `(μ, σ, fwhm, w90, asym, tail_fraction, tail_scale, centroid, n_events, h, f_fit, report)`;
 energies carry keV units, the histogram `h` and the fit function `f_fit` (counts per keV) work
-on unitless keV. Throws an `ArgumentError` with fewer than 100 events in the window.
+on unitless keV, and `report` is the `fit_single_peak_th228` report that `LegendMakie.lplot`
+draws. Throws an `ArgumentError` with fewer than 100 events in the window.
 """
 function fit_crosscheck_peak(e_cal::AbstractVector{<:Unitful.Energy}, line::Unitful.Energy, window::Tuple; containment::Real)
     x = ustrip.(u"keV", filter(e -> line - first(window) < e < line + last(window), e_cal))
@@ -170,44 +175,68 @@ function fit_crosscheck_peak(e_cal::AbstractVector{<:Unitful.Energy}, line::Unit
     m = peak_width_metrics(v; containment)
     return (μ = v.μ * u"keV", σ = v.σ * u"keV", fwhm = m.fwhm * u"keV", w90 = m.w90 * u"keV", asym = m.asym,
             tail_fraction = m.tail_fraction, tail_scale = m.tail_scale * u"keV", centroid = m.centroid * u"keV",
-            n_events = length(x), h = h, f_fit = report.f_fit)
+            n_events = length(x), h = h, f_fit = report.f_fit, report = report)
 end
 
 
 """
-    try_fit_crosscheck_peak(e_cal, line, window; containment)
+    try_fit_crosscheck_peak(e_cal, line, window; containment, context = "")
 
 `(fit_crosscheck_peak(e_cal, line, window; containment), "ok")`, or `(nothing, "failed: ...")` if
-the fit throws an `ErrorException` or `ArgumentError`. Every other exception propagates.
+the fit throws. The failure is logged as a warning with the exception and `context`, a text
+that says where the fit was attempted. An `InterruptException` propagates.
 """
-function try_fit_crosscheck_peak(e_cal, line, window; containment)
+function try_fit_crosscheck_peak(e_cal, line, window; containment, context::AbstractString = "")
     try
         return fit_crosscheck_peak(e_cal, line, window; containment), "ok"
     catch err
-        err isa Union{ErrorException, ArgumentError} || rethrow()
+        err isa InterruptException && rethrow()
+        @warn "Crosscheck fit of the peak at $line failed$context" exception = (err, catch_backtrace())
         return nothing, "failed: $(truncate_error(err, 200))"
     end
 end
 
 
 """
+    crosscheck_peak_figure(check::NamedTuple, fit, status::AbstractString; title::AbstractString)
+
+Figure of one crosscheck peak fit. `check` carries the calibrated energies `e_cal`, the `line`
+and the fit `window` of the peak; `fit` and `status` are the results of `try_fit_crosscheck_peak`.
+A successful fit is drawn with `LegendMakie.lplot` of its report. For a failed fit (`fit` is
+`nothing`) the figure shows the histogram of the energies inside the fit window with the
+`status` text written into the axis.
+"""
+function crosscheck_peak_figure(check::NamedTuple, fit, status::AbstractString; title::AbstractString)
+    isnothing(fit) || return LegendMakie.lplot(fit.report; title, figsize = (700, 450), show_residuals = false)
+    lo, hi = ustrip.(u"keV", (check.line - first(check.window), check.line + last(check.window)))
+    h = StatsBase.fit(StatsBase.Histogram, filter(e -> lo < e < hi, ustrip.(u"keV", check.e_cal)), range(lo, hi, length = 41))
+    fig = LegendMakie.lplot(h; title, figsize = (700, 450), xlabel = "Energy (keV)", ylabel = "Counts",
+        ylims = (0, max(1, 1.2 * maximum(h.weights))))
+    Makie.text!(Makie.current_axis(), 0.03, 0.97; text = join(String.(collect(Iterators.partition(status, 60))), "\n"),
+        space = :relative, align = (:left, :top), fontsize = 11, color = :red)
+    return fig
+end
+
+
+"""
     crosscheck_optimum(sets::NamedTuple, pulse::NamedTuple, aoe::AbstractVector,
-                       dsp_config::DSPConfig, opt_config::PropDict, flt_config::PropDict,
+                       dsp_config, opt_config::PropDict, flt_config::PropDict,
                        flt::Symbol, rt::Unitful.Time, ft::Unitful.Time)
 
 Reconstruction crosscheck of filter `flt` at `(rt, ft)`.
 
 The FEP set is evaluated with `evaluate_energy_point`; its qdrift slope `fct` and simple
 calibration `m_cal_simple` are applied unchanged to the DEP and SEP sets (present in `sets` if
-enabled). Every peak is fitted with `fit_crosscheck_peak`. A failing FEP fit throws; DEP and SEP
-fits that fail with an `ErrorException` or `ArgumentError` are recorded in the `status` of
-their row and left out of `fits` and `shifts`.
+enabled). Every peak is fitted with `try_fit_crosscheck_peak`: a fit that throws is recorded in
+the `status` of its row and left out of `fits` and `shifts`. Without a FEP fit the peak shifts
+cannot be scaled, so `shifts` is empty, `residuals` holds empty vectors and `slow_mean` is `NaN`.
 
 Per-event FEP residuals `(e - μ) / σ` cover the events inside the FEP window with finite
 `t10`, `t90` and A/E; `slow_mean` is their mean over the slowest five percent by `t90 - t10`.
 
-Returns `(fep_row, fits, rows, shifts, slow_mean_residual, residuals, ctc_report)`:
+Returns `(fep_row, checks, fits, rows, shifts, slow_mean_residual, residuals, ctc_report)`:
 - `fep_row`: `evaluate_energy_point` row of the FEP
+- `checks`: `(name, e_cal, line, window)` of every attempted peak
 - `fits`: `fit_crosscheck_peak` results by peak (`:FEP`, `:DEP`, `:SEP`)
 - `rows`: one crosscheck table row per attempted peak
 - `shifts`: `(shift, σ)` of `:DEP` and `:SEP`, scaled so that the FEP sits at its line
@@ -215,7 +244,7 @@ Returns `(fep_row, fits, rows, shifts, slow_mean_residual, residuals, ctc_report
 - `ctc_report`: `ctc_energy` report of the FEP energies if `opt_config.apply_ctc`, else `nothing`
 """
 function crosscheck_optimum(sets::NamedTuple, pulse::NamedTuple, aoe::AbstractVector,
-        dsp_config::DSPConfig, opt_config::PropDict, flt_config::PropDict, flt::Symbol, rt::Unitful.Time, ft::Unitful.Time)
+        dsp_config, opt_config::PropDict, flt_config::PropDict, flt::Symbol, rt::Unitful.Time, ft::Unitful.Time)
     peak = opt_config.peak
     window = (opt_config.left_window_size, opt_config.right_window_size)
     containment = opt_config.containment
@@ -238,15 +267,13 @@ function crosscheck_optimum(sets::NamedTuple, pulse::NamedTuple, aoe::AbstractVe
 
     fit_names, fit_values, statuses = Symbol[], NamedTuple[], String[]
     for c in checks
-        # every other crosscheck is calibrated with the FEP fit
-        fit, status = c.name == :FEP ? (fit_crosscheck_peak(c.e_cal, c.line, c.window; containment), "ok") :
-            try_fit_crosscheck_peak(c.e_cal, c.line, c.window; containment)
-        status == "ok" || @warn "$(c.name) crosscheck of $flt at rt = $rt, ft = $ft: $status"
+        fit, status = try_fit_crosscheck_peak(c.e_cal, c.line, c.window; containment, context = " ($(c.name) of $flt at rt = $rt, ft = $ft)")
         push!(statuses, status)
         isnothing(fit) || (push!(fit_names, c.name); push!(fit_values, fit))
     end
     fits = NamedTuple{Tuple(fit_names)}(Tuple(fit_values))
-    k = peak / fits.FEP.μ
+    # every other peak is scaled with the FEP fit
+    k = haskey(fits, :FEP) ? peak / fits.FEP.μ : NaN
 
     rows = map(checks, statuses) do c, status
         f = get(fits, c.name, nothing)
@@ -260,16 +287,20 @@ function crosscheck_optimum(sets::NamedTuple, pulse::NamedTuple, aoe::AbstractVe
              centroid = f.centroid, n_events = f.n_events, status = status)
         end
     end
-    shift_peaks = Tuple(p for p in (:DEP, :SEP) if haskey(fits, p))
+    shift_peaks = haskey(fits, :FEP) ? Tuple(p for p in (:DEP, :SEP) if haskey(fits, p)) : ()
     line_of = Dict(c.name => c.line for c in checks)
     shifts = NamedTuple{shift_peaks}(map(p -> (shift = fits[p].μ * k - line_of[p], σ = fits[p].σ * k), shift_peaks))
 
     rise_time = pulse.t90 .- pulse.t10
-    sel = [i for i in eachindex(e_cal_fep, rise_time, aoe, sets.fep.qdrift)
-           if peak - first(window) < e_cal_fep[i] < peak + last(window) && isfinite(rise_time[i]) && isfinite(aoe[i])]
-    residual = ustrip.(NoUnits, (e_cal_fep[sel] .- fits.FEP.μ) ./ fits.FEP.σ)
-    slow = rise_time[sel] .>= quantile(rise_time[sel], 0.95)
-    residuals = (residual = residual, qdrift = sets.fep.qdrift[sel], rise_time = rise_time[sel], aoe = aoe[sel], slow_mean = mean(residual[slow]))
+    residuals = if haskey(fits, :FEP)
+        sel = [i for i in eachindex(e_cal_fep, rise_time, aoe, sets.fep.qdrift)
+               if peak - first(window) < e_cal_fep[i] < peak + last(window) && isfinite(rise_time[i]) && isfinite(aoe[i])]
+        residual = ustrip.(NoUnits, (e_cal_fep[sel] .- fits.FEP.μ) ./ fits.FEP.σ)
+        slow = rise_time[sel] .>= quantile(rise_time[sel], 0.95)
+        (residual = residual, qdrift = sets.fep.qdrift[sel], rise_time = rise_time[sel], aoe = aoe[sel], slow_mean = mean(residual[slow]))
+    else
+        (residual = Float64[], qdrift = sets.fep.qdrift[Int[]], rise_time = rise_time[Int[]], aoe = aoe[Int[]], slow_mean = NaN)
+    end
 
     ctc_report = if opt_config.apply_ctc
         valid = [i for i in eachindex(e_fep, sets.fep.qdrift)
@@ -279,7 +310,7 @@ function crosscheck_optimum(sets::NamedTuple, pulse::NamedTuple, aoe::AbstractVe
         nothing
     end
 
-    return (; fep_row, fits, rows, shifts, slow_mean_residual = residuals.slow_mean, residuals, ctc_report)
+    return (; fep_row, checks, fits, rows, shifts, slow_mean_residual = residuals.slow_mean, residuals, ctc_report)
 end
 
 
@@ -323,6 +354,16 @@ Optimization of energy filter `flt` of one detector on the prepared peak sets `s
 5. figures through `f_save(fig, name)` with titles `f_title(label, flt)`, and tables written
    to `f_tablepath(flt)` with `write_fltopt_tables`.
 
+For CUSP and ZAC the flat-top times in the pars, the crosscheck table and the log are those
+that the filter applies (`realized_flattop`), and the lattice search visits only flat tops that
+are applied as requested. The `ft_applied` column of the evaluation table holds the applied
+flat-top time of each row; the `ft` of a flat-top scan row is the requested grid value. The
+trapezoidal flat-top time is written as requested.
+
+Every crosscheck peak fit that is not part of the `peaks_<flt>` figure (a peak fitted at both
+optima) is saved in `crosscheck_<peak>_<optimum>_<flt>`: its fit, or for a failed fit the
+histogram of the energies in the fit window with the error text.
+
 The objective is `opt_config.objective`; `:fwhm_ct` uses `opt_config.ctc_rel_uncertainty`, the
 assumed relative error of the charge-trapping correction.
 
@@ -347,12 +388,17 @@ function optimize_channel_filter(sets::NamedTuple, pulse::NamedTuple, flt::Symbo
     all(t -> extrema(t) == (t_first, t_last), prep.wvfs_pz.time) || throw(ArgumentError("The FEP waveforms do not share one time axis"))
     t50_min, t50_max = extrema(filter(isfinite, prep.t50))
     max_half_length = min(t50_min - t_first, t_last - t50_max) - dsp_config.kwargs_pars.sig_interpolation_length
+    flt_length = flt == :trap ? zero(prep.sampling_period) : getproperty(dsp_config, Symbol("flt_length_$(flt)"))
+    # flat-top time that the filter applies; CUSP and ZAC lengthen some flat tops by one sample
+    ft_applied(ft) = uconvert(u"µs", realized_flattop(ft, flt_length, prep.sampling_period, flt))
+    # the trapezoidal filter is built and read out with the requested flat-top time
+    ft_written(ft) = flt == :trap ? uconvert(u"µs", ft) : ft_applied(ft)
     feasible = if flt == :trap
         (rt, ft) -> rt + ft / 2 <= max_half_length
     else
-        flt_length = getproperty(dsp_config, Symbol("flt_length_$(flt)"))
         flt_length / 2 <= max_half_length || throw(ArgumentError("The $flt filter length $flt_length does not fit the FEP waveform window"))
-        (rt, ft) -> ft < flt_length
+        # only flat tops that are applied as requested: others duplicate a longer flat top
+        (rt, ft) -> ft < flt_length && ft_applied(ft) == uconvert(u"µs", ft)
     end
 
     # noise scan
@@ -382,17 +428,21 @@ function optimize_channel_filter(sets::NamedTuple, pulse::NamedTuple, flt::Symbo
         objective, ctc_rel_uncertainty, containment = opt_config.containment, rel_tol = opt_config.rel_tol, ft_fwhm_tol = opt_config.ft_fwhm_tol)
     e_grid = nothing
     enc_grid = nothing
-    ft0, legacy_ft = mvalue(result_ft.ft), mvalue(result_ft.legacy_ft)
+    ft0, legacy_ft = mvalue(result_ft.ft), ft_written(mvalue(result_ft.legacy_ft))
     @debug "Filter $flt: seed flat-top time $ft0, legacy flat-top time $legacy_ft"
     f_save(LegendMakie.lplot(report_ft, title = f_title("FEP FT Scan", flt), figsize = (600, 900)), Symbol("ft_scan_$(flt)"))
 
     # the optimum: joint lattice search from the seed (rt_enc, ft0) moved onto the lattice, inside
     # the bounds and into the feasible region, or the flat-top scan optimum at rt_enc
     if joint_search
-        rt_seed, ft_seed = snap_seed(rt_enc, ft0, extrema(e_grid_rt), extrema(e_grid_ft), prep.sampling_period, feasible, flt)
+        # CUSP and ZAC flat tops lie on every second lattice point: the flat-top step is a power
+        # of two lattice steps, at least two, so that halving keeps it feasible down to two
+        step_ft = flt == :trap ? step(e_grid_ft) :
+            2^max(1, round(Int, log2(ustrip(NoUnits, max(step(e_grid_rt), step(e_grid_ft)) / prep.sampling_period)))) * prep.sampling_period
+        rt_seed, ft_seed = snap_seed(rt_enc, ft_written(ft0), extrema(e_grid_rt), extrema(e_grid_ft), prep.sampling_period, feasible, flt)
         result_rtft, report_rtft = optimize_rtft(f_energy, sets.fep.qdrift, rt_seed, ft_seed;
             rt_bounds = extrema(e_grid_rt), ft_bounds = extrema(e_grid_ft), feasible,
-            step0 = (step(e_grid_rt), step(e_grid_ft)), lattice = prep.sampling_period,
+            step0 = (step(e_grid_rt), step_ft), lattice = prep.sampling_period,
             objective, ctc_rel_uncertainty, rel_tol = opt_config.rel_tol, max_evals = opt_config.max_evals,
             peak = opt_config.peak, window, min_e = flt_config.min_e_fep, max_e = flt_config.max_e_fep,
             rel_cut_fit = flt_config.rel_cut_fit_e_fep, n_bins = flt_config.nbins_e_fep,
@@ -406,7 +456,7 @@ function optimize_channel_filter(sets::NamedTuple, pulse::NamedTuple, flt::Symbo
         optimum = merge(report_ft.table[i_scan], (rt = rt_enc, ft = ft0, min_objective = result_ft.min_objective))
         @debug "Filter $flt: optimum rt = $rt_enc, ft = $ft0 from the flat-top scan"
     end
-    rt_new, ft_new = uconvert(u"µs", mvalue(optimum.rt)), uconvert(u"µs", mvalue(optimum.ft))
+    rt_new, ft_new = uconvert(u"µs", mvalue(optimum.rt)), ft_written(mvalue(optimum.ft))
 
     # crosschecks at both optima; A/E uses the energies at the new optimum
     e_new = f_energy(rt_new, ft_new)
@@ -420,11 +470,18 @@ function optimize_channel_filter(sets::NamedTuple, pulse::NamedTuple, flt::Symbo
         f_save(LegendMakie.lplot(cc_legacy.ctc_report, figsize = (600, 600), title = f_title("CTC Legacy Optimum", flt)), Symbol("ctc_$(flt)_legacy"))
         f_save(LegendMakie.lplot(cc_new.ctc_report, figsize = (600, 600), title = f_title("CTC New Optimum", flt)), Symbol("ctc_$(flt)_new"))
     end
+    # the peaks fitted at both optima share one figure; every other peak fit is drawn on its own
     peaks = [p for p in keys(cc_new.fits) if haskey(cc_legacy.fits, p)]
-    f_save(LegendMakie.lplot((peaks = peaks, legacy = [cc_legacy.fits[p] for p in peaks], new = [cc_new.fits[p] for p in peaks]);
+    isempty(peaks) || f_save(LegendMakie.lplot((peaks = peaks, legacy = [cc_legacy.fits[p] for p in peaks], new = [cc_new.fits[p] for p in peaks]);
         figsize = (700, 300 * length(peaks)), title = f_title("Crosscheck Peaks", flt)), Symbol("peaks_$(flt)"))
-    f_save(LegendMakie.lplot((legacy = cc_legacy.residuals, new = cc_new.residuals); figsize = (900, 900),
-        title = f_title("FEP Residuals", flt)), Symbol("residuals_$(flt)"))
+    for (which, cc) in ((:legacy, cc_legacy), (:new, cc_new)), (c, row) in zip(cc.checks, cc.rows)
+        c.name in peaks && continue
+        f_save(crosscheck_peak_figure(c, get(cc.fits, c.name, nothing), row.status; title = f_title("Crosscheck $(c.name) $(titlecase(String(which))) Optimum", flt)),
+            Symbol("crosscheck_$(lowercase(String(c.name)))_$(which)_$(flt)"))
+    end
+    isempty(cc_legacy.residuals.residual) || isempty(cc_new.residuals.residual) ||
+        f_save(LegendMakie.lplot((legacy = cc_legacy.residuals, new = cc_new.residuals); figsize = (900, 900),
+            title = f_title("FEP Residuals", flt)), Symbol("residuals_$(flt)"))
 
     # example waveforms: fastest, slowest and highest-A/E events
     n_class = opt_config.n_example_wvfs
@@ -451,7 +508,8 @@ function optimize_channel_filter(sets::NamedTuple, pulse::NamedTuple, flt::Symbo
     f_save(LegendMakie.lplot((classes = repeat([:fast, :slow, :high_aoe], inner = n_class), wvfs = wvfs, flt_legacy = flt_legacy, flt_new = flt_new);
         figsize = (1200, 600), title = f_title("Example Waveforms", flt)), Symbol("example_wvfs_$(flt)"))
 
-    # tables: noise scan, ft scan and lattice rows share the columns of `evaluation`
+    # tables: noise scan, ft scan and lattice rows share the columns of `evaluation`; `ft` is the
+    # requested flat-top time of a row and `ft_applied` the one that the filter applies
     metric_columns(t) = (status = string.(t.status), enc = fill(NaN, length(t)),
         fwhm_before = uconvert.(u"keV", mvalue.(t.fwhm_before)), fwhm = uconvert.(u"keV", mvalue.(t.fwhm)),
         w90 = uconvert.(u"keV", mvalue.(t.w90)), asym = mvalue.(t.asym), tail_fraction = mvalue.(t.tail_fraction),
@@ -461,17 +519,17 @@ function optimize_channel_filter(sets::NamedTuple, pulse::NamedTuple, flt::Symbo
     n_rt, n_ft = length(report_rt.enc), length(report_ft.table)
     evaluation = vcat(
         Table(scan = fill("noise", n_rt), rt = uconvert.(u"µs", collect(report_rt.enc_grid_rt)),
-            ft = fill(uconvert(u"µs", flt_config.ft_fixed), n_rt), stage = fill("", n_rt),
+            ft = fill(uconvert(u"µs", flt_config.ft_fixed), n_rt), ft_applied = fill(ft_applied(flt_config.ft_fixed), n_rt), stage = fill("", n_rt),
             step_rt = fill(NaN * u"µs", n_rt), step_ft = fill(NaN * u"µs", n_rt), status = fill("ok", n_rt),
             enc = mvalue.(report_rt.enc), fwhm_before = fill(NaN * u"keV", n_rt), fwhm = fill(NaN * u"keV", n_rt),
             w90 = fill(NaN * u"keV", n_rt), asym = fill(NaN, n_rt), tail_fraction = fill(NaN, n_rt),
             tail_scale = fill(NaN * u"keV", n_rt), centroid = fill(NaN * u"keV", n_rt), fct = fill(NaN, n_rt),
             ct_spread = fill(NaN * u"keV", n_rt), m_cal_simple = fill(NaN * u"keV", n_rt), ctc_converged = fill(false, n_rt), n_events = fill(0, n_rt)),
         Table(merge((scan = fill("ft_scan", n_ft), rt = fill(uconvert(u"µs", rt_enc), n_ft),
-            ft = uconvert.(u"µs", report_ft.table.ft), stage = fill("", n_ft), step_rt = fill(NaN * u"µs", n_ft),
+            ft = uconvert.(u"µs", report_ft.table.ft), ft_applied = ft_applied.(report_ft.table.ft), stage = fill("", n_ft), step_rt = fill(NaN * u"µs", n_ft),
             step_ft = fill(uconvert(u"µs", step(e_grid_ft)), n_ft)), metric_columns(report_ft.table))),
         (joint_search ? [Table(merge((scan = fill("lattice", length(report_rtft.table)), rt = uconvert.(u"µs", report_rtft.table.rt),
-            ft = uconvert.(u"µs", report_rtft.table.ft), stage = string.(report_rtft.table.stage),
+            ft = uconvert.(u"µs", report_rtft.table.ft), ft_applied = ft_applied.(report_rtft.table.ft), stage = string.(report_rtft.table.stage),
             step_rt = uconvert.(u"µs", report_rtft.table.step_rt), step_ft = uconvert.(u"µs", report_rtft.table.step_ft)),
             metric_columns(report_rtft.table)))] : Table[])...)
     crosscheck = Table(vcat(map(((:legacy, rt_enc, legacy_ft, cc_legacy), (:new, rt_new, ft_new, cc_new))) do (optimum, rt, ft, cc)

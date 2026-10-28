@@ -39,8 +39,10 @@ A noise sweep on the baseline gives the rise time with minimal ENC at a fixed fl
 gives the flat-top time that minimizes the configured objective and the legacy flat-top time with minimal FWHM.
 With joint_search enabled, a search over rise time and flat-top time on the sampling lattice, starting from that point, gives the optimum;
 otherwise the optimum is the flat-top scan optimum at the ENC rise time.
+The CUSP and ZAC filters round the flat-top time to whole samples and lengthen it by one sample if the filter length minus the flat top is odd;
+the flat-top times in the results are those the filters apply.
 The FEP, the DEP and the SEP are compared at the legacy and the new optimum;
-shifts of the DEP or SEP and changes of the slow-pulse residual appear in the column Crosscheck Warning.
+shifts of the DEP or SEP, peak fits that fail and changes of the slow-pulse residual appear in the column Crosscheck Warning.
 """
 
 const sg_flt_optimization_log_text = """## SG window length optimization
