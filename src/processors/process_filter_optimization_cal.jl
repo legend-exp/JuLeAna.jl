@@ -6,6 +6,8 @@ Optimize the energy filter rise time and flat-top time for all processable HPGe 
 
 For each filter type listed under `e_filter` in the optimization config, the rise time is chosen first from a sweep over the baseline noise (minimal ENC at a fixed flat-top time). The flat-top time is then chosen from a sweep over the full-energy-peak events as the one with the smallest FWHM. Waveforms of the peak named by `peakname` are taken from the `jlpks` tier. Quality cuts (`qc` expression of the optimization config) are applied to the waveforms before the sweeps, and at most `max_wvfs` waveforms are used. Filter types that already have results are skipped unless `reprocess` is set.
 
+If `e_filter` lists `dplms`, a DPLMS filter is synthesized on the same waveforms for every flat-top widening `ff` of LegendDSP's `dplms_default_grid`, and the widening with the smallest FEP FWHM is selected with the same fit as the flat-top time of the other filters.
+
 # Inputs
 - `jlpks` tier of the start `cal` filekey of the run, for each detector (peak waveforms named by `peakname`).
 - `dataprod_config(l200).dsp(filekey)`, in particular the `flt_optimization` section (`default` and per-detector entries) and the DSP config used for the filter grids.
@@ -14,9 +16,9 @@ For each filter type listed under `e_filter` in the optimization config, the ris
 - `l200.par.rpars.fltopt[period, run]` (existing results, unless `reprocess` is set).
 
 # Outputs
-- `l200.par.rpars.fltopt[period, run]`: per detector and filter type the optimal rise time, flat-top time and minimal FWHM, together with the validity entry for the run.
-- Per detector and filter type, plots `noise_sweep_<filter_type>` and `fwhm_ft_scan_<filter_type>`, saved only at the debug plot level.
-- Run report `:filter_optimization` (Main Log, Metadata, Results table with one row per detector and filter type).
+- `l200.par.rpars.fltopt[period, run]`: per detector and filter type the optimal rise time, flat-top time and minimal FWHM, together with the validity entry for the run. For `dplms`: the filter `coefficients`, the read-out time `t_pickoff` after `t50`, `shaping_time`, `flat_top`, `ff`, `n_pre`, `n_post`, the synthesis `weights` and `min_fwhm` of the selected grid point.
+- Per detector and filter type, plots `noise_sweep_<filter_type>` and `fwhm_ft_scan_<filter_type>`, for `dplms` `fwhm_ft_scan_dplms` and `dplms_filter`, saved only at the debug plot level.
+- Run report `:filter_optimization` (Main Log, Metadata, Results table with one row per detector and filter type; the DPLMS row shows shaping time and flat top in the rise-time and flat-top columns).
 
 # Keywords
 - `reprocess`: redo all detectors and filter types, discarding existing results in `l200.par.rpars.fltopt[period, run]`. If `false`, only filter types without results are processed.
@@ -90,9 +92,10 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
             for filter_type in e_filter
                 if haskey(pars_db[det], filter_type)
                     @debug "Filter $filter_type already processed, skip"
+                    pars_flt = pars_db[det][filter_type]
+                    rt, ft = filter_type == :dplms ? (pars_flt.shaping_time, pars_flt.flat_top) : (pars_flt.rt, pars_flt.ft)
                     log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability),
-                                       ProcessStatus(1), filter_type,
-                                       pars_db[det][filter_type].rt, pars_db[det][filter_type].ft, pars_db[det][filter_type].min_fwhm,
+                                       ProcessStatus(1), filter_type, rt, ft, pars_flt.min_fwhm,
                                        "Already processed --> skipped."))
                     # add results to dict
                     log_info_dict[filter_type] = log_info
@@ -154,7 +157,7 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
         end
 
         @debug_progress "Computing $det ..." for filter_type in e_filter
-            if haskey(processed_dict, filter_type)
+            if haskey(processed_dict, filter_type) || filter_type == :dplms
                 continue
             end
 
@@ -233,6 +236,55 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
                 # add results to dict
                 log_info_dict[filter_type] = log_info
                 processed_dict[filter_type] = false
+            end
+        end
+
+        if :dplms in e_filter && !haskey(processed_dict, :dplms)
+            try
+                @debug "Synthesize DPLMS filter"
+                optimization_config_flt = optimization_config_det.e_filter.dplms
+                res = @process_step "dplms filter synthesis for FEP" begin
+                    dsp_dplms_optimization(wvfs_det_pre, dsp_config_det, pars_tau[det].τ, qdrift)
+                end
+                yield()
+                Δt = step(res.superpulse.time)
+                ffs = [w.ff for w in res.grid]
+                e_grid_ff = range(first(ffs) * Δt; step = (length(ffs) > 1 ? ffs[2] - ffs[1] : 1) * Δt, length = length(ffs))
+                e_grid_ff ≈ ffs .* Δt || throw(ArgumentError("DPLMS flat-top widenings $ffs are not equally spaced"))
+                result_ft, report_ft = @process_step "dplms flat-top widening extraction" begin
+                    fit_fwhm_ft(res.e_grid, e_grid_ff, qdrift, 0.0u"µs", optimization_config_flt.min_e_fep,
+                                optimization_config_flt.max_e_fep, optimization_config_flt.rel_cut_fit_e_fep,
+                                optimization_config_det.apply_ctc; n_bins = optimization_config_flt.nbins_e_fep,
+                                peak = optimization_config_det.peak,
+                                window = (optimization_config_det.left_window_size, optimization_config_det.right_window_size),
+                                ft_fwhm_tol = optimization_config_det.ft_fwhm_tol)
+                end
+                i = only(findall(≈(mvalue(result_ft.ft)), e_grid_ff))
+                w = res.grid[i]
+                @debug "Selected DPLMS ff = $(w.ff) samples with FWHM $(round(u"keV", result_ft.min_fwhm, digits=2))"
+                @debug_plot begin
+                    p = LegendMakie.lplot(report_ft,
+                                          title = get_plottitle(filekey, det, "FEP Flat-Top Widening Scan"; additional_type = "dplms"))
+                    save_plot(p, l200, filekey, det, :fwhm_ft_scan_dplms)
+                    p = LegendMakie.lplot((; res.coeffs, res.grid, res.superpulse, res.t_pickoff, res.n_pre, res.n_post); idxs = [i],
+                                          title = get_plottitle(filekey, det, "DPLMS Filter"))
+                    save_plot(p, l200, filekey, det, :dplms_filter)
+                end
+
+                result_rt_ft_dict[:dplms] = (coefficients = res.coeffs[i], t_pickoff = uconvert(u"µs", res.t_pickoff),
+                                             shaping_time = uconvert(u"µs", res.shaping_time[i]), flat_top = uconvert(u"µs", res.flat_top[i]),
+                                             ff = w.ff, n_pre = res.n_pre, n_post = res.n_post,
+                                             weights = (nm = w.nm, za = w.za, ft = w.ft, ct = w.ct), min_fwhm = result_ft.min_fwhm)
+                log_info_dict[:dplms] = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability),
+                                                ProcessStatus(1), :dplms, result_rt_ft_dict[:dplms].shaping_time,
+                                                result_rt_ft_dict[:dplms].flat_top, result_ft.min_fwhm, "-"))
+                processed_dict[:dplms] = true
+                yield()
+            catch e
+                e isa ProcessStepError || @error "Filter: dplms filter optimization: $(truncate_error(e))"
+                log_info_dict[:dplms] = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability),
+                                                ProcessStatus(0), :dplms, "-", "-", "-", "$(truncate_error(e))"))
+                processed_dict[:dplms] = false
             end
         end
         # return results
