@@ -182,10 +182,13 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
             wvfs_det_pre, wvfs_det_wdw, blmean_wdw
         end
 
-        # get qdrift
-        qdrift = @process_step "QDrift" begin
+        # get qdrift; events without a finite qdrift are removed like the QC cuts
+        wvfs_det_pre, qdrift = @process_step "QDrift" begin
             @debug "Get QDrift"
-            dsp_qdrift_flt_optimization(wvfs_det_wdw, blmean_wdw, dsp_config_det, pars_tau[det].τ)
+            qdrift = dsp_qdrift_flt_optimization(wvfs_det_wdw, blmean_wdw, dsp_config_det, pars_tau[det].τ)
+            ok = findall(isfinite, qdrift)
+            @debug "Remove $(length(qdrift) - length(ok)) events with non-finite QDrift"
+            wvfs_det_pre[ok], qdrift[ok]
         end
 
         @debug_progress "Computing $det ..." for filter_type in e_filter
