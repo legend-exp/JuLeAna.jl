@@ -50,8 +50,11 @@ A partition step whose processor returns `true` finishes only when the same step
 finished for the previous period. Without `check_dependencies` a step waits only for the
 steps of its own level, for the same run or period.
 
-With `max_parallel_steps > 0` at most that many steps run at the same time. Steps that
-are ready start in the order of their rank, then name, period and run. A step that is
+Steps that are ready start, and the items they hand to [`parallel`](@ref) get free
+workers, in this order (see [`JuLeAna.waiting_chains`](@ref) and [`JuLeAna.WorkerQueue`](@ref)):
+the step with the longest chain of selected steps that wait for it first, then the one
+with the most selected steps that wait for it, then by rank, name, period and run. With
+`max_parallel_steps > 0` at most that many steps run at the same time. A step that is
 skipped because the run is not an analysis run (with `cfg.analysis_runs_only`) or not in
 the run info counts as finished. `run_status[period][step][run]` and
 `partition_status[period][step]` are set to `true` when a step finishes.
@@ -100,6 +103,7 @@ function run_processing(cfg::ProcessingConfig, l200, periods::AbstractVector{Dat
         same_level(step, (u, same_run)) = spec(u).level === spec(step).level && (spec(step).level === :partition || same_run)
         waits = Dict(step => filter(w -> same_level(step, w), w_step) for (step, w_step) in waits)
     end
+    chains = waiting_chains(waits)
     spans = Dict{DataPeriod,Vector{DataPeriod}}()
     span(period) = get!(() -> filter(in(periods), partition_periods(l200, period)), spans, period)
     # the steps that the step `node` waits for
@@ -127,7 +131,8 @@ function run_processing(cfg::ProcessingConfig, l200, periods::AbstractVector{Dat
 
         push!(dependents[pred], node)
     end
-    priority((period, run, step)) = (spec(step).rank, step, period.no, isnothing(run) ? -1 : run.no)
+    priority((period, run, step)) = (-chains[step].chain, -chains[step].successors, spec(step).rank, step, period.no,
+                                     isnothing(run) ? -1 : run.no)
     ready = sort!(ProgressKey[node for node in nodes if isempty(blockers[node])]; by = priority)
 
     # Run the step `node` and return whether it was skipped and, for a partition step,
@@ -139,7 +144,7 @@ function run_processing(cfg::ProcessingConfig, l200, periods::AbstractVector{Dat
             kwargs = merge(NamedTuple(spec(step).kwargs), (; only_first_period), overrides)
             @info "Process $step of $period"
             lower = tracked(node) do
-                return with(() -> processors[step](cfg, l200, period; kwargs...), step_scope(step)...)
+                return with(() -> processors[step](cfg, l200, period; kwargs...), step_scope(step)..., STEP_PRIORITY => priority(node))
             end
             return (; skipped = false, lower = lower === true)
         end
@@ -151,7 +156,7 @@ function run_processing(cfg::ProcessingConfig, l200, periods::AbstractVector{Dat
         else
             @info "Process $step of $period-$run"
             tracked(node) do
-                with(step_scope(step)...) do
+                with(step_scope(step)..., STEP_PRIORITY => priority(node)) do
                     return processors[step](cfg, l200, period, run; merge(NamedTuple(spec(step).kwargs), overrides)...)
                 end
             end
@@ -197,8 +202,8 @@ function run_processing(cfg::ProcessingConfig, l200, periods::AbstractVector{Dat
     tasks = Dict{ProgressKey,Task}()
     errors = Any[]
     try
-        # `parallel` reads the stop flags from the scope; spawned tasks inherit it.
-        with(PROCESSING_STOP => stop, PROCESSING_ABANDON => abandon) do
+        # `parallel` reads the stop flags and the worker queue from the scope; spawned tasks inherit it.
+        with(PROCESSING_STOP => stop, PROCESSING_ABANDON => abandon, WORKER_QUEUE => WorkerQueue()) do
             while true
                 while !isempty(ready) && isempty(errors) && !stop[] && (max_parallel_steps == 0 || length(tasks) < max_parallel_steps)
                     # local to the iteration: each task must report its own step

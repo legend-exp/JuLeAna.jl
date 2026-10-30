@@ -4,7 +4,7 @@ using JuLeAna
 using Test
 using Logging: Logging, ConsoleLogger, NullLogger, with_logger
 using Serialization: deserialize
-using Distributed: addprocs, myid, rmprocs, @everywhere
+using Distributed: Distributed, addprocs, myid, rmprocs, @everywhere
 using LegendDataManagement: LegendDataManagement, DataPeriod, DataRun, FileKey, LegendData, lreport
 using LegendDataManagement.LDMUtils: create_logtbl
 using ParallelProcessingTools: FlexWorkerPool, ppt_worker_pool, ppt_worker_pool!
@@ -306,6 +306,26 @@ const REPORT = """
                                                                                              stub_status([p3], runs, steps, Symbol[])...;
                                                                                              processors = stubs, max_parallel_steps = -1)
 
+        starts() = [(n, r) for (what, n, r) in events if what === :start]
+        # a longer chain of steps that wait goes first, before rank: y → z
+        empty!(events)
+        cfg_h = ProcessingConfig(; processors = Dict(:x => spec(:x, 1), :y => spec(:y, 2), :z => spec(:z, 3, [:y])),
+                                 p_processors = Dict{Symbol,ProcessorSpec}())
+        steps_h = [:x, :y, :z]
+        run_processing(cfg_h, FakeData(), [p3], steps_h, Symbol[], stub_status([p3], runs, steps_h, Symbol[])...;
+                       processors = Dict{Symbol,Any}(n => step(n) for n in steps_h), max_parallel_steps = 1)
+        @test starts() == [(:y, runs[1]), (:y, runs[2]), (:x, runs[1]), (:x, runs[2]), (:z, runs[1]), (:z, runs[2])]
+        # for equal chains, more steps that wait go first, before rank: u → t, w → v1 and v2
+        empty!(events)
+        cfg_m = ProcessingConfig(;
+                                 processors = Dict(:u => spec(:u, 1), :w => spec(:w, 2), :t => spec(:t, 4, [:u]),
+                                                   :v1 => spec(:v1, 3, [:w]), :v2 => spec(:v2, 3, [:w])),
+                                 p_processors = Dict{Symbol,ProcessorSpec}())
+        steps_m = [:u, :w, :t, :v1, :v2]
+        run_processing(cfg_m, FakeData(), [p3], steps_m, Symbol[], stub_status([p3], runs, steps_m, Symbol[])...;
+                       processors = Dict{Symbol,Any}(n => step(n) for n in steps_m), max_parallel_steps = 1)
+        @test starts()[1:4] == [(:w, runs[1]), (:w, runs[2]), (:u, runs[1]), (:u, runs[2])]
+
         # without dependency checks, a step still waits for its own level, but not for the other
         empty!(events)
         cfg_x = ProcessingConfig(; processors = Dict(:a => spec(:a, 1), :c => spec(:c, 2, [:a, :p])),
@@ -315,6 +335,42 @@ const REPORT = """
                        processors = Dict{Symbol,Any}(:a => step(:a), :c => step(:c), :p => p_stub), check_dependencies = false)
         @test position(:start, :c, runs[1]) > position(:end, :a, runs[1])
         @test position(:start, :c, runs[1]) < position(:end, :p, runs[1])
+    end
+
+    @testset "worker queue" begin
+        waituntil(cond) = timedwait(cond, 30; pollint = 0.01) === :ok
+        pool = Distributed.WorkerPool([myid()])
+        queue = JuLeAna.WorkerQueue()
+        # the only worker is busy while the items queue up
+        held = take!(pool)
+        order = Int[]
+        order_lock = ReentrantLock()
+        item(key) = Threads.@spawn begin
+            worker = take!(JuLeAna.QueuedPool(pool, queue, key))
+            lock(() -> push!(order, key), order_lock)
+            put!(pool, worker)
+        end
+        tasks = map(item, [3, 1, 2])
+        @test waituntil(() -> length(queue.waiting) == 3)
+        put!(pool, held)
+        foreach(wait, tasks)
+        @test order == [1, 2, 3]
+        @test isempty(queue.waiting)
+
+        # a stop ends the wait of the queued items
+        stop = Threads.Atomic{Bool}(false)
+        held = take!(pool)
+        waiter = Threads.@spawn take!(JuLeAna.QueuedPool(JuLeAna.StoppablePool(pool, stop), queue, 1))
+        @test waituntil(() -> length(queue.waiting) == 1)
+        stop[] = true
+        err = try
+            fetch(waiter)
+        catch e
+            e
+        end
+        @test err isa TaskFailedException && err.task.exception isa ProcessingStopped
+        @test isempty(queue.waiting)
+        put!(pool, held)
     end
 
     @testset "stored_detectors" begin

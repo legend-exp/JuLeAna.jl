@@ -44,6 +44,7 @@ JuLeAna.processors
 JuLeAna.StepOutput
 JuLeAna.@using_packages
 ProcessingStopped
+JuLeAna.WorkerQueue
 JuLeAna.partition_periods
 JuLeAna.rank_order_dependencies
 ```
@@ -138,6 +139,7 @@ topological_order
 required_processors
 dependent_processors
 waited_processors
+JuLeAna.waiting_chains
 layered_layout
 partition_steps
 check_processor_kwargs

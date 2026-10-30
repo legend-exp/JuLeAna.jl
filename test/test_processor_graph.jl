@@ -92,6 +92,16 @@ using Test
         # through run steps only, the wait is for the same run
         @test waited_processors(g, [:r1, :r3])[:r3] == [:r1 => true]
         @test isempty(waited_processors(g, [:p2])[:p2])
+
+        # r2 has the chains r3 → r4 and p1 → p2 → r4, and four processors after it
+        chains = JuLeAna.waiting_chains(w)
+        @test chains[:r1] == (; chain = 4, successors = 5)
+        @test chains[:r2] == (; chain = 3, successors = 4)
+        @test chains[:p1] == (; chain = 2, successors = 2)
+        @test chains[:r3] == chains[:p2] == (; chain = 1, successors = 1)
+        @test chains[:r4] == (; chain = 0, successors = 0)
+        # only selected processors count
+        @test JuLeAna.waiting_chains(waited_processors(g, [:r2, :r4]))[:r2] == (; chain = 1, successors = 1)
     end
 
     @testset "configs and snapshot entries" begin
