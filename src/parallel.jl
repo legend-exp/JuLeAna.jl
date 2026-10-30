@@ -54,6 +54,82 @@ end
 
 Base.put!(p::StoppablePool, worker::Int) = put!(p.pool, worker)
 
+# An item that waits in a `WorkerQueue`; `result` is the worker it gets or the exception
+# that ended the wait.
+mutable struct QueuedItem
+    const key::Any
+    const seq::Int
+    const ready::Threads.Event
+    result::Any
+end
+
+"""
+    JuLeAna.WorkerQueue()
+
+Order in which the waiting items of [`parallel`](@ref) get free workers. [`run_processing`](@ref)
+sets one queue for all steps of a run. A free worker goes to the waiting item with the
+smallest key, and among equal keys to the item that came first. The key of an item is the
+priority of its step in `run_processing` followed by the item's position, so the items of a
+step get workers in their order.
+
+Every waiting item adds one task that takes a worker from the pool, and that task hands the
+worker to the item that is first at that moment. These tasks wait side by side, so the
+initialization of new workers, which happens when a worker is taken, also runs side by side.
+"""
+mutable struct WorkerQueue
+    const lock::ReentrantLock
+    # sorted by `(key, seq)`
+    const waiting::Vector{QueuedItem}
+    seq::Int
+end
+
+WorkerQueue() = WorkerQueue(ReentrantLock(), QueuedItem[], 0)
+
+# Worker queue of the current processing run, set by `run_processing`; `nothing` outside of it.
+const WORKER_QUEUE = ScopedValue{Union{Nothing,WorkerQueue}}(nothing)
+
+# Priority of the current processing step in its `WORKER_QUEUE`, set by `run_processing`.
+const STEP_PRIORITY = ScopedValue{Any}(nothing)
+
+# Worker pool of one item of `parallel` that gets its worker from `pool` through `queue`.
+struct QueuedPool{P<:AbstractWorkerPool} <: AbstractWorkerPool
+    pool::P
+    queue::WorkerQueue
+    key::Any
+end
+
+function Base.take!(p::QueuedPool)
+    q = p.queue
+    item = @lock q.lock begin
+        item = QueuedItem(p.key, q.seq += 1, Threads.Event(), nothing)
+        insert!(q.waiting, searchsortedfirst(q.waiting, item; by = i -> (i.key, i.seq)), item)
+        item
+    end
+    # The worker may go to another item, so the task must not report it as this item's.
+    errormonitor(Threads.@spawn with(() -> serve_first!(p), ITEM_STARTED => nothing))
+    wait(item.ready)
+    item.result isa Exception && throw(item.result)
+    started = ITEM_STARTED[]
+    isnothing(started) || started(item.result)
+    return item.result::Int
+end
+
+Base.put!(p::QueuedPool, worker::Int) = put!(p.pool, worker)
+
+# Take a worker from `p.pool`, or the exception that prevents it, and hand it to the first
+# item of `p.queue`. Each waiting item adds one call, so the queue is not empty when it ends.
+function serve_first!(p::QueuedPool)
+    result = try
+        take!(p.pool)
+    catch e
+        e
+    end
+    item = @lock p.queue.lock popfirst!(p.queue.waiting)
+    item.result = result
+    notify(item.ready)
+    return nothing
+end
+
 """
     failure_log(log_nt, itr, message::AbstractString)
 
@@ -139,7 +215,8 @@ Inside [`run_processing`](@ref), a stop of the processing run takes effect here:
 have not been handed to a worker are not run, items already running finish, and `parallel`
 then throws [`ProcessingStopped`](@ref) instead of returning. When the run is stopped without
 waiting for running items, `parallel` throws right away and the running items go on in
-the background; their workers return to the pool when the items end.
+the background; their workers return to the pool when the items end. The items of all
+running steps get free workers in the order of the run's [`JuLeAna.WorkerQueue`](@ref).
 
 # Examples
 ```julia
@@ -174,6 +251,8 @@ function parallel(f, iterator::AbstractArray, log_nt::Type{<:NamedTuple}; timeou
                          PROCESSOR_LOG_LEVEL => log_level, PLOT_LEVEL => plot_level, PLOT_FORMATS => plot_formats, CURRENT_ITEM => itr)
     stop = PROCESSING_STOP[]
     pool = isnothing(stop) ? ppt_worker_pool() : StoppablePool(ppt_worker_pool(), stop)
+    queue, step_priority = WORKER_QUEUE[], STEP_PRIORITY[]
+    item_pool(id) = isnothing(queue) ? pool : QueuedPool(pool, queue, (step_priority, id))
     step = PROGRESS_STEP[]
     first_id = isnothing(step) ? 0 : items_queued!(step..., length(iterator))
     flush(stdout)
@@ -209,7 +288,7 @@ function parallel(f, iterator::AbstractArray, log_nt::Type{<:NamedTuple}; timeou
                 # Past `maxtime`, onworker terminates the worker (never the main process) and
                 # counts the timeout as a failed try; the last failure lands in the catch below.
                 with(ITEM_STARTED => started) do
-                    onworker(; pool, tries = retry ? 3 : 1, label = "$itr", maxtime = timeout) do
+                    onworker(; pool = item_pool(id), tries = retry ? 3 : 1, label = "$itr", maxtime = timeout) do
                         try
                             res = run_item(itr)
                             return itr => res, item_outcome(res)

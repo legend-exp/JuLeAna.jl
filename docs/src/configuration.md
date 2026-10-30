@@ -92,7 +92,9 @@ Two keys are optional:
   switch to `"dependencies"`.
 - **`max_parallel_steps`**: the maximum number of processor steps (one processor for
   one run, or for one period at partition level) that run at the same time; `0`, the
-  default, sets no limit. The steps share the workers either way.
+  default, sets no limit. The steps share the workers either way: a free worker goes to
+  the waiting item of the step with the longest chain of selected steps after it, then
+  with the most selected steps after it, then by rank.
 
 ## `processors` and `p_processors`
 
