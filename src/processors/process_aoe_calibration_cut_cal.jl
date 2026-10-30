@@ -85,8 +85,9 @@ function process_aoe_calibration_cut_cal(processing_config, l200::LegendData, pe
 
         @info "Processing detector $det ($ch)"
 
-        # keyed by detector, as `create_pars` expects; a copy, since `create_pars` adds to the entry in place
-        pars_db_ch = PropDict(Symbol(det) => deepcopy(get(pars_db, Symbol(det), PropDict())))
+        # keyed by detector, as `create_pars` expects
+        pars_db_ch = PropDict()
+        pars_db_ch[det] = get(pars_db, det, PropDict())
 
         result_dict = Dict{Symbol,NamedTuple}()
         log_info_dict = Dict{Symbol,NamedTuple}()
