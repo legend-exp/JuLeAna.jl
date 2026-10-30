@@ -56,8 +56,9 @@ Fields:
   `p_processors`.
 - `enabled::Bool`: whether the processor is selected for execution by default.
 - `category::Symbol`: data category the processor acts on, `:cal` or `:phy`.
-- `rank::Int`: position in listings and tie rule: among processors that are ready to run,
-  lower ranks start first.
+- `rank::Int`: position in listings and tie rule: among processors that are ready to run
+  and have equally long chains and equally many selected processors after them, lower
+  ranks start first (see [`run_processing`](@ref)).
 - `dependencies::Vector{Symbol}`: processors of either level that must finish first.
 - `kwargs::Dict{Symbol,Any}`: keyword arguments passed to the processor function.
 - `error_plots::Bool`: whether a failed [`@process_step`](@ref) of the processor runs its
