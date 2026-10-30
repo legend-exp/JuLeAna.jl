@@ -183,16 +183,6 @@ function p_process_sipm_calibration_phy(processing_config, l200::LegendData, per
                     filter(isfinite, reduce(vcat, getproperty(data_det_after_qc, e_type)))
                 end
 
-                @debug_plot @process_step "$e_type PE uncalibrated plot" begin
-                    p = LegendMakie.lplot(fit(Histogram, e_uncal,
-                                              e_type_config.simple.kwargs.initial_min_amp:0.1:e_type_config.simple.kwargs.initial_max_amp),
-                                          xlabel = "Peak Amplitudes (ADC)", ylabel = "Counts / 0.1", label = "Uncalibrated PE",
-                                          yscale = log10,
-                                          title = get_plottitle(filekey_det, part, det, "PE Uncalibrated";
-                                                                additional_type = string(e_type)))
-                    save_plot(p, l200, part, filekey_det, det, Symbol("pe_uncalibrated_$(e_type)"))
-                end
-
                 # get uncalibrated energy function
                 plot_one_pe_search_range() = begin
                     lo = e_type_config.simple.kwargs.initial_min_amp
@@ -215,6 +205,21 @@ function p_process_sipm_calibration_phy(processing_config, l200::LegendData, per
                                           title = get_plottitle(filekey_det, part, det, "Simple Calibration";
                                                                 additional_type = string(e_type)))
                     save_plot(p, l200, part, filekey_det, det, Symbol("sipm_simple_calibration_$(e_type)"))
+                end
+                # all triggers in ADC with the noise and trigger cuts
+                @debug_plot @process_step "$e_type PE uncalibrated plot" begin
+                    p = LegendMakie.lplot(fit(Histogram, e_uncal, 0.0:0.1:e_type_config.simple.kwargs.initial_max_amp),
+                                          xlabel = "Peak Amplitudes (ADC)", ylabel = "Counts / 0.1", label = "Uncalibrated PE",
+                                          yscale = log10, legend_position = :none,
+                                          title = get_plottitle(filekey_det, part, det, "PE Uncalibrated";
+                                                                additional_type = string(e_type)))
+                    ax = Makie.current_axis()
+                    Makie.vlines!(ax, [result_simple.noise_threshold], color = :green, linewidth = 1.5,
+                                  label = "Noise cut: $(round(result_simple.noise_threshold, digits = 1)) ADC")
+                    Makie.vlines!(ax, [result_simple.trigger_threshold], color = :orange, linewidth = 1.5,
+                                  label = "Trigger cut: $(round(result_simple.trigger_threshold, digits = 1)) ADC")
+                    Makie.axislegend(ax, framevisible = true, framewidth = 0, position = :rt)
+                    save_plot(p, l200, part, filekey_det, det, Symbol("pe_uncalibrated_$(e_type)"))
                 end
                 yield()
 
@@ -252,8 +257,11 @@ function p_process_sipm_calibration_phy(processing_config, l200::LegendData, per
                 log_info = log_nt((det, detector_status(chinfo_det.usability), part, ProcessStatus(1), e_type, result_fit.positions[1],
                                    result_fit.resolutions_cal[1], result_calib.par[2], "-"))
 
+                # the trigger threshold in PE with the final calibration, the one applied to the trigger amplitudes
+                trigger_threshold_cal = ustrip(u"e_au", mvalue(sum(p * result_simple.trigger_threshold^(i - 1) for (i, p) in enumerate(result_calib.par))))
                 result_energy = (m_cal_simple = result_simple.c, n_cal_simple = result_simple.offset,
                                  noise_threshold = result_simple.noise_threshold, noise_threshold_cal = result_simple.noise_threshold_cal,
+                                 trigger_threshold = result_simple.trigger_threshold, trigger_threshold_cal = trigger_threshold_cal,
                                  cal = result_calib, fit = result_fit)
 
                 # add results to dict
