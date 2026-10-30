@@ -111,10 +111,12 @@ function process_aoe_calibration_cut_cal(processing_config, l200::LegendData, pe
             for aoe_type in aoe_types
                 if haskey(pars_db[det], aoe_type)
                     pars_db_det_aoe_type = pars_db[det][aoe_type]
+                    # the Compton band fit is stored in `correction`, see `result` of a processed A/E type
+                    correction = pars_db_det_aoe_type.correction
                     log_ch = log_nt_cal((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability),
                                          ProcessStatus(1), aoe_type,
-                                         length(pars_db_det_aoe_type.µ_compton.µ), get(pars_db_det_aoe_type.gof, :median_residuals, NaN),
-                                         get(pars_db_det_aoe_type.gof, :std_residuals, NaN), get(pars_db_det_aoe_type.ctc, :fct, NaN),
+                                         length(correction.compton_bands.e), get(correction.gof, :median_residuals, NaN),
+                                         get(correction.gof, :std_residuals, NaN), get(pars_db_det_aoe_type.ctc, :fct, NaN),
                                          "Already processed --> skipped."))
                     processed_dict[aoe_type] = false
                     log_info_dict[aoe_type] = log_ch
