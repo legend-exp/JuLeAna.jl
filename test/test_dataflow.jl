@@ -371,6 +371,39 @@ const REPORT = """
         @test err isa TaskFailedException && err.task.exception isa ProcessingStopped
         @test isempty(queue.waiting)
         put!(pool, held)
+
+        # in `run_processing`, the items of b (b → c) overtake the waiting items of a
+        original_pool = ppt_worker_pool()
+        ppt_worker_pool!(FlexWorkerPool(withmyid = true, label = "worker queue test"; maxoccupancy = 1))
+        try
+            Row = NamedTuple{(:Detector, :usability, :Status, :Error)}
+            started = Symbol[]
+            started_lock = ReentrantLock()
+            function items_step(name)
+                return function (cfg, l200, period, run; reprocess::Bool = false)
+                    # b queues its items while the first item of a runs and the other two wait
+                    name === :b && @assert waituntil(() -> !isempty(started) && length(JuLeAna.WORKER_QUEUE[].waiting) == 2)
+                    parallel([(detector = Symbol(name, i), usability = :on) for i in 1:3], Row) do itr
+                        lock(() -> push!(started, name), started_lock)
+                        sleep(0.3)
+                        (processed = true, log = Row((itr.detector, :on, 1, "")))
+                    end
+                    return nothing
+                end
+            end
+            spec(name, rank, deps = Symbol[]) = ProcessorSpec(; name, level = :run, category = :cal, rank, dependencies = deps)
+            cfg = ProcessingConfig(; processors = Dict(:a => spec(:a, 1), :b => spec(:b, 2), :c => spec(:c, 3, [:b])),
+                                   p_processors = Dict{Symbol,ProcessorSpec}())
+            steps = [:a, :b, :c]
+            processors = Dict{Symbol,Any}(:a => items_step(:a), :b => items_step(:b),
+                                          :c => (cfg, l200, period, run; reprocess = false) -> nothing)
+            run_processing(cfg, FakeData(), [DataPeriod(3)], steps, Symbol[],
+                           stub_status([DataPeriod(3)], [DataRun(1)], steps, Symbol[])...;
+                           processors)
+            @test started == [:a, :b, :b, :b, :a, :a]
+        finally
+            ppt_worker_pool!(original_pool)
+        end
     end
 
     @testset "stored_detectors" begin
