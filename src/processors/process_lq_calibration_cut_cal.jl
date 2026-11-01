@@ -87,7 +87,9 @@ function process_lq_calibration_cut_cal(processing_config, l200::LegendData, per
 
         @info "Processing detector $det ($ch)"
 
-        pars_db_ch = get(pars_db, det, PropDict())
+        # keyed by detector, as `create_pars` expects
+        pars_db_ch = PropDict()
+        pars_db_ch[det] = get(pars_db, det, PropDict())
 
         result_dict = Dict{Symbol,NamedTuple}()
         log_info_dict = Dict{Symbol,NamedTuple}()
