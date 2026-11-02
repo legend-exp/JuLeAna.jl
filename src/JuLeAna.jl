@@ -37,16 +37,17 @@ using LegendDataManagement.LDMUtils: LDMUtils, create_logtbl, create_metadatatbl
                                      get_plottitle, get_preportfilename, get_rreportfilename, get_totalTimer, savelfig, writevalidity
 using LegendDataTypes: LegendDataTypes, decode_data, fast_flatten
 using LegendDSP: LegendDSP, DSPConfig, dsp_decay_times, dsp_icpc_compressed, dsp_pmts, dsp_qc_flt_optimization_compressed,
-                 dsp_qdrift_flt_optimization, dsp_sipm_compressed
+                 dsp_qdrift_flt_optimization, dsp_sipm_compressed, dsp_sipm_template_compressed
 using LegendEventAnalysis: LegendEventAnalysis, TimeEvolution, calibrate_all, calibrate_ged_detector_data, flag_coincidences, rate,
                            relative, smooth
 using LegendHDF5IO: LegendHDF5IO, delete_entry!, lh5open
 import LegendMakie
 using LegendSpecFits: LegendSpecFits, autocal_energy, ctc_energy, cut_single_peak, fit_aoe_compton, fit_aoe_compton_combined,
                       fit_aoe_corrections, fit_calibration, fit_enc_sigmas, fit_fwhm, fit_fwhm_ft, fit_peaks, fit_sf_wl,
-                      fit_single_trunc_gauss, fit_sipm_spectrum, fit_sipm_threshold, fit_sipm_wl, generate_aoe_compton_bands,
-                      get_continuum_survival_fraction, get_low_aoe_cut, get_peak_survival_fraction, get_peaks_survival_fractions,
-                      lq_ctc_correction, lq_norm, peakhists_gamma, set_timelimit, simple_calibration, sipm_simple_calibration
+                      fit_single_trunc_gauss, fit_sipm_kernel, fit_sipm_spectrum, fit_sipm_template, fit_sipm_threshold, fit_sipm_wl,
+                      generate_aoe_compton_bands, get_continuum_survival_fraction, get_low_aoe_cut, get_peak_survival_fraction,
+                      get_peaks_survival_fractions, lq_ctc_correction, lq_norm, peakhists_gamma, set_timelimit, simple_calibration,
+                      sipm_simple_calibration
 using Base.ScopedValues: ScopedValue, with
 using Distributed: Distributed, AbstractWorkerPool, RemoteException, myid, nprocs, nworkers, procs, remotecall_fetch, workers
 using Logging: Logging, AbstractLogger, LogLevel, global_logger
@@ -127,6 +128,7 @@ include("processors/p_process_lq_calibration_cut_cal.jl")
 include("processors/p_process_psd_efficiencies_cal.jl")
 include("processors/p_process_sipm_calibration_phy.jl")
 include("processors/p_process_sipm_optimization_phy.jl")
+include("processors/p_process_sipm_template_phy.jl")
 include("processors/p_process_skm_phy.jl")
 include("processors/p_process_stability_plots_phy.jl")
 include("processors/process_aoe_calibration_cut_cal.jl")
@@ -149,6 +151,7 @@ include("processors/process_qcs_cal.jl")
 include("processors/process_qcs_phy.jl")
 include("processors/process_sipm_calibration_phy.jl")
 include("processors/process_sipm_optimization_phy.jl")
+include("processors/process_sipm_template_phy.jl")
 include("processors/process_stability_plots_phy.jl")
 
 include("using_packages.jl")
