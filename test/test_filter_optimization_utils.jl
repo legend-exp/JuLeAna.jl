@@ -1,4 +1,4 @@
-# This file is a part of Juleana.jl, licensed under the MIT License (MIT).
+# This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
 
 using Test
 using LegendDataManagement, LegendDSP, LegendSpecFits, LegendHDF5IO
@@ -9,10 +9,10 @@ import Measurements
 import LegendMakie, Makie
 using Measurements: value as mvalue
 
-# stand-in for the logging helper of src/log_texts.jl
-truncate_error(e::Exception, max_length::Int = 1000) = first(sprint(showerror, e), max_length)
-
-include(joinpath(@__DIR__, "..", "src", "filter_optimization_utils.jl"))
+using JuLeAna
+using JuLeAna: DEP_WINDOW, ELECTRON_MASS_ENERGY, crosscheck_optimum, crosscheck_peak_figure, crosscheck_warning, fit_crosscheck_peak,
+               limit_peak_waveforms, optimize_channel_filter, run_filter_optimization_channel, snap_seed, try_fit_crosscheck_peak,
+               write_fltopt_tables
 
 @testset "filter optimization utils" begin
     @testset "constants" begin
@@ -176,7 +176,7 @@ include(joinpath(@__DIR__, "..", "src", "filter_optimization_utils.jl"))
             fig = crosscheck_peak_figure(failed, fit, status; title = "failed")
             @test fig isa Makie.Figure
             ax = only(filter(x -> x isa Makie.Axis, fig.content))
-            @test any(p -> p isa Makie.Text && occursin("failed: ArgumentError: Only", only(p.text[])), ax.scene.plots)
+            @test any(p -> p isa Makie.Text && occursin(r"failed: ArgumentError.*Only", only(p.text[])), ax.scene.plots)
         end
     end
 
