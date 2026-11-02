@@ -9,6 +9,7 @@ are evaluated on the `jldsp` data. Pulser events are flagged by coincidence of t
 timestamps with the timestamps of the pulser channel (`pulser.puls_detector`) in the raw data.
 The survival fraction of each flag is computed for the pulser events and for the Tl-208
 full-energy peak, which is located with a simple Th-228 calibration of the non-pulser events.
+Only the Tl-208 FEP survival fraction of `is_single_pulse` has an uncertainty; it is `NaN` for the other flags.
 A detector with fewer than 5000 events fails. A warning is logged if single-pulse events fail
 the `is_valid_e` flag.
 
@@ -155,12 +156,14 @@ function process_qcs_cal(processing_config, l200::LegendData, period::DataPeriod
         fep_sf = @process_step "Tl-208 FEP survival fractions" begin
             fep_idx = findfirst(==(:Tl208FEP), Symbol.(energy_config_det.th228_names))
             e_cal = e_uncal .* result_simple.c
+            # Uncertainty only for is_single_pulse
             fep_sf_values = map(flag_names) do flag_name
                 result_fep, _ = get_peak_survival_fraction(e_cal, mvalue(energy_config_det.th228_lines[fep_idx]),
                                                            (energy_config_det.left_window_sizes[fep_idx],
                                                             energy_config_det.right_window_sizes[fep_idx]),
                                                            getproperty(qc_flags, flag_name)[valid_energy];
-                                                           fit_func = Symbol(energy_config_det.th228_fit_func[fep_idx]), uncertainty = true)
+                                                           fit_func = Symbol(energy_config_det.th228_fit_func[fep_idx]),
+                                                           uncertainty = flag_name == :is_single_pulse)
                 return result_fep.sf
             end
             NamedTuple{Tuple(flag_names)}(Tuple(fep_sf_values))
@@ -194,9 +197,10 @@ function process_qcs_cal(processing_config, l200::LegendData, period::DataPeriod
         end
 
         @debug_plot @process_step "survival fraction plot" begin
-            # plot survival fractions for the flags used by is_single_pulse
-            plot_flag_names = Symbol[first(typeof(path).parameters[1])
-                                     for path in PropertyFunctions.input_property_paths(single_pulse_pf)]
+            # plot survival fractions for is_single_pulse and its component flags
+            plot_flag_names = [Symbol[first(typeof(path).parameters[1])
+                                      for path in PropertyFunctions.input_property_paths(single_pulse_pf)];
+                               :is_single_pulse]
             x = collect(eachindex(plot_flag_names))
             pulser_sf_plot = mvalue.(ustrip.(u"percent", [getproperty(pulser_sf, flag_name) for flag_name in plot_flag_names]))
             fep_sf_plot = mvalue.(ustrip.(u"percent", [getproperty(fep_sf, flag_name) for flag_name in plot_flag_names]))
@@ -204,6 +208,7 @@ function process_qcs_cal(processing_config, l200::LegendData, period::DataPeriod
             ax = Makie.Axis(fig[1, 1], title = get_plottitle(filekey, det, "QC Survival Fractions"), xlabel = "QC flag",
                             ylabel = "Survival fraction (%)", xticks = (x, string.(plot_flag_names)), xticklabelrotation = pi / 3,
                             limits = ((0.3, length(plot_flag_names) + 0.7), nothing))
+            Makie.vspan!(ax, length(plot_flag_names) - 0.5, length(plot_flag_names) + 0.7; color = (:gray, 0.15))
             Makie.scatter!(ax, x .- 0.2, pulser_sf_plot, markersize = 12, color = LegendMakie.AchatBlue, label = "Pulser")
             Makie.scatter!(ax, x .+ 0.2, fep_sf_plot, markersize = 12, color = LegendMakie.BEGeOrange, label = "Tl-208 FEP")
             Makie.axislegend(ax, position = :lb, orientation = :horizontal, framevisible = true, framecolor = :lightgray)
