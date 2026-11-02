@@ -148,15 +148,17 @@ function process_qcs_phy(processing_config, l200::LegendData, period::DataPeriod
         survival_fractions = (pulser = pulser_sf, forced_trigger = forced_trigger_sf)
 
         @process_step "pulser survival fraction plot" begin
-            # plot pulser survival fractions for the flags used by is_single_pulse
-            plot_flag_names = Symbol[first(typeof(path).parameters[1])
-                                     for path in PropertyFunctions.input_property_paths(single_pulse_pf)]
+            # plot pulser survival fractions for is_single_pulse and its component flags
+            plot_flag_names = [Symbol[first(typeof(path).parameters[1])
+                                      for path in PropertyFunctions.input_property_paths(single_pulse_pf)];
+                               :is_single_pulse]
             x = collect(eachindex(plot_flag_names))
             pulser_sf_plot = mvalue.(ustrip.(u"percent", [getproperty(pulser_sf, flag_name) for flag_name in plot_flag_names]))
             fig = Makie.Figure(size = (max(800, 55 * length(plot_flag_names)), 500))
             ax = Makie.Axis(fig[1, 1], title = get_plottitle(filekey, det, "Pulser QC Survival Fractions"), xlabel = "QC flag",
                             ylabel = "Survival fraction (%)", xticks = (x, string.(plot_flag_names)), xticklabelrotation = pi / 3,
                             limits = ((0.3, length(plot_flag_names) + 0.7), nothing))
+            Makie.vspan!(ax, length(plot_flag_names) - 0.5, length(plot_flag_names) + 0.7; color = (:gray, 0.15))
             Makie.scatter!(ax, x, pulser_sf_plot, markersize = 12, color = LegendMakie.AchatBlue, label = "Pulser")
             LegendMakie.add_watermarks!(final = true)
             save_plot(fig, l200, filekey, det, :qc_survival_fractions)
@@ -174,6 +176,7 @@ function process_qcs_phy(processing_config, l200::LegendData, period::DataPeriod
             ax = Makie.Axis(fig[1, 1], title = get_plottitle(filekey, det, "Forced-trigger QC Survival Fractions"), xlabel = "QC flag",
                             ylabel = "Survival fraction (%)", xticks = (x_forced, string.(forced_plot_flag_names)),
                             xticklabelrotation = pi / 3, limits = ((0.3, length(forced_plot_flag_names) + 0.7), nothing))
+            Makie.vspan!(ax, length(forced_plot_flag_names) - 0.5, length(forced_plot_flag_names) + 0.7; color = (:gray, 0.15))
             Makie.scatter!(ax, x_forced, forced_trigger_sf_plot, markersize = 12, color = LegendMakie.BEGeOrange, label = "Forced trigger")
             LegendMakie.add_watermarks!(final = true)
             save_plot(fig, l200, filekey, det, :qc_survival_fractions_forced_trigger)
