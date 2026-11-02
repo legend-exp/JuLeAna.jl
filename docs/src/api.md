@@ -155,10 +155,6 @@ JuLeAna.detector_filter
 ```@docs
 parallel
 failure_log
-master_status
-JuLeAna.timing_table
-JuLeAna.process_skipped
-detector_status
 truncate_string
 truncate_error
 load_qc_evaluator
@@ -167,5 +163,4 @@ JuLeAna.detector_selected
 JuLeAna.write_pars
 JuLeAna.write_validity
 JuLeAna.make_par_dir
-JuLeAna.write_report
 ```
