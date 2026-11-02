@@ -25,7 +25,8 @@ variables of the processor, e.g. the raw data of a failed DSP.
 # Inputs
 - `raw` tier of the `phy` filekeys of the run listed in the runinfo, except the filekeys marked unprocessable
 - `dataprod_config(l200).dsp(filekey)`, `dataprod_config(l200).sipm(filekey)` and `dataprod_config(l200).pmt(filekey)`; the
-  `pars_type` of the DSP config, `"ppars"` or `"rpars"`, selects the parameters below for all detectors
+  `pars_type` of the entry of a SiPM or HPGe detector in the DSP config, else of `default`, `"ppars"` or `"rpars"`, selects its
+  parameters below. A detector whose parameters cannot be loaded fails.
 - `l200.par[pars_type, :pz]`, `l200.par[pars_type, :fltopt]`, `l200.par[pars_type, :aoeopt]` and `l200.par[pars_type, :sipmopt]`
 - the QC evaluator from `load_qc_evaluator(l200, filekey)`
 
@@ -66,19 +67,32 @@ function process_dsp_phy(processing_config, l200::LegendData, period::DataPeriod
 
     f_evaluate_qc = load_qc_evaluator(l200, filekey)
 
-    pars_type = Symbol(get(dsp_config_pd, :pars_type, ""))
-    pars_type in (:ppars, :rpars) ||
-        throw(ArgumentError("`pars_type` of the DSP config of $filekey must be \"ppars\" or \"rpars\", got $(repr(get(dsp_config_pd, :pars_type, nothing)))"))
-    @info "Use $(pars_type == :ppars ? "partition" : "run")-based pars from $pars_type for DSP optimization parameters"
+    # the parameter type of each SiPM and HPGe detector: `pars_type` of its entry in the DSP config, else of `default`
+    pars_types = Dict(det => Symbol(get(get(dsp_config_pd, det, PropDict()), :pars_type, get(dsp_config_pd.default, :pars_type, "")))
+                      for det in vcat(chinfo.detector, chinfo_sipm.detector))
+    issubset(values(pars_types), (:ppars, :rpars)) ||
+        throw(ArgumentError("`pars_type` of the DSP config of $filekey must be \"ppars\" or \"rpars\", got $(join(repr.(unique(values(pars_types))), ", "))"))
+    @info "Use $(join(unique(values(pars_types)), " and ")) for the DSP parameters"
 
-    pars_tau = get_values(l200.par[pars_type, :pz](filekey))
-    @debug "Loaded decay times"
+    # the parameters of each type in use; a type that cannot be loaded fails its detectors
+    pars = Dict(t => try
+                    (tau = get_values(l200.par[t, :pz](filekey)),
+                     opt = get_values(merge(l200.par[t, :fltopt](filekey), l200.par[t, :aoeopt](filekey))))
+                catch e
+                    e isa InterruptException && rethrow()
+                    e
+                end
+                for t in unique(pars_types[det] for det in chinfo.detector))
+    @debug "Loaded decay times and optimization parameters"
 
-    pars_fltoptimization = get_values(merge(l200.par[pars_type, :fltopt](filekey), l200.par[pars_type, :aoeopt](filekey)))
-    @debug "Loaded optimization parameters"
-
-    make_par_dir(data_path(l200.par[pars_type, :sipmopt]))
-    pars_sipm = get_values(l200.par[pars_type, :sipmopt](filekey))
+    pars_sipm = Dict(t => try
+                         make_par_dir(data_path(l200.par[t, :sipmopt]))
+                         get_values(l200.par[t, :sipmopt](filekey))
+                     catch e
+                         e isa InterruptException && rethrow()
+                         e
+                     end
+                     for t in unique(pars_types[det] for det in chinfo_sipm.detector))
     @debug "Loaded sipm parameters"
 
     if reprocess
@@ -224,12 +238,15 @@ function process_dsp_phy(processing_config, l200::LegendData, period::DataPeriod
                         @timeit dsp_timer "$det" begin
                             # process data; a failed step fails the detector only
                             outdata_det = try
+                                pars_sipm_det = pars_sipm[pars_types[det]]
                                 dsp_meta_det = @process_step "DSP parameters of $det in $fk" begin
-                                    haskey(pars_sipm, det) || throw(ArgumentError("no thresholds for $det"))
+                                    pars_sipm_det isa Exception &&
+                                        throw(ArgumentError("cannot load the $(pars_types[det]) SiPM parameters: $(truncate_error(pars_sipm_det))"))
+                                    haskey(pars_sipm_det, det) || throw(ArgumentError("no thresholds for $det"))
                                     merge(dsp_meta_sipm.default, get(dsp_meta_sipm, det, PropDict()))
                                 end
                                 raw_data_det = @process_step "raw data loading of $det in $fk" read_ldata(l200, DataTier(:raw), fk, det)
-                                @process_step "DSP of $det in $fk" dsp_sipm_compressed(raw_data_det, dsp_meta_det, pars_sipm[det])
+                                @process_step "DSP of $det in $fk" dsp_sipm_compressed(raw_data_det, dsp_meta_det, pars_sipm_det[det])
                             catch e
                                 e isa ProcessStepError || rethrow()
                                 push!(failed_detectors, det)
@@ -263,17 +280,20 @@ function process_dsp_phy(processing_config, l200::LegendData, period::DataPeriod
                         @timeit dsp_timer "$det" begin
                             # process data; a failed step fails the detector only
                             outdata_det = try
+                                pars_det = pars[pars_types[det]]
                                 dsp_config_det = @process_step "DSP parameters of $det in $fk" begin
+                                    pars_det isa Exception &&
+                                        throw(ArgumentError("cannot load the $(pars_types[det]) parameters: $(truncate_error(pars_det))"))
                                     dsp_config_pd_det = merge(dsp_config_pd.default, get(dsp_config_pd, det, PropDict()))
-                                    haskey(pars_tau, det) || throw(ArgumentError("no decay time for $det"))
-                                    haskey(pars_fltoptimization, det) || throw(ArgumentError("no optimization parameters for $det"))
+                                    haskey(pars_det.tau, det) || throw(ArgumentError("no decay time for $det"))
+                                    haskey(pars_det.opt, det) || throw(ArgumentError("no optimization parameters for $det"))
                                     # the required optimization pars of the filters the selections of the detector require
                                     for (selection, required, label) in ((:required_fltopt_selection, :required_fltopt, "energy filter"),
                                                                          (:required_aoeopt_selection, :required_aoeopt, "A/E"))
                                         haskey(dsp_config_pd_det, selection) ||
                                             throw(ArgumentError("no `$selection` in the DSP config of $det"))
                                         ljl_propfunc(dsp_config_pd_det[selection])(chinfo_det) || continue
-                                        missing_pars = setdiff(Symbol.(dsp_config_pd_det[required]), keys(pars_fltoptimization[det]))
+                                        missing_pars = setdiff(Symbol.(dsp_config_pd_det[required]), keys(pars_det.opt[det]))
                                         isempty(missing_pars) ||
                                             throw(ArgumentError("no $label optimization parameters $(join(missing_pars, ", ")) for $det"))
                                     end
@@ -282,7 +302,7 @@ function process_dsp_phy(processing_config, l200::LegendData, period::DataPeriod
                                 @debug "Loaded DSP config: $(lstring(dsp_config_det))"
                                 raw_data_det = @process_step "raw data loading of $det in $fk" read_ldata(l200, DataTier(:raw), fk, det)
                                 @process_step "DSP of $det in $fk" begin
-                                    dsp_icpc_compressed(raw_data_det, dsp_config_det, pars_tau[det].τ, pars_fltoptimization[det];
+                                    dsp_icpc_compressed(raw_data_det, dsp_config_det, pars_det.tau[det].τ, pars_det.opt[det];
                                                         f_evaluate_qc)
                                 end
                             catch e
