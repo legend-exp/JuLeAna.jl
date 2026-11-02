@@ -25,7 +25,7 @@ variables of the processor, e.g. the raw data of a failed DSP.
 # Inputs
 - `raw` tier of the `phy` filekeys of the run listed in the runinfo, except the filekeys marked unprocessable
 - `dataprod_config(l200).dsp(filekey)`, `dataprod_config(l200).sipm(filekey)` and `dataprod_config(l200).pmt(filekey)`; the
-  `pars_type` of the entry of a SiPM or HPGe detector in the DSP config, else of `default`, `"ppars"` or `"rpars"`, selects its
+  `pars_type` of the entry of a SiPM or HPGe detector in the DSP config, else of `default`, e.g. `"ppars"` or `"rpars"`, selects its
   parameters below. A detector whose parameters cannot be loaded fails.
 - `l200.par[pars_type, :pz]`, `l200.par[pars_type, :fltopt]`, `l200.par[pars_type, :aoeopt]` and `l200.par[pars_type, :sipmopt]`
 - the QC evaluator from `load_qc_evaluator(l200, filekey)`
@@ -70,8 +70,6 @@ function process_dsp_phy(processing_config, l200::LegendData, period::DataPeriod
     # the parameter type of each SiPM and HPGe detector: `pars_type` of its entry in the DSP config, else of `default`
     pars_types = Dict(det => Symbol(get(get(dsp_config_pd, det, PropDict()), :pars_type, get(dsp_config_pd.default, :pars_type, "")))
                       for det in vcat(chinfo.detector, chinfo_sipm.detector))
-    issubset(values(pars_types), (:ppars, :rpars)) ||
-        throw(ArgumentError("`pars_type` of the DSP config of $filekey must be \"ppars\" or \"rpars\", got $(join(repr.(unique(values(pars_types))), ", "))"))
     @info "Use $(join(unique(values(pars_types)), " and ")) for the DSP parameters"
 
     # the parameters of each type in use; a type that cannot be loaded fails its detectors
