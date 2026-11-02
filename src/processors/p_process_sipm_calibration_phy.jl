@@ -18,8 +18,9 @@ detector's partition are combined and the results are valid for the whole partit
 - `l200.par.ppars.sipmcal[det, part]` (existing results, unless `reprocess` is set).
 
 # Outputs
-- `l200.par.ppars.sipmcal[det, part]`: per energy type, the simple calibration constants, the
-  noise thresholds, the peak fit result (`fit`) and the calibration curve (`cal`), written for
+- `l200.par.ppars.sipmcal[det, part]`: per energy type, the simple calibration result (`simple`), the
+  noise and trigger thresholds in PE of the final calibration, the peak fit result (`fit`) and the calibration
+  curve (`cal`), written for
   each detector as soon as it is finished; the validity of all partitions is written once at
   the end.
 - Plots per detector, partition and energy type: `pe_uncalibrated_<energy type>`,
@@ -183,16 +184,6 @@ function p_process_sipm_calibration_phy(processing_config, l200::LegendData, per
                     filter(isfinite, reduce(vcat, getproperty(data_det_after_qc, e_type)))
                 end
 
-                @debug_plot @process_step "$e_type PE uncalibrated plot" begin
-                    p = LegendMakie.lplot(fit(Histogram, e_uncal,
-                                              e_type_config.simple.kwargs.initial_min_amp:0.1:e_type_config.simple.kwargs.initial_max_amp),
-                                          xlabel = "Peak Amplitudes (ADC)", ylabel = "Counts / 0.1", label = "Uncalibrated PE",
-                                          yscale = log10,
-                                          title = get_plottitle(filekey_det, part, det, "PE Uncalibrated";
-                                                                additional_type = string(e_type)))
-                    save_plot(p, l200, part, filekey_det, det, Symbol("pe_uncalibrated_$(e_type)"))
-                end
-
                 # get uncalibrated energy function
                 plot_one_pe_search_range() = begin
                     lo = e_type_config.simple.kwargs.initial_min_amp
@@ -212,16 +203,25 @@ function p_process_sipm_calibration_phy(processing_config, l200::LegendData, per
                 # save plots for simple calibration for control
                 @debug_plot @process_step "$e_type simple calibration plot" begin
                     p = LegendMakie.lplot(report_simple, cal = true,
-                                          title = get_plottitle(filekey_det, part, det, "Simple Calibration";
+                                          title = get_plottitle(filekey_det, part, det, "Single Triggers";
                                                                 additional_type = string(e_type)))
                     save_plot(p, l200, part, filekey_det, det, Symbol("sipm_simple_calibration_$(e_type)"))
+                end
+                @debug_plot @process_step "$e_type PE uncalibrated plot" begin
+                    # all trigger amplitudes, with the noise and trigger cuts of the simple calibration
+                    p = LegendMakie.lplot(report_simple, cal = false,
+                                          h = fit(Histogram, e_uncal,
+                                                  e_type_config.simple.kwargs.initial_min_amp:0.1:e_type_config.simple.kwargs.initial_max_amp),
+                                          title = get_plottitle(filekey_det, part, det, "All Triggers";
+                                                                additional_type = string(e_type)))
+                    save_plot(p, l200, part, filekey_det, det, Symbol("pe_uncalibrated_$(e_type)"))
                 end
                 yield()
 
                 result_fit, report_fit = @process_step "$e_type peak fitting" begin
                     @debug "Fit all $e_type peaks"
-                    fit_sipm_spectrum(result_simple.pe_simple_cal, e_type_config.fit.min_pe, e_type_config.fit.max_pe;
-                                      NamedTuple(e_type_config.fit.kwargs)..., f_uncal = result_simple.f_simple_uncal, uncertainty = true)
+                    fit_sipm_spectrum(report_simple.pe_simple_cal, e_type_config.fit.min_pe, e_type_config.fit.max_pe;
+                                      NamedTuple(e_type_config.fit.kwargs)..., f_uncal = report_simple.f_simple_uncal, uncertainty = true)
                 end
 
                 @process_step "$e_type peak fits plot" begin
@@ -252,8 +252,11 @@ function p_process_sipm_calibration_phy(processing_config, l200::LegendData, per
                 log_info = log_nt((det, detector_status(chinfo_det.usability), part, ProcessStatus(1), e_type, result_fit.positions[1],
                                    result_fit.resolutions_cal[1], result_calib.par[2], "-"))
 
-                result_energy = (m_cal_simple = result_simple.c, n_cal_simple = result_simple.offset,
-                                 noise_threshold = result_simple.noise_threshold, noise_threshold_cal = result_simple.noise_threshold_cal,
+                # the thresholds in PE with the final calibration, the one applied to the trigger amplitudes
+                f_cal = x -> mvalue(report_calib.f_fit(x)) * u"e_au"
+                result_energy = (simple = result_simple,
+                                 noise_threshold = f_cal(result_simple.noise_threshold),
+                                 trigger_threshold = f_cal(result_simple.trigger_threshold),
                                  cal = result_calib, fit = result_fit)
 
                 # add results to dict
