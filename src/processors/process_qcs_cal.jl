@@ -9,6 +9,7 @@ are evaluated on the `jldsp` data. Pulser events are flagged by coincidence of t
 timestamps with the timestamps of the pulser channel (`pulser.puls_detector`) in the raw data.
 The survival fraction of each flag is computed for the pulser events and for the Tl-208
 full-energy peak, which is located with a simple Th-228 calibration of the non-pulser events.
+Only the Tl-208 FEP survival fraction of `is_single_pulse` has an uncertainty; it is `NaN` for the other flags.
 A detector with fewer than 5000 events fails. A warning is logged if single-pulse events fail
 the `is_valid_e` flag.
 
@@ -155,12 +156,14 @@ function process_qcs_cal(processing_config, l200::LegendData, period::DataPeriod
         fep_sf = @process_step "Tl-208 FEP survival fractions" begin
             fep_idx = findfirst(==(:Tl208FEP), Symbol.(energy_config_det.th228_names))
             e_cal = e_uncal .* result_simple.c
+            # Uncertainty only for is_single_pulse
             fep_sf_values = map(flag_names) do flag_name
                 result_fep, _ = get_peak_survival_fraction(e_cal, mvalue(energy_config_det.th228_lines[fep_idx]),
                                                            (energy_config_det.left_window_sizes[fep_idx],
                                                             energy_config_det.right_window_sizes[fep_idx]),
                                                            getproperty(qc_flags, flag_name)[valid_energy];
-                                                           fit_func = Symbol(energy_config_det.th228_fit_func[fep_idx]), uncertainty = true)
+                                                           fit_func = Symbol(energy_config_det.th228_fit_func[fep_idx]),
+                                                           uncertainty = flag_name == :is_single_pulse)
                 return result_fep.sf
             end
             NamedTuple{Tuple(flag_names)}(Tuple(fep_sf_values))
