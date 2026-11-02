@@ -25,16 +25,18 @@ variables of the processor, e.g. the raw data of a failed DSP.
 # Inputs
 - `raw` tier of the `phy` filekeys of the run listed in the runinfo, except the filekeys marked unprocessable
 - `dataprod_config(l200).dsp(filekey)`, `dataprod_config(l200).sipm(filekey)` and `dataprod_config(l200).pmt(filekey)`
-- the decay time, the optimization parameters and the SiPM thresholds of each detector from
-  `get_dsp_pars(l200, filekey, detector, pars_cat)` with `pars_cat` `:pz`, `:fltopt`, `:aoeopt` and `:sipmopt`, read from the
+- the decay time, the optimization parameters, the SiPM thresholds and the SiPM template pars of each detector from
+  `get_dsp_pars(l200, filekey, detector, pars_cat)` with `pars_cat` `:pz`, `:fltopt`, `:aoeopt`, `:sipmopt` and `:sipmtmpl`, read from the
   `pars_type` that the DSP config sets for the detector, e.g. `ppars` or `rpars`. A detector whose parameters cannot be loaded
-  fails. Filter parameters that are not set for an HPGe detector take the defaults of its DSP configuration.
+  fails. Filter parameters that are not set for an HPGe detector take the defaults of its DSP configuration. A SiPM channel
+  without template pars is processed without the inverse kernel and listed in the report (status warning).
 - the QC evaluator from `load_qc_evaluator(l200, filekey)`
 
 # Outputs
 - `jldsp` tier file for each filekey, with one table per detector
-- run report `:dsp_phy`, with one row per filekey (number of processed detectors, failed detectors, time, allocations) and the
-  time of each detector summed over the filekeys (see [`JuLeAna.timing_table`](@ref))
+- run report `:dsp_phy`, with one row per filekey (number of processed detectors, failed detectors, SiPMs processed without
+  template pars, time, allocations) and the time of each detector summed over the filekeys (see [`JuLeAna.timing_table`](@ref));
+  a filekey with SiPMs without template pars has status warning
 
 # Keywords
 - `reprocess`: remove the existing `jldsp` files and process all detectors again; otherwise detectors already present in a file are skipped
@@ -75,8 +77,8 @@ function process_dsp_phy(processing_config, l200::LegendData, period::DataPeriod
     end
 
     # create log line Tuple
-    log_nt = NamedTuple{(:Filekey, :Status, Symbol("Number of Processed Detectors"), Symbol("Failed Detectors"), Symbol("Total Time"),
-                         Symbol("Total Allocated"), :Error)}
+    log_nt = NamedTuple{(:Filekey, :Status, Symbol("Number of Processed Detectors"), Symbol("Failed Detectors"), Symbol("Without Template"),
+                         Symbol("Total Time"), Symbol("Total Allocated"), :Error)}
 
     # get worker pool
 
@@ -94,6 +96,7 @@ function process_dsp_phy(processing_config, l200::LegendData, period::DataPeriod
         n_detectors = 0
         # detector ids of failed detectors
         failed_detectors = DetectorId[]
+        no_template_detectors = DetectorId[]
         # start processing
         write_files(dspfilename; use_cache, mode = CreateOrModify()) do outfilename
             @timeit dsp_timer "Startup" begin
@@ -214,7 +217,11 @@ function process_dsp_phy(processing_config, l200::LegendData, period::DataPeriod
                                 dsp_meta_det, pars_sipm_det = @process_step "DSP parameters of $det in $fk" begin
                                     thresholds = get_dsp_pars(l200, filekey, det, :sipmopt)
                                     isempty(thresholds) && throw(ArgumentError("no thresholds for $det"))
-                                    (merge(dsp_meta_sipm.default, get(dsp_meta_sipm, det, PropDict())), thresholds)
+                                    (merge(dsp_meta_sipm.default, get(dsp_meta_sipm, det, PropDict())), merge(thresholds, get_dsp_pars(l200, filekey, det, :sipmtmpl)))
+                                end
+                                if !haskey(pars_sipm_det, :kernel)
+                                    @warn "No template pars for detector $det ($ch), MWA chain without the inverse kernel"
+                                    push!(no_template_detectors, det)
                                 end
                                 raw_data_det = @process_step "raw data loading of $det in $fk" read_ldata(l200, DataTier(:raw), fk, det)
                                 @process_step "DSP of $det in $fk" dsp_sipm_compressed(raw_data_det, dsp_meta_det, pars_sipm_det)
@@ -302,9 +309,10 @@ function process_dsp_phy(processing_config, l200::LegendData, period::DataPeriod
         total_allocated = Base.format_bytes(TimerOutputs.totallocated(dsp_timer))
 
         # create log
-        log_fk = log_nt((fk, ProcessStatus(ifelse(isempty(failed_detectors), 1, 0)),
+        status = !isempty(failed_detectors) ? process_failed : !isempty(no_template_detectors) ? process_warning : process_succeeded
+        log_fk = log_nt((fk, status,
                          "$(n_detectors)/$(length(chinfo)+length(get(dsp_config_pd, :additional_detectors, []))+length(chinfo_sipm)+length(chinfo_pmts))",
-                         string.(failed_detectors), total_time, total_allocated, ""))
+                         string.(failed_detectors), string.(no_template_detectors), total_time, total_allocated, ""))
 
         return (timer = dsp_timer, log = log_fk, processed = true)
     end
