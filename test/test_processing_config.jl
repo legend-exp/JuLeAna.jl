@@ -358,7 +358,7 @@ const STUB_PROCESSORS = Dict{Symbol,Any}(:process_a => process_a, :p_process_b =
                            vcat(collect(values(shipped.processors)), collect(values(shipped.p_processors))))
         @test all(s -> s.detectors isa String, selecting)
         @test isnothing(shipped.processors[:process_evt_phy].detectors)
-        @test shipped.processors[:process_energy_calibration_cal].detectors == "processable"
+        @test shipped.processors[:process_energy_calibration_cal].detectors == "processable && usability != :off"
         @test shipped.p_processors[:p_process_skm_phy].detectors == "true"
 
         # the expressions use columns of the channel info table only
@@ -370,7 +370,7 @@ const STUB_PROCESSORS = Dict{Symbol,Any}(:process_a => process_a, :p_process_b =
                                is_bb_like = fill(false, 4), det_type = fill(:icpc, 4))
         selected(name) = JuLeAna.detector_filter(shipped, name)(chinfo).detector
         @test all(s -> !isempty(selected(s.name)), selecting)
-        @test selected(:process_energy_calibration_cal) == [:a, :b, :c]
+        @test selected(:process_energy_calibration_cal) == [:a, :b]
         @test selected(:process_aoe_optimization_cal) == [:a]
         @test selected(:p_process_aoe_optimization_cal) == [:a]
         @test selected(:process_lq_calibration_cut_cal) == [:a]

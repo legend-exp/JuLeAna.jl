@@ -159,9 +159,10 @@ Some processors select detectors with the `detectors` field:
   a column that does not exist throws an error when the processor starts. A processor
   that selects detectors and has no `detectors` entry stops with an error when it starts.
   `process_evt_phy` does not select detectors and ignores the field. The shipped
-  config sets `"processable"` for all processors except the PSD processors, which also
-  require a valid `low_aoe_status` or `lq_status` (and `usability == :on` at run level),
-  and `process_dsp_aux_phy` and `p_process_skm_phy`, which keep all rows.
+  config, `config/processing_config.yaml`, combines `processable` with the usability a
+  processor needs, for example `usability == :on && psd_usability == :on` for the A/E and
+  LQ cuts and the PSD efficiencies; `process_dsp_aux_phy` and `p_process_skm_phy` keep
+  all rows.
 
 Two fields are optional:
 

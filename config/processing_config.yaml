@@ -173,7 +173,7 @@ processors:
       - process_qcs_cal
 
   process_energy_calibration_cal:
-    detectors: "processable"
+    detectors: "processable && usability != :off"
     report_status:
       on: {warning: failure, failure: failure}
       ac: {warning: warning, failure: failure}
@@ -190,7 +190,7 @@ processors:
       - process_ct_correction_cal
 
   process_aoe_calibration_cut_cal:
-    detectors: "processable && usability == :on && (low_aoe_status == :valid || low_aoe_status == :present)"
+    detectors: "processable && usability == :on && psd_usability == :on"
     report_status:
       on: {warning: failure, failure: failure}
       ac: {warning: warning, failure: failure}
@@ -207,7 +207,7 @@ processors:
       - process_energy_calibration_cal
 
   process_lq_calibration_cut_cal:
-    detectors: "processable && usability == :on && (lq_status == :valid || lq_status == :present)"
+    detectors: "processable && usability == :on && psd_usability == :on"
     report_status:
       on: {warning: failure, failure: failure}
       ac: {warning: warning, failure: failure}
@@ -224,7 +224,7 @@ processors:
       - process_energy_calibration_cal
 
   process_psd_efficiencies_cal:
-    detectors: "processable && usability == :on"
+    detectors: "processable && usability == :on && psd_usability == :on"
     report_status:
       on: {warning: failure, failure: failure}
       ac: {warning: warning, failure: failure}
@@ -281,7 +281,7 @@ processors:
     dependencies: []
 
   process_sipm_optimization_phy:
-    detectors: "processable"
+    detectors: "processable  && usability == :on"
     report_status:
       on: {warning: failure, failure: failure}
       ac: {warning: warning, failure: failure}
@@ -338,7 +338,7 @@ processors:
       - process_dsp_phy
 
   process_sipm_calibration_phy:
-    detectors: "processable"
+    detectors: "processable && usability == :on"
     report_status:
       on: {warning: failure, failure: failure}
       ac: {warning: warning, failure: failure}
@@ -432,7 +432,7 @@ p_processors:
       - p_process_decay_time_cal
 
   p_process_aoe_optimization_cal:
-    detectors: "processable && usability == :on && (low_aoe_status == :valid || low_aoe_status == :present)"
+    detectors: "processable && usability == :on && psd_usability == :on"
     report_status:
       on: {warning: failure, failure: failure}
       ac: {warning: warning, failure: failure}
@@ -467,7 +467,7 @@ p_processors:
       - process_energy_calibration_cal
 
   p_process_aoe_calibration_cut_cal:
-    detectors: "processable && usability == :on && (low_aoe_status == :valid || low_aoe_status == :present)"
+    detectors: "processable && usability == :on && psd_usability == :on"
     report_status:
       on: {warning: failure, failure: failure}
       ac: {warning: warning, failure: failure}
@@ -484,7 +484,7 @@ p_processors:
       - process_energy_calibration_cal
 
   p_process_aoe_cut_cal:
-    detectors: "processable && usability == :on && (low_aoe_status == :valid || low_aoe_status == :present)"
+    detectors: "processable && usability == :on && psd_usability == :on"
     report_status:
       on: {warning: failure, failure: failure}
       ac: {warning: warning, failure: failure}
@@ -502,7 +502,7 @@ p_processors:
       - p_process_aoe_calibration_cut_cal
 
   p_process_lq_calibration_cut_cal:
-    detectors: "processable && usability == :on && (lq_status == :valid || lq_status == :present)"
+    detectors: "processable && usability == :on && psd_usability == :on"
     report_status:
       on: {warning: failure, failure: failure}
       ac: {warning: warning, failure: failure}
@@ -520,7 +520,7 @@ p_processors:
       - p_process_energy_cal
 
   p_process_psd_efficiencies_cal:
-    detectors: "processable && usability == :on"
+    detectors: "processable && usability == :on && psd_usability == :on"
     report_status:
       on: {warning: failure, failure: failure}
       ac: {warning: warning, failure: failure}
@@ -539,7 +539,7 @@ p_processors:
       - p_process_aoe_cut_cal
 
   p_process_sipm_optimization_phy:
-    detectors: "processable"
+    detectors: "processable && usability == :on"
     report_status:
       on: {warning: failure, failure: failure}
       ac: {warning: warning, failure: failure}
@@ -556,7 +556,7 @@ p_processors:
       - process_dsp_aux_phy
 
   p_process_sipm_calibration_phy:
-    detectors: "processable"
+    detectors: "processable && usability == :on"
     report_status:
       on: {warning: failure, failure: failure}
       ac: {warning: warning, failure: failure}
