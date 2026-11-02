@@ -1,42 +1,46 @@
 """
     process_dsp_cal(processing_config, l200::LegendData, period::DataPeriod, run::DataRun;
         reprocess::Bool=false, timeout::Real=0,
-        max_wvfs::Int=10000, use_partition_pars::Bool=true)
+        max_wvfs::Int=10000)
 
 Run the DSP on the `cal` raw data of the HPGe detectors (`geds`) of a run.
 
 For every raw `cal` file of the run, each detector is processed with its DSP configuration, its
-pole-zero decay time, and its energy and A/E filter optimization parameters. A detector is
-skipped and reported as failed if the decay time or the optimization parameters are missing,
-if its DSP configuration has no `required_fltopt_selection` or `required_aoeopt_selection`, if
-a parameter listed in `required_fltopt` (or `required_aoeopt`) is missing for a detector whose
+pole-zero decay time, and its energy and A/E filter optimization parameters, in three
+[`@process_step`](@ref)s: `DSP parameters of <detector> in <filekey>`, `raw data loading of
+<detector> in <filekey>` and `DSP of <detector> in <filekey>`. A detector fails, and the
+others go on, if the decay time or the optimization parameters are missing, if its DSP
+configuration has no `required_fltopt_selection` or `required_aoeopt_selection`, if a
+parameter listed in `required_fltopt` (or `required_aoeopt`) is missing for a detector whose
 channel info row satisfies `required_fltopt_selection` (or `required_aoeopt_selection`), or if
-its DSP throws an error. The selections are strings of `LegendDataManagement.ljl_propfunc`
-expressions, e.g.
+its raw data or its DSP throws an error. The selections are strings of
+`LegendDataManagement.ljl_propfunc` expressions, e.g.
 `"usability == :on && (low_aoe_status == :valid || low_aoe_status == :present)"`.
+[`run_step`](@ref) with `detectors` and `debug = true` captures each failed step of these
+detectors with the variables of the processor, e.g. the raw data of a failed DSP.
 
 # Inputs
 - `raw` tier of the `cal` filekeys of the run listed in the runinfo, except the filekeys marked unprocessable
-- `dataprod_config(l200).dsp(filekey)`
-- `l200.par[pars_type, :pz]`, `l200.par[pars_type, :fltopt]` and `l200.par[pars_type, :aoeopt]`, with `pars_type` being `:ppars` if `use_partition_pars` is `true` and `:rpars` otherwise
+- `dataprod_config(l200).dsp(filekey)`; its `pars_type`, `"ppars"` or `"rpars"`, selects the parameters below
+- `l200.par[pars_type, :pz]`, `l200.par[pars_type, :fltopt]` and `l200.par[pars_type, :aoeopt]`
 - the QC evaluator from `load_qc_evaluator(l200, filekey)`
 
 # Outputs
 - `jldsp` tier file for each filekey, with one table per detector
-- run report `:dsp_cal`, with one row per filekey (number of processed detectors, failed detectors, time, allocations)
+- run report `:dsp_cal`, with one row per filekey (number of processed detectors, failed detectors, time, allocations) and the
+  time of each detector summed over the filekeys (see [`JuLeAna.timing_table`](@ref))
 
 # Keywords
 - `reprocess`: remove the existing `jldsp` files and process all detectors again; otherwise detectors already present in a file are skipped
 - `timeout`: seconds allowed per filekey in `parallel` (0 = no limit)
 - `use_cache`: write each output file to a local cache directory first and move it to its place when done; otherwise write it next to its final location (default: `true`)
 - `max_wvfs`: not used by this processor
-- `use_partition_pars`: read the decay time and optimization parameters from the partition-level parameters (`:ppars`) instead of the run-level parameters (`:rpars`)
 
 # Returns
 Return `nothing`.
 """
 function process_dsp_cal(processing_config, l200::LegendData, period::DataPeriod, run::DataRun; reprocess::Bool = false, timeout::Real = 0,
-                         max_wvfs::Int = 10000, use_partition_pars::Bool = true, use_cache::Bool = true)
+                         max_wvfs::Int = 10000, use_cache::Bool = true)
     @info "Process DSP for period $period and run $run"
 
     filekeys = filter(!in(bad_filekeys(l200; load_key = :unprocessable)), only(runinfo(l200, (period, run, :cal)).keys))
@@ -52,8 +56,10 @@ function process_dsp_cal(processing_config, l200::LegendData, period::DataPeriod
 
     f_evaluate_qc = load_qc_evaluator(l200, filekey)
 
-    pars_type = ifelse(use_partition_pars, :ppars, :rpars)
-    @info "Use $(ifelse(use_partition_pars, "partition", "run"))-based pars from $pars_type for DSP optimization parameters"
+    pars_type = Symbol(get(dsp_config_pd, :pars_type, ""))
+    pars_type in (:ppars, :rpars) ||
+        throw(ArgumentError("`pars_type` of the DSP config of $filekey must be \"ppars\" or \"rpars\", got $(repr(get(dsp_config_pd, :pars_type, nothing)))"))
+    @info "Use $(pars_type == :ppars ? "partition" : "run")-based pars from $pars_type for DSP optimization parameters"
 
     pars_tau = get_values(l200.par[pars_type, :pz](filekey))
     @debug "Loaded decay times"
@@ -105,68 +111,45 @@ function process_dsp_cal(processing_config, l200::LegendData, period::DataPeriod
                 @timeit dsp_timer "DSP" begin
                     # loop over detectors
                     @debug_progress "Filekey: $fk" for chinfo_det in chinfo
-                        ch=chinfo_det.channel
-                        det=chinfo_det.detector
-
-                        dsp_config_pd_det=merge(dsp_config_pd.default, get(dsp_config_pd, det, PropDict()))
-                        dsp_config_det=DSPConfig(dsp_config_pd_det)
-                        @debug "Loaded DSP config: $(lstring(dsp_config_det))"
+                        ch = chinfo_det.channel
+                        det = chinfo_det.detector
 
                         # check if channel can be processed
-                        detector_selected(det)||continue
-                        if "$det" in processed_detectors&&!reprocess&&!redo_detector(det)
+                        detector_selected(det) || continue
+                        if "$det" in processed_detectors && !reprocess && !redo_detector(det)
                             @info "Detector $det ($ch) already processed, skip"
-                            n_detectors+=1
-                            continue
-                        end
-
-                        # check for decay time
-                        if !haskey(pars_tau, det)
-                            @warn "No decay time for detector $det, skip detector $ch"
-                            push!(failed_detectors, det)
-                            continue
-                        end
-                        # check if channel has values for RT and FT for different filters
-                        if !haskey(pars_fltoptimization, det)
-                            @warn "No optimization parameters for detector $det, skip detector $ch"
-                            push!(failed_detectors, det)
-                            continue
-                        end
-
-                        # check if detector has all required optimization pars of the filters its selections require
-                        missing_pars=false
-                        for (selection, required, label) in ((:required_fltopt_selection, :required_fltopt, "energy filter"),
-                                                             (:required_aoeopt_selection, :required_aoeopt, "A/E"))
-                            if !haskey(dsp_config_pd_det, selection)
-                                @warn "No `$selection` in the DSP config for detector $det, skip detector $ch"
-                                missing_pars=true
-                                break
-                            end
-                            ljl_propfunc(dsp_config_pd_det[selection])(chinfo_det)||continue
-                            if !all(haskey.(Ref(pars_fltoptimization[det]), Symbol.(dsp_config_pd_det[required])))
-                                @warn "Not all required $label optimization parameters for detector $det, skip detector $ch"
-                                missing_pars=true
-                                break
-                            end
-                        end
-                        if missing_pars
-                            push!(failed_detectors, det)
+                            n_detectors += 1
                             continue
                         end
 
                         @debug "Processing detector $det ($ch)"
-                        @timeit dsp_timer "DSP $det" begin
-                            # process data
-                            outdata_det = nothing
-                            try
-                                raw_data_det = read_ldata(l200, DataTier(:raw), fk, det)
-                                outdata_det = dsp_icpc_compressed(raw_data_det, dsp_config_det, pars_tau[det].τ, pars_fltoptimization[det];
-                                                                  f_evaluate_qc = f_evaluate_qc)
-                            catch e
-                                if e isa TaskFailedException
-                                    e = e.task.exception
+                        @timeit dsp_timer "$det" begin
+                            # process data; a failed step fails the detector only
+                            outdata_det = try
+                                dsp_config_det = @process_step "DSP parameters of $det in $fk" begin
+                                    dsp_config_pd_det = merge(dsp_config_pd.default, get(dsp_config_pd, det, PropDict()))
+                                    haskey(pars_tau, det) || throw(ArgumentError("no decay time for $det"))
+                                    haskey(pars_fltoptimization, det) || throw(ArgumentError("no optimization parameters for $det"))
+                                    # the required optimization pars of the filters the selections of the detector require
+                                    for (selection, required, label) in ((:required_fltopt_selection, :required_fltopt, "energy filter"),
+                                                                         (:required_aoeopt_selection, :required_aoeopt, "A/E"))
+                                        haskey(dsp_config_pd_det, selection) ||
+                                            throw(ArgumentError("no `$selection` in the DSP config of $det"))
+                                        ljl_propfunc(dsp_config_pd_det[selection])(chinfo_det) || continue
+                                        missing_pars = setdiff(Symbol.(dsp_config_pd_det[required]), keys(pars_fltoptimization[det]))
+                                        isempty(missing_pars) ||
+                                            throw(ArgumentError("no $label optimization parameters $(join(missing_pars, ", ")) for $det"))
+                                    end
+                                    DSPConfig(dsp_config_pd_det)
                                 end
-                                @error "Error processing detector $det ($ch) in $(fk): $(truncate_error(e))"
+                                @debug "Loaded DSP config: $(lstring(dsp_config_det))"
+                                raw_data_det = @process_step "raw data loading of $det in $fk" read_ldata(l200, DataTier(:raw), fk, det)
+                                @process_step "DSP of $det in $fk" begin
+                                    dsp_icpc_compressed(raw_data_det, dsp_config_det, pars_tau[det].τ, pars_fltoptimization[det];
+                                                        f_evaluate_qc)
+                                end
+                            catch e
+                                e isa ProcessStepError || rethrow()
                                 push!(failed_detectors, det)
                                 continue
                             end
@@ -220,9 +203,7 @@ function process_dsp_cal(processing_config, l200::LegendData, period::DataPeriod
     lreport!(report, "# Results")
     lreport!(report, create_logtbl(result_dsp))
     lreport!(report, "# Total Timing")
-    lreport!(report, "```")
-    lreport!(report, "$(get_totalTimer(result_dsp))")
-    lreport!(report, "```")
+    lreport!(report, timing_table(result_dsp))
 
     @info "Write log report"
     write_report(get_rreportfilename(l200, filekey, :dsp_cal), report)

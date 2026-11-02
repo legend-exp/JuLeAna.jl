@@ -156,6 +156,7 @@ JuLeAna.detector_filter
 parallel
 failure_log
 master_status
+JuLeAna.timing_table
 JuLeAna.process_skipped
 detector_status
 truncate_string
