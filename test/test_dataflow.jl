@@ -717,6 +717,37 @@ const REPORT = """
         end
     end
 
+    @testset "item counts" begin
+        # the items of a processor that registers an `items` function are counted at the start
+        p3, runs = DataPeriod(3), DataRun.(1:2)
+        seen = Dict{Tuple{Symbol,DataRun},Any}()
+        record(name) = (cfg, l200, period, run; reprocess::Bool = false) -> (seen[(name, run)] = JuLeAna.STEP_ITEMS[]; nothing)
+        spec(name, rank) = ProcessorSpec(; name, level = :run, category = :cal, rank)
+        cfg = ProcessingConfig(; processors = Dict(:counted => spec(:counted, 1), :uncounted => spec(:uncounted, 2)),
+                               p_processors = Dict{Symbol,ProcessorSpec}(), max_parallel_steps = 1)
+        steps = [:counted, :uncounted]
+        stubs = Dict{Symbol,Any}(name => record(name) for name in steps)
+        JuLeAna.PROCESSOR_TRAITS[:counted] = merge(JuLeAna.DEFAULT_TRAITS, (; items = (cfg, l200, period, run) -> 1:(run.no + 1)))
+        try
+            run_processing(cfg, FakeData(), [p3], steps, Symbol[], stub_status([p3], runs, steps, Symbol[])...; processors = stubs)
+            @test seen == Dict((:counted, DataRun(1)) => 2, (:counted, DataRun(2)) => 3, (:uncounted, DataRun(1)) => nothing,
+                               (:uncounted, DataRun(2)) => nothing)
+            # the runs that are skipped are not counted
+            JuLeAna.PROCESSOR_TRAITS[:counted] = merge(JuLeAna.DEFAULT_TRAITS,
+                                                       (; items = (cfg, l200, period, run) -> error("counted a skipped run")))
+            @test_logs (:warn, "p03-r001-cal is not in runinfo, skip counted") match_mode = :any run_processing(cfg, NoRunData(), [p3],
+                                                                                                                steps,
+                                                                                                                Symbol[],
+                                                                                                                stub_status([p3], runs,
+                                                                                                                            steps,
+                                                                                                                            Symbol[])...;
+                                                                                                                processors = stubs)
+        finally
+            delete!(JuLeAna.PROCESSOR_TRAITS, :counted)
+        end
+        @test JuLeAna.PROCESSOR_TRAITS[:process_evt_phy].items isa Function
+    end
+
     @testset "selected_steps and runprocs_mode" begin
         processors = Dict(:run_a => ProcessorSpec(; name = :run_a, level = :run, category = :cal, rank = 1))
         p_processors = Dict(:p_part_b => ProcessorSpec(; name = :p_part_b, level = :partition, category = :cal, rank = 1))

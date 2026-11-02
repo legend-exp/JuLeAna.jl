@@ -81,14 +81,15 @@ end
 """
     PROCESSOR_TRAITS::Dict{Symbol,NamedTuple}
 
-Properties of the registered processors that [`run_step`](@ref) needs, set by
-[`register_processor!`](@ref): `output_tiers`, the data tiers the processor writes, and
-`detector_selection`, whether the processor processes the detectors that
-[`redo_detector`](@ref) names again and skips the others.
+Properties of the registered processors, set by [`register_processor!`](@ref):
+`output_tiers`, the data tiers the processor writes, and `detector_selection`, whether
+the processor processes the detectors that [`redo_detector`](@ref) names again and skips
+the others, both for [`run_step`](@ref); `items`, the function that returns the items of
+a step or `nothing`, for [`run_processing`](@ref).
 """
-const PROCESSOR_TRAITS = Dict{Symbol,NamedTuple{(:output_tiers, :detector_selection),Tuple{Vector{Symbol},Bool}}}()
+const PROCESSOR_TRAITS = Dict{Symbol,NamedTuple{(:output_tiers, :detector_selection, :items),Tuple{Vector{Symbol},Bool,Any}}}()
 
-const DEFAULT_TRAITS = (output_tiers = Symbol[], detector_selection = true)
+const DEFAULT_TRAITS = (output_tiers = Symbol[], detector_selection = true, items = nothing)
 
 """
     JuLeAna.processors(config = JuLeAna.default_config_file(); processors = PROCESSORS)

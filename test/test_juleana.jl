@@ -225,6 +225,12 @@ end
 
         @test_throws "no failure_log method for items of type Int64" parallel(identity, [1, 2], FkLog)
 
+        # a step of `run_processing` that hands over another number of items than counted at the start
+        one_item() = parallel(k -> (processed = true, log = FkLog((k, ProcessStatus(1), "a", "b", ""))), [fk], FkLog)
+        @test_logs (:debug, "parallel: 1 items, 2 counted when the processing run started") min_level = Logging.Debug match_mode = :any with(one_item,
+                                                                                                                                             JuLeAna.STEP_ITEMS =>
+                                                                                                                                                 2)
+
         viaDo = parallel([fk], FkLog; process_name = "do-block") do k
             (processed = true, log = FkLog((k, ProcessStatus(1), "a", "b", "")))
         end

@@ -91,6 +91,10 @@ const WORKER_QUEUE = ScopedValue{Union{Nothing,WorkerQueue}}(nothing)
 # Priority of the current processing step in its `WORKER_QUEUE`, set by `run_processing`.
 const STEP_PRIORITY = ScopedValue{Any}(nothing)
 
+# Number of items of the current processing step counted when `run_processing` started;
+# `nothing` when the step's items are not counted.
+const STEP_ITEMS = ScopedValue{Union{Nothing,Int}}(nothing)
+
 # Worker pool of one item of `parallel` that gets its worker from `pool` through `queue`.
 struct QueuedPool{P<:AbstractWorkerPool} <: AbstractWorkerPool
     pool::P
@@ -253,6 +257,9 @@ function parallel(f, iterator::AbstractArray, log_nt::Type{<:NamedTuple}; timeou
     pool = isnothing(stop) ? ppt_worker_pool() : StoppablePool(ppt_worker_pool(), stop)
     queue, step_priority = WORKER_QUEUE[], STEP_PRIORITY[]
     item_pool(id) = isnothing(queue) ? pool : QueuedPool(pool, queue, (step_priority, id))
+    counted = STEP_ITEMS[]
+    isnothing(counted) || counted == length(iterator) ||
+        @debug "parallel: $(length(iterator)) items, $counted counted when the processing run started"
     step = PROGRESS_STEP[]
     first_id = isnothing(step) ? 0 : items_queued!(step..., length(iterator))
     flush(stdout)

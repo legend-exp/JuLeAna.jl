@@ -54,7 +54,10 @@ Steps that are ready start, and the items they hand to [`parallel`](@ref) get fr
 workers, in this order (see [`JuLeAna.waiting_chains`](@ref) and [`JuLeAna.WorkerQueue`](@ref)):
 the step with the longest chain of selected steps that wait for it first, then the one
 with the most selected steps that wait for it, then by rank, name, period and run. With
-`max_parallel_steps > 0` at most that many steps run at the same time. A step that is
+`max_parallel_steps > 0` at most that many steps run at the same time. At the start, the
+items of every step whose processor registers an `items` function (see
+[`register_processor!`](@ref)) are counted, except for the runs that are skipped;
+`parallel` logs a debug message when such a step hands it a different number. A step that is
 skipped because the run is not an analysis run (with `cfg.analysis_runs_only`) or not in
 the run info counts as finished. `run_status[period][step][run]` and
 `partition_status[period][step]` are set to `true` when a step finishes.
@@ -94,9 +97,6 @@ function run_processing(cfg::ProcessingConfig, l200, periods::AbstractVector{Dat
     # every step lists the same runs of the period
     period_runs = Dict(period => sort!(collect(keys(last(first(run_status[period]))))) for period in periods if !isempty(run_steps))
     spec(step) = haskey(cfg.processors, step) ? cfg.processors[step] : cfg.p_processors[step]
-    # settings of the running processor, also seen by `parallel`
-    step_scope(step) = (ERROR_PLOTS => spec(step).error_plots, PROCESSOR_LOG_LEVEL => something(processor_log_level, spec(step).log_level),
-                        PLOT_LEVEL => something(processor_plot_level, spec(step).plot_level), PLOT_FORMATS => cfg.plot_formats)
 
     waits = waited_processors(processor_graph(cfg), Iterators.flatten((run_steps, partition_steps)))
     if !check_dependencies
@@ -123,6 +123,18 @@ function run_processing(cfg::ProcessingConfig, l200, periods::AbstractVector{Dat
 
     nodes = vcat(ProgressKey[(period, nothing, step) for period in periods for step in partition_steps],
                  ProgressKey[(period, run, step) for period in periods for run in get(period_runs, period, DataRun[]) for step in run_steps])
+    # why the run-level step `node` is skipped, or `nothing` when it is processed
+    function skip_reason((period, run, step))
+        key = (period, run, spec(step).category)
+        cfg.analysis_runs_only && !is_analysis_run(l200, key) && return "is not an analysis run"
+        return is_lrun(l200, key) ? nothing : "is not in runinfo"
+    end
+    item_counts = Dict{ProgressKey,Int}()
+    for (period, run, step) in nodes
+        items = get(PROCESSOR_TRAITS, step, DEFAULT_TRAITS).items
+        (isnothing(items) || (!isnothing(run) && !isnothing(skip_reason((period, run, step))))) && continue
+        item_counts[(period, run, step)] = length(items(cfg, l200, period, run))
+    end
     isnothing(progress_store) || reset_progress!(progress_store, nodes)
     mark(key, state; error = nothing) = isnothing(progress_store) || set_step_state!(progress_store, key, state; error)
     blockers = Dict{ProgressKey,Set{ProgressKey}}(node => Set(predecessors(node)) for node in nodes)
@@ -134,6 +146,13 @@ function run_processing(cfg::ProcessingConfig, l200, periods::AbstractVector{Dat
     priority((period, run, step)) = (-chains[step].chain, -chains[step].successors, spec(step).rank, step, period.no,
                                      isnothing(run) ? -1 : run.no)
     ready = sort!(ProgressKey[node for node in nodes if isempty(blockers[node])]; by = priority)
+    # settings of the running step, also seen by `parallel`
+    function step_scope(node)
+        s = spec(node[3])
+        return (ERROR_PLOTS => s.error_plots, PROCESSOR_LOG_LEVEL => something(processor_log_level, s.log_level),
+                PLOT_LEVEL => something(processor_plot_level, s.plot_level), PLOT_FORMATS => cfg.plot_formats,
+                STEP_PRIORITY => priority(node), STEP_ITEMS => get(item_counts, node, nothing))
+    end
 
     # Run the step `node` and return whether it was skipped and, for a partition step,
     # whether it must wait for the same step of the previous period.
@@ -144,25 +163,22 @@ function run_processing(cfg::ProcessingConfig, l200, periods::AbstractVector{Dat
             kwargs = merge(NamedTuple(spec(step).kwargs), (; only_first_period), overrides)
             @info "Process $step of $period"
             lower = tracked(node) do
-                return with(() -> processors[step](cfg, l200, period; kwargs...), step_scope(step)..., STEP_PRIORITY => priority(node))
+                return with(() -> processors[step](cfg, l200, period; kwargs...), step_scope(node)...)
             end
             return (; skipped = false, lower = lower === true)
         end
-        key = (period, run, spec(step).category)
-        if cfg.analysis_runs_only && !is_analysis_run(l200, key)
-            @warn "$period-$run-$(spec(step).category) is not an analysis run, skip $step"
-        elseif !is_lrun(l200, key)
-            @warn "$period-$run-$(spec(step).category) is not in runinfo, skip $step"
-        else
+        reason = skip_reason(node)
+        if isnothing(reason)
             @info "Process $step of $period-$run"
             tracked(node) do
-                with(step_scope(step)..., STEP_PRIORITY => priority(node)) do
+                with(step_scope(node)...) do
                     return processors[step](cfg, l200, period, run; merge(NamedTuple(spec(step).kwargs), overrides)...)
                 end
             end
             flush(stdout)
             return (; skipped = false, lower = false)
         end
+        @warn "$period-$run-$(spec(step).category) $reason, skip $step"
         mark(node, :skipped)
         return (; skipped = true, lower = false)
     end

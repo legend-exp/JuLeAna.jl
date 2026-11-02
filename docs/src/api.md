@@ -157,6 +157,7 @@ JuLeAna.detector_filter
 ```@docs
 parallel
 failure_log
+JuLeAna.run_filekeys
 truncate_string
 truncate_error
 load_qc_evaluator
