@@ -318,7 +318,7 @@ processors:
   process_dsp_phy:
     detectors: "processable"
     report_status:
-      on: {warning: failure, failure: failure}
+      on: {warning: warning, failure: failure}
       ac: {warning: warning, failure: failure}
       off: {warning: success, failure: warning}
     enabled: false
@@ -337,6 +337,8 @@ processors:
       - process_aoe_optimization_cal
       - process_sipm_optimization_phy
       - p_process_sipm_optimization_phy
+      - process_sipm_template_phy
+      - p_process_sipm_template_phy
 
   process_qcs_phy:
     detectors: "processable"

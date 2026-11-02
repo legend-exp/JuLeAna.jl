@@ -20,12 +20,13 @@ detector is also skipped if its DSP configuration has no `required_fltopt_select
 # Inputs
 - `raw` tier of the `phy` filekeys of the run listed in the runinfo, except the filekeys marked unprocessable
 - `dataprod_config(l200).dsp(filekey)`, `dataprod_config(l200).sipm(filekey)` and `dataprod_config(l200).pmt(filekey)`
-- `l200.par[pars_type, :pz]`, `l200.par[pars_type, :fltopt]`, `l200.par[pars_type, :aoeopt]` and `l200.par[pars_type, :sipmopt]`, with `pars_type` being `:ppars` if `use_partition_pars` is `true` and `:rpars` otherwise
+- `l200.par[pars_type, :pz]`, `l200.par[pars_type, :fltopt]`, `l200.par[pars_type, :aoeopt]`, `l200.par[pars_type, :sipmopt]` and `l200.par[pars_type, :sipmtmpl]`, with `pars_type` being `:ppars` if `use_partition_pars` is `true` and `:rpars` otherwise; a SiPM channel without template pars is processed without the inverse kernel and listed in the report (status warning)
 - the QC evaluator from `load_qc_evaluator(l200, filekey)`
 
 # Outputs
 - `jldsp` tier file for each filekey, with one table per detector
-- run report `:dsp_phy`, with one row per filekey (number of processed detectors, failed detectors, time, allocations)
+- run report `:dsp_phy`, with one row per filekey (number of processed detectors, failed detectors, SiPMs processed
+  without template pars, time, allocations); a filekey with SiPMs without template pars has status warning
 
 # Keywords
 - `reprocess`: remove the existing `jldsp` files and process all detectors again; otherwise detectors already present in a file are skipped
@@ -63,15 +64,20 @@ function process_dsp_phy(processing_config, l200::LegendData, period::DataPeriod
     pars_type = ifelse(use_partition_pars, :ppars, :rpars)
     @info "Use $(ifelse(use_partition_pars, "partition", "run"))-based pars from $pars_type for DSP optimization parameters"
 
-    pars_tau = get_values(l200.par[pars_type, :pz](filekey))
+    # HPGe pars only when HPGe detectors are selected (a SiPM-only selection has none)
+    pars_tau = isempty(chinfo) ? PropDict() : get_values(l200.par[pars_type, :pz](filekey))
     @debug "Loaded decay times"
 
-    pars_fltoptimization = get_values(merge(l200.par[pars_type, :fltopt](filekey), l200.par[pars_type, :aoeopt](filekey)))
+    pars_fltoptimization = isempty(chinfo) ? PropDict() : get_values(merge(l200.par[pars_type, :fltopt](filekey), l200.par[pars_type, :aoeopt](filekey)))
     @debug "Loaded optimization parameters"
 
     make_par_dir(data_path(l200.par[pars_type, :sipmopt]))
     pars_sipm = get_values(l200.par[pars_type, :sipmopt](filekey))
     @debug "Loaded sipm parameters"
+    # SiPM template pars only when SiPMs are selected
+    make_par_dir(data_path(l200.par[pars_type, :sipmtmpl]))
+    pars_sipm_template = isempty(chinfo_sipm) ? PropDict() : get_values(l200.par[pars_type, :sipmtmpl](filekey))
+    @debug "Loaded sipm template parameters"
 
     if reprocess
         @info "Reprocess all filekeys and detectors"
@@ -80,8 +86,8 @@ function process_dsp_phy(processing_config, l200::LegendData, period::DataPeriod
     end
 
     # create log line Tuple
-    log_nt = NamedTuple{(:Filekey, :Status, Symbol("Number of Processed Detectors"), Symbol("Failed Detectors"), Symbol("Total Time"),
-                         Symbol("Total Allocated"), :Error)}
+    log_nt = NamedTuple{(:Filekey, :Status, Symbol("Number of Processed Detectors"), Symbol("Failed Detectors"), Symbol("Without Template"),
+                         Symbol("Total Time"), Symbol("Total Allocated"), :Error)}
 
     # get worker pool
 
@@ -99,6 +105,7 @@ function process_dsp_phy(processing_config, l200::LegendData, period::DataPeriod
         n_detectors = 0
         # detector ids of failed detectors
         failed_detectors = DetectorId[]
+        no_template_detectors = DetectorId[]
         # start processing
         write_files(dspfilename; use_cache, mode = CreateOrModify()) do outfilename
             @timeit dsp_timer "Startup" begin
@@ -215,6 +222,12 @@ function process_dsp_phy(processing_config, l200::LegendData, period::DataPeriod
                             continue
                         end
                         detector_selected(det)||continue
+                        # optimisation pars plus, if the template step has run, its inverse kernel
+                        pars_sipm_det = merge(pars_sipm[det], get(pars_sipm_template, det, PropDict()))
+                        if !haskey(pars_sipm_det, :kernel)
+                            @warn "No template pars for detector $det ($ch), MWA chain without the inverse kernel"
+                            push!(no_template_detectors, det)
+                        end
                         if "$det" in processed_detectors&&!reprocess&&!redo_detector(det)
                             @info "Detector $det ($ch) already processed, skip"
                             n_detectors+=1
@@ -229,7 +242,7 @@ function process_dsp_phy(processing_config, l200::LegendData, period::DataPeriod
                             outdata_det = nothing
                             try
                                 raw_data_det = read_ldata(l200, DataTier(:raw), fk, det)
-                                outdata_det = dsp_sipm_compressed(raw_data_det, dsp_meta_det, pars_sipm[det])
+                                outdata_det = dsp_sipm_compressed(raw_data_det, dsp_meta_det, pars_sipm_det)
                             catch e
                                 if e isa TaskFailedException
                                     e = e.task.exception
@@ -339,9 +352,10 @@ function process_dsp_phy(processing_config, l200::LegendData, period::DataPeriod
         total_allocated = Base.format_bytes(TimerOutputs.totallocated(dsp_timer))
 
         # create log
-        log_fk = log_nt((fk, ProcessStatus(ifelse(isempty(failed_detectors), 1, 0)),
+        status = !isempty(failed_detectors) ? process_failed : !isempty(no_template_detectors) ? process_warning : process_succeeded
+        log_fk = log_nt((fk, status,
                          "$(n_detectors)/$(length(chinfo)+length(get(dsp_config_pd, :additional_detectors, []))+length(chinfo_sipm)+length(chinfo_pmts))",
-                         string.(failed_detectors), total_time, total_allocated, ""))
+                         string.(failed_detectors), string.(no_template_detectors), total_time, total_allocated, ""))
 
         return (timer = dsp_timer, log = log_fk, processed = true)
     end
