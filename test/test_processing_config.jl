@@ -37,7 +37,7 @@ const STUB_PROCESSORS = Dict{Symbol,Any}(:process_a => process_a, :p_process_b =
         @test spec.level === :run && spec.category === :cal && spec.rank == 6 && !spec.enabled
         @test spec.dependencies == [:p_process_aoe_optimization_cal, :process_aoe_optimization_cal]
         @test spec.kwargs ==
-              Dict{Symbol,Any}(:reprocess => false, :max_wvfs => 1000, :timeout => 0, :use_partition_pars => true, :use_cache => true)
+              Dict{Symbol,Any}(:reprocess => false, :max_wvfs => 1000, :timeout => 0, :use_cache => true)
         @test shipped.p_processors[:p_process_energy_cal].level === :partition
         @test shipped.p_processors[:p_process_energy_cal].category === :cal
         @test shipped.p_processors[:p_process_skm_phy].category === :phy

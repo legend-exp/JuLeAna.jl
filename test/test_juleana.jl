@@ -147,6 +147,26 @@ end
         @test master_status([det(:unknown) => row(process_warning)]) == process_failed
     end
 
+    @testset "timing_table" begin
+        function item_timer(seconds)
+            to = JuLeAna.TimerOutputs.TimerOutput()
+            JuLeAna.TimerOutputs.@timeit to "Startup" nothing
+            JuLeAna.TimerOutputs.@timeit to "DSP" begin
+                JuLeAna.TimerOutputs.@timeit to "V00048B" sleep(seconds)
+                JuLeAna.TimerOutputs.@timeit to "V00050A" nothing
+            end
+            return to
+        end
+        # the failed item has no timer
+        tbl = JuLeAna.timing_table([1 => (timer = item_timer(0.2), processed = true), 2 => (timer = item_timer(0.001), processed = true),
+                                    3 => (processed = false,)])
+        @test tbl.Section == ["DSP", "DSP / V00048B", "DSP / V00050A", "Startup"]
+        @test tbl.Calls == [2, 2, 2, 2]
+        @test tbl[2][Symbol("Time (s)")] >= 0.2
+        @test tbl[2][Symbol("Average (s)")] ≈ tbl[2][Symbol("Time (s)")] / 2 atol = 0.001
+        @test JuLeAna.timing_table([3 => (processed = false,)]).Section == ["No timing"]
+    end
+
     fk = FileKey("l200-p03-r000-cal-20230311T235840Z")
     FkLog = NamedTuple{(:Filekey, :Status, :A, :B, :Error)}
 

@@ -112,7 +112,6 @@ process_dsp_cal:
     reprocess: true
     max_wvfs: 1000
     timeout: 0
-    use_partition_pars: true
   dependencies: [p_process_aoe_optimization_cal]
 ```
 

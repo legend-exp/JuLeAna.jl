@@ -69,6 +69,35 @@ function master_status(results...; report_status::AbstractDict = DEFAULT_REPORT_
     return has_entries ? status : process_failed
 end
 
+"""
+    JuLeAna.timing_table(result)
+
+Return the timers of the items of the [`parallel`](@ref) result `result`, summed over the
+items, as a table for Markdown reports. Each `res` of the `itr => res` pairs with a field
+`timer` contributes its `TimerOutput`; items without one, such as failed items, are left out.
+
+The table has one row per timed section, a subsection right after its section and named
+`<section> / <subsection>`, the slowest first. The columns are the number of calls, the
+total and the average time in seconds, and the total allocations. Without any timer the
+table has the single row `No timing`.
+"""
+function timing_table(result)
+    timers = [res.timer for (_, res) in result if haskey(res, :timer)]
+    isempty(timers) && return StructArray(Section = ["No timing"])
+    sections = Tuple{String,Dict{String,Any}}[]
+    function add_sections!(timer, prefix)
+        for (name, t) in sort!(collect(timer["inner_timers"]); by = s -> -last(s)["time_ns"])
+            push!(sections, (prefix * name, t))
+            add_sections!(t, prefix * name * " / ")
+        end
+    end
+    add_sections!(TimerOutputs.todict(merge(timers...)), "")
+    return StructArray(Section = first.(sections), Calls = [t["n_calls"] for (_, t) in sections],
+                       var"Time (s)" = [round(t["time_ns"] / 1e9; digits = 3) for (_, t) in sections],
+                       var"Average (s)" = [round(t["time_ns"] / 1e9 / t["n_calls"]; digits = 3) for (_, t) in sections],
+                       Allocated = [Base.format_bytes(t["allocated_bytes"]) for (_, t) in sections])
+end
+
 # Current UTC time as ISO 8601 with a `Z` suffix, for log directory names and reports.
 utc_timestamp() = Dates.format(now(UTC), dateformat"yyyy-mm-ddTHH:MM:SS\Z")
 

@@ -140,9 +140,7 @@ function process_evt_phy(processing_config, l200::LegendData, period::DataPeriod
     lreport!(report, "# Results")
     lreport!(report, create_logtbl(result_evt))
     lreport!(report, "# Total Timing")
-    lreport!(report, "```")
-    lreport!(report, "$(get_totalTimer(result_evt))")
-    lreport!(report, "```")
+    lreport!(report, timing_table(result_evt))
 
     @info "Write log report"
     write_report(get_rreportfilename(l200, filekey, :evt_phy), report)

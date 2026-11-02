@@ -133,7 +133,6 @@ processors:
       max_wvfs: 1000
       timeout: 0
       use_cache: true
-      use_partition_pars: true
     dependencies:
       - p_process_aoe_optimization_cal
       - process_aoe_optimization_cal
@@ -314,7 +313,6 @@ processors:
       timeout: 0
       use_cache: true
       max_wvfs: 1000
-      use_partition_pars: true
     dependencies:
       - p_process_aoe_optimization_cal
       - process_aoe_optimization_cal
