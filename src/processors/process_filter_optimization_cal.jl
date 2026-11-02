@@ -4,18 +4,20 @@
 
 Optimize the energy filter rise time and flat-top time for all processable HPGe detectors (`geds`) of the `cal` run.
 
-For each filter type listed under `e_filter` in the optimization config, the rise time is chosen first from a sweep over the baseline noise (minimal ENC at a fixed flat-top time). The flat-top time is then chosen from a sweep over the full-energy-peak events as the one with the smallest FWHM. Waveforms of the peak named by `peakname` are taken from the `jlpks` tier. Quality cuts (`qc` expression of the optimization config) are applied to the waveforms before the sweeps, and at most `max_wvfs` waveforms are used. Filter types that already have results are skipped unless `reprocess` is set.
+For each filter type listed under `e_filter` in the optimization config, `optimize_channel_filter` chooses the rise time from a baseline noise sweep (minimal ENC at a fixed flat-top time) and the flat-top time from a sweep over full-energy-peak events. With `joint_search` enabled, a search over rise time and flat-top time on the sampling lattice, starting from that point, gives the optimum of the configured `objective`. The optimum is cross-checked against the legacy optimum (minimal FWHM at the ENC rise time) with the DEP, SEP and the FEP after a single-site A/E selection. Waveforms of the peaks named by `peakname` (and the DEP and SEP for the crosscheck) are taken from the `jlpks` tier. Quality cuts (`qc` expression of the optimization config) are applied to the waveforms before the sweeps, and at most `max_wvfs` waveforms of each peak are used, drawn with an RNG seeded from the detector and the filekey. Filter types that already have results from this method are skipped unless `reprocess` is set; results of an older method are optimized again.
 
 # Inputs
 - `jlpks` tier of the start `cal` filekey of the run, for each detector (peak waveforms named by `peakname`).
 - `dataprod_config(l200).dsp(filekey)`, in particular the `flt_optimization` section (`default` and per-detector entries) and the DSP config used for the filter grids.
 - `l200.par.rpars.pz[period, run]` (decay times).
 - Quality-cut evaluator loaded by `load_qc_evaluator(l200, filekey)`.
+- `l200.par.rpars.aoeopt[period, run]` (SG window length of the A/E crosscheck, if present; otherwise the DSP config default).
 - `l200.par.rpars.fltopt[period, run]` (existing results, unless `reprocess` is set).
 
 # Outputs
-- `l200.par.rpars.fltopt[period, run]`: per detector and filter type the optimal rise time, flat-top time and minimal FWHM, together with the validity entry for the run.
-- Per detector and filter type, plots `noise_sweep_<filter_type>` and `fwhm_ft_scan_<filter_type>`, saved only at the debug plot level.
+- `l200.par.rpars.fltopt[period, run]`: per detector and filter type the objective, the optimal rise time and flat-top time, FWHM and W90 at the optimum and the legacy optimum, together with the validity entry for the run.
+- Per detector and filter type, the tables `fltopt_tables_<filter_type>.lh5` next to the plots, always written.
+- Per detector and filter type, the plots `noise_sweep_<filter_type>`, `ft_scan_<filter_type>`, `rtft_landscape_<filter_type>`, the crosscheck figures (`ctc_*`, `peaks_*`, `crosscheck_*`, `residuals_*`, `aoe_cut_*`) and `example_wvfs_<filter_type>`, saved only at the debug plot level.
 - Run report `:filter_optimization` (Main Log, Metadata, Results table with one row per detector and filter type).
 
 # Keywords

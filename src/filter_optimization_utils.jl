@@ -92,7 +92,8 @@ end
 
 Presummed and windowed waveforms and presum rates of the `peakname` events of detector `det`
 from the jlpks tier: of the run of `filekey`, or of all runs of the partition `partinfo_det`
-with `n_evts` events per run. Sets above `max_wvfs` events are reduced with
+with `n_evts` events per run (all events for `n_evts == -1`; random ones, drawn with the same
+seeded RNG, if `select_random` is set, otherwise the first ones). Sets above `max_wvfs` events are reduced with
 `limit_peak_waveforms`, with an RNG seeded from the detector and the filekey (or the runs of
 the partition), so that repeated runs select the same events.
 """
@@ -101,9 +102,20 @@ function load_peak_waveforms(l200::LegendData, filekey::FileKey, det, peakname::
     limit_peak_waveforms(read_ldata(peakname, l200, DataTier(:jlpks), filekey, det), peakname, max_wvfs, rng)
 end
 
-function load_peak_waveforms(l200::LegendData, partinfo_det, det, peakname::Symbol, max_wvfs::Integer; n_evts::Integer)
+function load_peak_waveforms(l200::LegendData, partinfo_det, det, peakname::Symbol, max_wvfs::Integer; n_evts::Integer,
+                             select_random::Bool = false)
     rng = MersenneTwister(hash((string(det), join(string.(partinfo_det.period, "-", partinfo_det.run), ","))))
-    limit_peak_waveforms(read_ldata(peakname, l200, DataTier(:jlpks), :cal, partinfo_det, det; n_evts), peakname, max_wvfs, rng)
+    # The events of each run are selected by timestamp before reading, so only the selected waveforms are loaded.
+    f_timestamp = ljl_propfunc("$peakname.timestamp")
+    peak_data = fast_flatten(map(partinfo_det) do r
+                                 ts = read_ldata(f_timestamp, l200, DataTier(:jlpks), DataCategory(:cal), r.period, r.run, det)
+                                 n_sel = n_evts == -1 ? length(ts) : min(n_evts, length(ts))
+                                 ts_sel = select_random ? sample(rng, ts, n_sel; replace = false, ordered = true) :
+                                          ts[begin:(begin + n_sel - 1)]
+                                 read_ldata(peakname, l200, DataTier(:jlpks), DataCategory(:cal), r.period, r.run, det;
+                                            filterby = @pf $timestamp in ts_sel)
+                             end)
+    return limit_peak_waveforms(peak_data, peakname, max_wvfs, rng)
 end
 
 
