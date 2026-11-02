@@ -6,7 +6,7 @@ Optimize the energy filter rise time and flat-top time for all processable HPGe 
 
 For each filter type listed under `e_filter` in the optimization config, the rise time is chosen first from a sweep over the baseline noise (minimal ENC at a fixed flat-top time). The flat-top time is then chosen from a sweep over the full-energy-peak events as the one with the smallest FWHM. Waveforms of the peak named by `peakname` are taken from the `jlpks` tier. At most `max_wvfs` waveforms are used, and quality cuts are applied before the sweeps: every quantity `x => k` of `qc_mad` (e.g. `blsigma`, `blslope`) keeps the events with `|x - median(x)| <= k * mad(x)` (normalized MAD of the finite values), and the `qc` expression is evaluated on the QC table of `dsp_qc_flt_optimization_compressed` extended by `qdrift`. The `qc` expression must remove events with a non-finite `qdrift` or a `t50_pre` outside the current window if `e_filter` lists `dplms`; the DPLMS synthesis throws otherwise. Filter types that already have results are skipped unless `reprocess` is set.
 
-If `e_filter` lists `dplms`, a DPLMS filter is synthesized on the same waveforms for every flat-top widening `ff` of LegendDSP's `dplms_default_grid`, and the widening with the smallest FEP FWHM is selected with the same fit as the flat-top time of the other filters.
+If `e_filter` lists `dplms`, a DPLMS filter is synthesized on the same waveforms for every point of LegendDSP's `dplms_default_grid`. The grid points that share all weights (`nm`, `za`, `ft`, `ct`, `zo`) form a family; for each family the flat-top widening `ff` with the smallest FEP FWHM is selected with the same fit as the flat-top time of the other filters, and the family with the smallest FWHM is kept. The result stores the FWHM and `ff` of every family under `families`.
 
 # Inputs
 - `jlpks` tier of the start `cal` filekey of the run, for each detector (peak waveforms named by `peakname`).
@@ -248,20 +248,27 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
                 end
                 yield()
                 Δt = step(res.superpulse.time)
-                ffs = [w.ff for w in res.grid]
-                e_grid_ff = range(first(ffs) * Δt; step = (length(ffs) > 1 ? ffs[2] - ffs[1] : 1) * Δt, length = length(ffs))
-                e_grid_ff ≈ ffs .* Δt || throw(ArgumentError("DPLMS flat-top widenings $ffs are not equally spaced"))
-                result_ft, report_ft = @process_step "dplms flat-top widening extraction" begin
-                    fit_fwhm_ft(res.e_grid, e_grid_ff, qdrift, 0.0u"µs", optimization_config_flt.min_e_fep,
-                                optimization_config_flt.max_e_fep, optimization_config_flt.rel_cut_fit_e_fep,
-                                optimization_config_det.apply_ctc; n_bins = optimization_config_flt.nbins_e_fep,
-                                peak = optimization_config_det.peak,
-                                window = (optimization_config_det.left_window_size, optimization_config_det.right_window_size),
-                                ft_fwhm_tol = optimization_config_det.ft_fwhm_tol)
+                # one flat-top widening fit per family of grid points with equal weights; the family
+                # with the smallest FEP FWHM is selected, the first one in grid order on a tie
+                weights_of = w -> (; w.nm, w.za, w.ft, w.ct, w.zo)
+                fits = map(unique(weights_of.(res.grid))) do weights
+                    idxs = findall(w -> weights_of(w) == weights, res.grid)
+                    ffs = [res.grid[k].ff for k in idxs]
+                    e_grid_ff = range(first(ffs) * Δt; step = (length(ffs) > 1 ? ffs[2] - ffs[1] : 1) * Δt, length = length(ffs))
+                    e_grid_ff ≈ ffs .* Δt || throw(ArgumentError("DPLMS flat-top widenings $ffs are not equally spaced"))
+                    result_ft, report_ft = @process_step "dplms flat-top widening extraction" begin
+                        fit_fwhm_ft(res.e_grid[idxs, :], e_grid_ff, qdrift, 0.0u"µs", optimization_config_flt.min_e_fep,
+                                    optimization_config_flt.max_e_fep, optimization_config_flt.rel_cut_fit_e_fep,
+                                    optimization_config_det.apply_ctc; n_bins = optimization_config_flt.nbins_e_fep,
+                                    peak = optimization_config_det.peak,
+                                    window = (optimization_config_det.left_window_size, optimization_config_det.right_window_size),
+                                    ft_fwhm_tol = optimization_config_det.ft_fwhm_tol)
+                    end
+                    (i = idxs[only(findall(≈(mvalue(result_ft.ft)), e_grid_ff))], result_ft, report_ft)
                 end
-                i = only(findall(≈(mvalue(result_ft.ft)), e_grid_ff))
+                (; i, result_ft, report_ft) = argmin(f -> mvalue(f.result_ft.min_fwhm), fits)
                 w = res.grid[i]
-                @debug "Selected DPLMS ff = $(w.ff) samples with FWHM $(round(u"keV", result_ft.min_fwhm, digits=2))"
+                @debug "Selected DPLMS zo = $(w.zo), ff = $(w.ff) samples with FWHM $(round(u"keV", result_ft.min_fwhm, digits=2))"
                 @debug_plot begin
                     p = LegendMakie.lplot(report_ft,
                                           title = get_plottitle(filekey, det, "FEP Flat-Top Widening Scan"; additional_type = "dplms"))
@@ -274,7 +281,10 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
                 result_rt_ft_dict[:dplms] = (coefficients = res.coeffs[i], t_pickoff = uconvert(u"µs", res.t_pickoff),
                                              shaping_time = uconvert(u"µs", res.shaping_time[i]), flat_top = uconvert(u"µs", res.flat_top[i]),
                                              ff = w.ff, n_pre = res.n_pre, n_post = res.n_post,
-                                             weights = (nm = w.nm, za = w.za, ft = w.ft, ct = w.ct), min_fwhm = result_ft.min_fwhm)
+                                             weights = weights_of(w), output_area = uconvert(u"µs", res.output_area[i]),
+                                             min_fwhm = result_ft.min_fwhm,
+                                             families = [(weights = weights_of(res.grid[f.i]), ff = res.grid[f.i].ff,
+                                                          min_fwhm = f.result_ft.min_fwhm) for f in fits])
                 log_info_dict[:dplms] = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability),
                                                 ProcessStatus(1), :dplms, result_rt_ft_dict[:dplms].shaping_time,
                                                 result_rt_ft_dict[:dplms].flat_top, result_ft.min_fwhm, "-"))
