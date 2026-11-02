@@ -21,9 +21,10 @@ detectors with the variables of the processor, e.g. the raw data of a failed DSP
 
 # Inputs
 - `raw` tier of the `cal` filekeys of the run listed in the runinfo, except the filekeys marked unprocessable
-- `dataprod_config(l200).dsp(filekey)`; the `pars_type` of the entry of a detector, else of `default`, e.g. `"ppars"` or `"rpars"`,
-  selects its parameters below. A detector whose parameters cannot be loaded fails.
-- `l200.par[pars_type, :pz]`, `l200.par[pars_type, :fltopt]` and `l200.par[pars_type, :aoeopt]`
+- `dataprod_config(l200).dsp(filekey)`
+- the decay time and the optimization parameters of each detector from `get_dsp_pars(l200, filekey, detector, pars_cat)` with
+  `pars_cat` `:pz`, `:fltopt` and `:aoeopt`, read from the `pars_type` that the DSP config sets for the detector, e.g. `ppars`
+  or `rpars`. A detector whose parameters cannot be loaded fails.
 - the QC evaluator from `load_qc_evaluator(l200, filekey)`
 
 # Outputs
@@ -56,22 +57,6 @@ function process_dsp_cal(processing_config, l200::LegendData, period::DataPeriod
     @debug "Loaded DSP config: $(lstring(dsp_config_pd))"
 
     f_evaluate_qc = load_qc_evaluator(l200, filekey)
-
-    # the parameter type of each detector: `pars_type` of its entry in the DSP config, else of `default`
-    pars_types = Dict(det => Symbol(get(get(dsp_config_pd, det, PropDict()), :pars_type, get(dsp_config_pd.default, :pars_type, "")))
-                      for det in chinfo.detector)
-    @info "Use $(join(unique(values(pars_types)), " and ")) for the DSP parameters"
-
-    # the decay times and optimization parameters of each type in use; a type that cannot be loaded fails its detectors
-    pars = Dict(t => try
-                    (tau = get_values(l200.par[t, :pz](filekey)),
-                     opt = get_values(merge(l200.par[t, :fltopt](filekey), l200.par[t, :aoeopt](filekey))))
-                catch e
-                    e isa InterruptException && rethrow()
-                    e
-                end
-                for t in unique(values(pars_types)))
-    @debug "Loaded decay times and optimization parameters"
 
     if reprocess
         @info "Reprocess all filekeys and detectors"
@@ -132,29 +117,28 @@ function process_dsp_cal(processing_config, l200::LegendData, period::DataPeriod
                         @timeit dsp_timer "$det" begin
                             # process data; a failed step fails the detector only
                             outdata_det = try
-                                pars_det = pars[pars_types[det]]
-                                dsp_config_det = @process_step "DSP parameters of $det in $fk" begin
-                                    pars_det isa Exception &&
-                                        throw(ArgumentError("cannot load the $(pars_types[det]) parameters: $(truncate_error(pars_det))"))
+                                dsp_config_det, pars_tau_det, pars_opt_det = @process_step "DSP parameters of $det in $fk" begin
                                     dsp_config_pd_det = merge(dsp_config_pd.default, get(dsp_config_pd, det, PropDict()))
-                                    haskey(pars_det.tau, det) || throw(ArgumentError("no decay time for $det"))
-                                    haskey(pars_det.opt, det) || throw(ArgumentError("no optimization parameters for $det"))
+                                    tau = get_dsp_pars(l200, filekey, det, :pz)
+                                    opt = merge(get_dsp_pars(l200, filekey, det, :fltopt), get_dsp_pars(l200, filekey, det, :aoeopt))
+                                    isempty(tau) && throw(ArgumentError("no decay time for $det"))
+                                    isempty(opt) && throw(ArgumentError("no optimization parameters for $det"))
                                     # the required optimization pars of the filters the selections of the detector require
                                     for (selection, required, label) in ((:required_fltopt_selection, :required_fltopt, "energy filter"),
                                                                          (:required_aoeopt_selection, :required_aoeopt, "A/E"))
                                         haskey(dsp_config_pd_det, selection) ||
                                             throw(ArgumentError("no `$selection` in the DSP config of $det"))
                                         ljl_propfunc(dsp_config_pd_det[selection])(chinfo_det) || continue
-                                        missing_pars = setdiff(Symbol.(dsp_config_pd_det[required]), keys(pars_det.opt[det]))
+                                        missing_pars = setdiff(Symbol.(dsp_config_pd_det[required]), keys(opt))
                                         isempty(missing_pars) ||
                                             throw(ArgumentError("no $label optimization parameters $(join(missing_pars, ", ")) for $det"))
                                     end
-                                    DSPConfig(dsp_config_pd_det)
+                                    (DSPConfig(dsp_config_pd_det), tau, opt)
                                 end
                                 @debug "Loaded DSP config: $(lstring(dsp_config_det))"
                                 raw_data_det = @process_step "raw data loading of $det in $fk" read_ldata(l200, DataTier(:raw), fk, det)
                                 @process_step "DSP of $det in $fk" begin
-                                    dsp_icpc_compressed(raw_data_det, dsp_config_det, pars_det.tau[det].τ, pars_det.opt[det];
+                                    dsp_icpc_compressed(raw_data_det, dsp_config_det, pars_tau_det.τ, pars_opt_det;
                                                         f_evaluate_qc)
                                 end
                             catch e

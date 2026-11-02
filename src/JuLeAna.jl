@@ -30,7 +30,8 @@ using IntervalSets: IntervalSets, (..), leftendpoint, rightendpoint
 using LaTeXStrings: LaTeXStrings, @L_str
 using LegendDataManagement: LegendDataManagement, DataCategory, DataPeriod, DataRun, DataTier, DetectorId, FileKey, LegendData,
                             ProcessStatus, bad_filekeys, channelinfo, data_path, dataprod_config, get_aux_cal_propfunc,
-                            get_aux_evt_detsel_propfunc, get_exposure, get_ged_evt_kwargs, get_values, is_analysis_run, is_lrun,
+                            get_aux_evt_detsel_propfunc, get_dsp_pars, get_exposure, get_ged_evt_kwargs, get_values, is_analysis_run,
+                            is_lrun,
                             ljl_propfunc, lreport, lreport!, lstring, partitioninfo, process_failed, process_succeeded, process_warning,
                             read_ldata, readlprops, runinfo, start_filekey, writelprops, writelreport
 using LegendDataManagement.LDMUtils: LDMUtils, create_logtbl, create_metadatatbl, create_pars, create_validity, get_partitionvalidity,
