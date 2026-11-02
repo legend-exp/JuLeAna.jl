@@ -1,6 +1,6 @@
 """
     process_psd_efficiencies_cal(processing_config, l200::LegendData, period::DataPeriod, run::DataRun;
-        reprocess::Bool=false, timeout::Real=0, use_partition_pars::Bool=true)
+        reprocess::Bool=false, timeout::Real=0)
 
 Compute the survival fractions of the combined A/E and LQ cuts for the HPGe detectors (`geds`) of one `cal` run.
 
@@ -12,9 +12,10 @@ the low and high A/E cuts (`ds`), the low A/E cut and the LQ cut (`low_lq`), and
 # Inputs
 - First `cal` filekey of the run.
 - `l200.par.rpars.ecal[period, run]`: the calibration function of the energy type `e_type`.
-- A/E and LQ parameters of the run: the `aoe` and `lq` parameters from `ppars` if `use_partition_pars` is `true`,
-  otherwise from `rpars`. The low A/E cut is `lowcut` of the A/E classifier and the LQ cut is `highcut` of the LQ
-  classifier.
+- A/E and LQ parameters of the run, of the types and categories that the event building reads (`aoe_cal_pars_type`,
+  `aoe_cut_pars_type`, `lq_cal_pars_type`, `lq_cut_pars_type` and their `_pars_cat` of `get_ged_evt_kwargs(l200, filekey)`):
+  the classifier functions from the calibration parameters, the low A/E cut (`lowcut` of the A/E classifier) and the LQ
+  cut (`highcut` of the LQ classifier) from the cut parameters.
 - `jlqcs` tier (single pulse, non-pulser events) and `jldsp` tier of the `cal` run.
 - `dataprod_config(l200).psd(filekey).psd`, `default` merged with the detector section: `e_type`, `psd_classifiers`
   (per classifier name, a list of the A/E classifier, the high A/E cut and the LQ classifier), `psd_peaks`,
@@ -34,14 +35,12 @@ the low and high A/E cuts (`ds`), the low A/E cut and the LQ cut (`low_lq`), and
 - `reprocess`: Discard the existing `psd` parameters of the run and process all detectors and classifiers again.
   Otherwise, classifiers that already have results are kept.
 - `timeout`: Seconds allowed per detector in `parallel`; `0` means no limit.
-- `use_partition_pars`: If `true` (default), read the A/E and LQ cuts from the partition parameters (`ppars`);
-  if `false`, from the run parameters (`rpars`).
 
 # Returns
 The return value is not used by `run_processing`.
 """
 function process_psd_efficiencies_cal(processing_config, l200::LegendData, period::DataPeriod, run::DataRun; reprocess::Bool = false,
-                                      timeout::Real = 0, use_partition_pars::Bool = true)
+                                      timeout::Real = 0)
     @info "Generate PSD efficiencies for period $period and run $run"
 
     filekey = start_filekey(l200, (period, run, :cal))
@@ -57,13 +56,18 @@ function process_psd_efficiencies_cal(processing_config, l200::LegendData, perio
     make_par_dir(joinpath(data_path(l200.par.rpars.psd), string(period)))
     pars_db = PropDict(l200.par.rpars.psd[period, run])
 
-    pars_type = ifelse(use_partition_pars, :ppars, :rpars)
-    @info "Use $(ifelse(use_partition_pars, "partition", "run"))-based pars from $pars_type for PSD parameters"
-
-    pars_aoe = get_values(l200.par[pars_type, :aoe](filekey))
+    # the A/E and LQ parameters of the types and categories that the event building reads
+    evt_kwargs = get_ged_evt_kwargs(l200, filekey)
+    pars_aoe = LegendDataManagement._get_aoecal_props(l200, filekey; pars_type = evt_kwargs.aoe_cal_pars_type,
+                                                      pars_cat = evt_kwargs.aoe_cal_pars_cat)
+    pars_aoe_cut = LegendDataManagement._get_aoecal_props(l200, filekey; pars_type = evt_kwargs.aoe_cut_pars_type,
+                                                          pars_cat = evt_kwargs.aoe_cut_pars_cat)
     @debug "Loaded aoe pars"
 
-    pars_lq = get_values(l200.par[pars_type, :lq](filekey))
+    pars_lq = LegendDataManagement._get_lqcal_props(l200, filekey; pars_type = evt_kwargs.lq_cal_pars_type,
+                                                    pars_cat = evt_kwargs.lq_cal_pars_cat)
+    pars_lq_cut = LegendDataManagement._get_lqcal_props(l200, filekey; pars_type = evt_kwargs.lq_cut_pars_type,
+                                                        pars_cat = evt_kwargs.lq_cut_pars_cat)
     @debug "Loaded lq pars"
 
     pars_db = ifelse(reprocess, PropDict(), pars_db)
@@ -143,18 +147,18 @@ function process_psd_efficiencies_cal(processing_config, l200::LegendData, perio
                                     xlabel = "A/E", ylabel = "Counts")
                     Makie.stephist!(ax, filter(isfinite, aoe_values);
                                     bins = range(quantile(filter(isfinite, aoe_values), [0.001, 0.999])...; length = 201))
-                    Makie.vlines!(ax, [mvalue(get(pars_aoe[det][aoe_classifier], :lowcut, NaN))]; color = :red, linestyle = :dash)
+                    Makie.vlines!(ax, [mvalue(get(pars_aoe_cut[det][aoe_classifier], :lowcut, NaN))]; color = :red, linestyle = :dash)
                     Makie.vlines!(ax, [aoe_high_cut]; color = :red, linestyle = :dash)
                     save_plot(fig, l200, filekey, det, Symbol("error_aoe_data_loading_$psd_classifier"))
                 end
                 aoe, aoe_low_cut = @process_step "AoE data loading" on_error = plot_aoe_cuts begin
                     ljl_propfunc(pars_aoe[det][Symbol(first(split(string(aoe_classifier), "_classifier")))].func).(hit_cal),
-                    pars_aoe[det][aoe_classifier].lowcut
+                    pars_aoe_cut[det][aoe_classifier].lowcut
                 end
 
                 lq, lq_cut = @process_step "LQ data loading" begin
                     ljl_propfunc(pars_lq[det][Symbol(first(split(string(lq_classifier), "_classifier")))].func).(hit_cal),
-                    pars_lq[det][lq_classifier].highcut
+                    pars_lq_cut[det][lq_classifier].highcut
                 end
 
                 @debug "Use low A/E cut at $(round(aoe_low_cut, digits=2)) and high A/E cut at $(round(aoe_high_cut, digits=2))"

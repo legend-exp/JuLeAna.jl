@@ -27,5 +27,7 @@ Test.@testset "ExplicitImports" begin
                                                     :fast_flatten, :set_timelimit, :_fix_vov, :AchatBlue, :BEGeOrange, :CoaxGreen,
                                                     :add_watermarks!, :parameterplot!, :tottime, :totallocated, :todict, :format_bytes,
                                                     # Cached calibration function of one energy type (`read_hit_cal`).
-                                                    :_get_e_cal_propsfunc_str))
+                                                    :_get_e_cal_propsfunc_str,
+                                                    # Cached A/E and LQ parameters (`process_psd_efficiencies_cal`).
+                                                    :_get_aoecal_props, :_get_lqcal_props))
 end # testset

@@ -237,7 +237,6 @@ processors:
     kwargs:
       reprocess: false
       timeout: 0
-      use_partition_pars: true
     dependencies:
       - p_process_aoe_calibration_cut_cal
       - p_process_aoe_cut_cal
