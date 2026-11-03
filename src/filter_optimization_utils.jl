@@ -350,6 +350,20 @@ end
 
 
 """
+    flat_top_edge(ft, ft_range, lattice)
+
+`:lower` or `:upper` if the flat-top time `ft` equals the first or last element of `ft_range`
+(`(lowest, highest)`) at the precision of the sampling `lattice`, otherwise `nothing`. A
+degenerate range with both ends equal gives `:upper`.
+"""
+function flat_top_edge(ft, ft_range, lattice)
+    steps(x) = round(Int, ustrip(NoUnits, x / lattice))
+    lo, hi = steps.(ft_range)
+    n = steps(ft)
+    return n == hi ? :upper : n == lo ? :lower : nothing
+end
+
+"""
     optimize_channel_filter(sets::NamedTuple, pulse::NamedTuple, flt::Symbol, dsp_config::DSPConfig,
                             opt_config::PropDict, τ::Unitful.Time, sg_wl::Unitful.Time, sg_wl_source::AbstractString;
                             detector, f_title::Function, f_save::Function, f_tablepath::Function)
@@ -379,8 +393,13 @@ histogram of the energies in the fit window with the error text.
 The objective is `opt_config.objective`; `:fwhm_ct` uses `opt_config.ctc_rel_uncertainty`, the
 assumed relative error of the charge-trapping correction.
 
-Returns `(pars, log)`: the fltopt pars of the filter and the extra log table fields. `pars`
-holds `n_evals` and `converged` of the joint search only if it ran.
+If the applied optimum flat-top time equals the lower or upper end of the flat-top grid
+(`flat_top_edge`), a warning naming `detector` and `flt` is logged and added to the crosscheck
+warning of the log.
+
+Returns `(pars, log)`: the fltopt pars of the filter and the extra log table fields (`ft_edge` is
+`:lower`, `:upper` or `nothing`). `pars` holds `n_evals` and `converged` of the joint search only
+if it ran.
 
 The stages run as `@process_step`s named "<flt> noise sweep", "<flt> flat-top scan",
 "<flt> joint search" (or the flat-top scan optimum is used), "<flt> crosschecks",
@@ -490,6 +509,11 @@ function optimize_channel_filter(sets::NamedTuple, pulse::NamedTuple, flt::Symbo
         (aoe, cc_legacy, cc_new, warning)
     end
 
+    # an optimum on the edge of the ft grid may lie beyond it
+    ft_edge = flat_top_edge(ft_new, ft_written.(extrema(e_grid_ft)), prep.sampling_period)
+    isnothing(ft_edge) || @warn "Detector $detector, filter $flt: optimum flat-top time $ft_new is on the $ft_edge edge of the ft grid $(extrema(e_grid_ft))"
+    warning = join(filter(!isempty, [warning, isnothing(ft_edge) ? "" : "flat-top time on the $ft_edge edge of the ft grid"]), "; ")
+
     @process_step "$flt crosscheck plots" begin
         if opt_config.apply_ctc
             f_save(LegendMakie.lplot(cc_legacy.ctc_report, figsize = (600, 600), title = f_title("CTC Legacy Optimum", flt)), Symbol("ctc_$(flt)_legacy"))
@@ -580,7 +604,7 @@ function optimize_channel_filter(sets::NamedTuple, pulse::NamedTuple, flt::Symbo
         legacy = (rt = rt_enc, ft = legacy_ft, fwhm = cc_legacy.fep_row.fwhm)
     )
     joint_search && (pars = merge(pars, (n_evals = result_rtft.n_evals, converged = result_rtft.converged)))
-    return (; pars, log = (objective = pars.objective, legacy_rt = rt_enc, legacy_ft, crosscheck_warning = isempty(warning) ? "-" : warning))
+    return (; pars, log = (objective = pars.objective, legacy_rt = rt_enc, legacy_ft, crosscheck_warning = isempty(warning) ? "-" : warning, ft_edge))
 end
 
 

@@ -185,7 +185,7 @@ otherwise the optimum is the flat-top scan optimum at the ENC rise time.
 The CUSP and ZAC filters round the flat-top time to whole samples and lengthen it by one sample if the filter length minus the flat top is odd;
 the flat-top times in the results are those the filters apply.
 The FEP, the DEP and the SEP are compared at the legacy and the new optimum;
-shifts of the DEP or SEP, peak fits that fail and changes of the slow-pulse residual appear in the column Crosscheck Warning.
+shifts of the DEP or SEP, peak fits that fail, changes of the slow-pulse residual and an optimum flat-top time on the edge of the flat-top grid appear in the column Crosscheck Warning.
 """
 
 const sg_filter_optimization_log_text = """## SG window length optimization
