@@ -10,7 +10,8 @@ detector (`additional_detectors` in the DSP configuration) are read and processe
 function, and the result is extended by the auxiliary calibration property function. After all
 filekeys, each detector is summarized over the run: its number of events, a cross-check
 histogram of the energy named in the `cal.aux_trig` condition of the event configuration with
-the trigger threshold marked, and, for DSP outputs with `e_max` and `t_max`, a 2D histogram of both.
+the trigger threshold marked, and, for DSP outputs with `e_max` and `t_max`, a 2D histogram of both with the time window
+of the `cal.aux_trig_intime` condition marked.
 
 # Inputs
 - `raw` tier of the `phy` filekeys of the run listed in the runinfo, except the filekeys marked unprocessable
@@ -135,6 +136,14 @@ function process_dsp_aux_phy(processing_config, l200::LegendData, period::DataPe
                 p = LegendMakie.lhist(fit(Histogram, (t_max, e_max), (time_bins, energy_bins)); figsize = (800, 500),
                                       title = get_plottitle(filekey, det, "e_max vs. t_max"), xlabel = "t_max (µs)", ylabel = "e_max (ADC)",
                                       yscale = log10, colorbarlabel = "Counts / bin", juleana_logo = false)
+                # time window bounds of the `cal.aux_trig_intime` condition, e.g. `t_max >= 48u"µs" && t_max <= 55u"µs"`
+                window = [ustrip(u"µs", parse(Float64, m[1]) * uparse(m[2]))
+                          for m in eachmatch(r"t_max\s*[<>]=?\s*([\d.]+)\s*u\"([^\"]+)\"", get(evt_config_pd.aux[det].cal, :aux_trig_intime, ""))]
+                if !isempty(window)
+                    ax = Makie.current_axis()
+                    Makie.vlines!(ax, window; color = LegendMakie.BEGeOrange, linestyle = :dash, linewidth = 2, label = "aux_trig_intime window")
+                    Makie.axislegend(ax; position = :rt)
+                end
                 save_plot(p, l200, filekey, det, :dsp_aux_energy_tmax)
             end
         end

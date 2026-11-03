@@ -74,7 +74,7 @@ import ThreadPinning
 import TOML
 using TimerOutputs: TimerOutputs, @timeit, TimerOutput
 using TypedTables: TypedTables, Table, columnnames, columns
-using Unitful: Unitful, @u_str, uconvert, unit, ustrip
+using Unitful: Unitful, @u_str, uconvert, unit, uparse, ustrip
 import UnitfulAtomic
 using UUIDs: UUID, uuid4
 
