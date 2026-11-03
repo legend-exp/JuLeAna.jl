@@ -60,6 +60,7 @@ progress
 busy_workers
 step_messages
 ProgressStore
+JuLeAna.item_timings
 show_progress
 JuLeAna.effective_config
 ControllerCommand

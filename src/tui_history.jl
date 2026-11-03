@@ -288,13 +288,15 @@ function history_detail(page::HistoryPage)
     spans = [(history_row_label(row) * "  ", Tachikoma.tstyle(:text_bright, bold = true)), (label * "  ", Tachikoma.tstyle(:text))]
     if isnothing(cell)
         push!(spans, ("never processed", Tachikoma.tstyle(REPORT_COLORS.missing)))
-        return spans
+    else
+        color = cell.source === :report ? REPORT_COLORS[cell.state] : HISTORY_COLORS[cell.state]
+        date = isnothing(cell.date) ? "date unknown" : Dates.format(cell.date, dateformat"yyyy-mm-dd HH:MM") * " UTC"
+        source = cell.source === :report ? "report" : "history, log folder $(cell.path)"
+        push!(spans, (string(cell.state) * "  ", Tachikoma.tstyle(color)), (date * "  ", Tachikoma.tstyle(:text)),
+              (source, Tachikoma.tstyle(:text_dim)))
     end
-    color = cell.source === :report ? REPORT_COLORS[cell.state] : HISTORY_COLORS[cell.state]
-    date = isnothing(cell.date) ? "date unknown" : Dates.format(cell.date, dateformat"yyyy-mm-dd HH:MM") * " UTC"
-    source = cell.source === :report ? "report" : "history, log folder $(cell.path)"
-    push!(spans, (string(cell.state) * "  ", Tachikoma.tstyle(color)), (date * "  ", Tachikoma.tstyle(:text)),
-          (source, Tachikoma.tstyle(:text_dim)))
+    isnothing(row.timing) ||
+        push!(spans, ("  " * item_time_text(row.timing) * " ($(row.timing.items) items)", Tachikoma.tstyle(:text_dim)))
     return spans
 end
 
@@ -524,7 +526,8 @@ failed, `s` stopped or `c` cancelled; `–` if the processor never processed the
 partition-level cell spans the runs of its period, as `[ ✓ ]`. The cell under the cursor
 is highlighted, the grid scrolls to keep it visible while the names stay in place, and the
 last two lines show the legend and the description of the cell under the cursor: processor, period and run,
-state, processing date in UTC and source. While no session is loaded or a read is under way the page says so, and
+state, processing date in UTC and source, followed by the minimum, median and maximum item
+time in seconds of the processor's latest processing run in the history that timed its items. While no session is loaded or a read is under way the page says so, and
 the error of a failed read replaces the grid. The title says whether the columns are the
 selected runs or all runs (`a`).
 

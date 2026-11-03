@@ -14,11 +14,12 @@ using Test
                  software = "JuLeAna 0.2.0 (abc1234, modified), Julia 1.12.7", metadata = "setup/metadata/2026-10-15T120000Z-def5678",
                  steps = [step(:process_dsp_cal, :run, DataRun(6), :done, DateTime(2026, 10, 15, 12, 0, 2),
                                DateTime(2026, 10, 15, 12, 3, 11), (12, 0, 0)),
-                          step(:p_process_energy_cal, :partition, nothing, :stopped, nothing, nothing, (0, 0, 0))])
+                          step(:p_process_energy_cal, :partition, nothing, :stopped, nothing, nothing, (0, 0, 0))],
+                 timings = [(; process = :process_dsp_cal, level = :run, category = :cal, items = 12, min = 1.5, median = 10.2, max = 30.0)])
     second_run = (; started = DateTime(2026, 10, 16, 8, 0, 0), finished = DateTime(2026, 10, 16, 8, 30, 0), user = "someone",
                   host = "node1", outcome = :failed, log_path = "/data/jllog/20261016T080000Z", software = nothing, metadata = nothing,
                   steps = [step(:process_dsp_cal, :run, DataRun(7), :failed, DateTime(2026, 10, 16, 8, 0, 0),
-                                DateTime(2026, 10, 16, 8, 30, 0), (3, 1, 2))])
+                                DateTime(2026, 10, 16, 8, 30, 0), (3, 1, 2))], timings = [])
 
     path = joinpath(mktempdir(), "jllog", "history.md")
     @test JuLeAna.read_history(path) == []
@@ -32,6 +33,10 @@ using Test
     @test occursin("Log folder: /data/jllog/20261016T080000Z\n\n", text)
     @test occursin("| process_dsp_cal | run | cal | p02 | r006 | done | 2026-10-15 12:00:02 | 2026-10-15 12:03:11 | 12/0/0 |", text)
     @test occursin("| p_process_energy_cal | partition | cal | p02 | – | stopped | – | – | 0/0/0 |", text)
+    @test occursin("| Processor | Level | Category | Timed items | Min (s) | Median (s) | Max (s) |\n|---|---|---|---|---|---|---|\n" *
+                   "| process_dsp_cal | run | cal | 12 | 1.5 | 10.2 | 30.0 |\n", text)
+    # a run without item times has no table of them
+    @test count("Timed items", text) == 1
     # the file reads back as written
     @test JuLeAna.read_history(path) == [first_run, second_run]
 
@@ -39,6 +44,8 @@ using Test
     bad = joinpath(mktempdir(), "history.md")
     write(bad, replace(text, "| 12/0/0 |" => "| 12/0 |"))
     @test_throws "line 12 of $bad does not follow the history format" JuLeAna.read_history(bad)
+    write(bad, replace(text, "| 12 | 1.5 |" => "| 12 | fast |"))
+    @test_throws "line 17 of $bad does not follow the history format" JuLeAna.read_history(bad)
     write(bad, "some text\n")
     @test_throws "line 1 of $bad" JuLeAna.read_history(bad)
 end
@@ -57,14 +64,16 @@ end
                 (; name = "energy", level = :partition, category = "cal", reports = [report("p02", nothing, :ok, t(10))])]
     step(process, level, period, run, outcome, started, finished) = (; process, level, category = :cal, period, run, outcome, started,
                                                                      finished, done = 0, failed = 0, notrun = 0)
+    timing(process, level, median) = (; process, level, category = :cal, items = 3, min = 0.5, median, max = 9.0)
     history = [(; started = t(11), finished = t(13), user = "u", host = "h", outcome = :failed, log_path = "/log/a", software = nothing,
                 steps = [step(:process_dsp_cal, :run, p2, r6, :failed, t(11), t(12)),
                          step(:process_dsp_cal, :run, p2, r7, :failed, t(9), t(9)),
                          step(:process_dsp_cal, :run, p3, r0, :stopped, t(11), t(12)),
                          step(:p_process_energy_cal, :partition, p2, nothing, :cancelled, nothing, nothing),
-                         step(:p_process_energy_cal, :partition, p3, nothing, :stopped, nothing, nothing)]),
+                         step(:p_process_energy_cal, :partition, p3, nothing, :stopped, nothing, nothing)],
+                timings = [timing(:process_dsp_cal, :run, 1.0), timing(:p_process_energy_cal, :partition, 5.0)]),
                (; started = t(14), finished = t(15), user = "u", host = "h", outcome = :finished, log_path = "/log/b", software = nothing,
-                steps = [step(:process_dsp_cal, :run, p3, r0, :done, t(14), t(15))])]
+                steps = [step(:process_dsp_cal, :run, p3, r0, :done, t(14), t(15))], timings = [timing(:process_dsp_cal, :run, 2.0)])]
 
     grid = JuLeAna.history_grid(processors, period_runs, overview, history)
     @test grid.periods == [(; period = p2, runs = [r6, r7]), (; period = p3, runs = [r0])]
@@ -83,6 +92,9 @@ end
     @test energy.cells[(p2, nothing)].source == :report
     @test energy.cells[(p3, nothing)] == (; state = :stopped, date = t(13), source = :history, path = "/log/a")
     @test JuLeAna.history_grid(processors, period_runs, [], []).rows[1].cells == Dict()
+    # the item times of a processor come from the latest run that timed it
+    @test dsp.timing.median == 2.0 && energy.timing.median == 5.0
+    @test isnothing(JuLeAna.history_grid(processors, period_runs, [], []).rows[1].timing)
 
     # the state on disk of a processor over a selection of runs
     @test JuLeAna.disk_counts(dsp, period_runs) == (; ok = 0, warning = 1, failed = 1, missing = 1, total = 3)

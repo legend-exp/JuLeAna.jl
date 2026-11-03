@@ -80,7 +80,8 @@ With a [`ProgressStore`](@ref) as `progress_store`, the store is reset to the sc
 steps, every step's state is recorded there (`:skipped` for a run that is not processed,
 `:failed` or `:stopped` for a step that threw) and `parallel` records the items of the
 step that calls it. Steps that never finished are `:stopped` when the run was stopped and
-`:cancelled` otherwise.
+`:cancelled` otherwise. The store records the durations of the items (see
+[`JuLeAna.item_timings`](@ref)) only when every step runs with `reprocess = true`.
 """
 function run_processing(cfg::ProcessingConfig, l200, periods::AbstractVector{DataPeriod}, run_steps::AbstractVector{Symbol},
                         partition_steps::AbstractVector{Symbol}, run_status::AbstractDict, partition_status::AbstractDict;
@@ -135,7 +136,13 @@ function run_processing(cfg::ProcessingConfig, l200, periods::AbstractVector{Dat
         (isnothing(items) || (!isnothing(run) && !isnothing(skip_reason((period, run, step))))) && continue
         item_counts[(period, run, step)] = length(items(cfg, l200, period, run))
     end
-    isnothing(progress_store) || reset_progress!(progress_store, nodes)
+    # items that skip their work because it is done already would distort the item times
+    untimed = filter(step -> get(merge(NamedTuple(spec(step).kwargs), overrides), :reprocess, false) !== true,
+                     unique(Iterators.flatten((run_steps, partition_steps))))
+    if !isnothing(progress_store)
+        reset_progress!(progress_store, nodes; timed = isempty(untimed))
+        isempty(untimed) || @info "Item times are not recorded: $(join(untimed, ", ")) run with reprocess = false"
+    end
     mark(key, state; error = nothing) = isnothing(progress_store) || set_step_state!(progress_store, key, state; error)
     blockers = Dict{ProgressKey,Set{ProgressKey}}(node => Set(predecessors(node)) for node in nodes)
     dependents = Dict{ProgressKey,Vector{ProgressKey}}(node => ProgressKey[] for node in nodes)

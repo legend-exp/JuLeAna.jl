@@ -34,7 +34,8 @@ detail_text(page) = join(first.(JuLeAna.history_detail(page)))
                 steps = [step(:process_dsp_cal, :run, p2, DataRun(6), :failed, t(11), t(12)),
                          step(:process_dsp_cal, :run, p2, DataRun(9), :stopped, t(11), t(12)),
                          step(:process_dsp_cal, :run, p3, r0, :cancelled, nothing, nothing),
-                         step(:p_process_energy_cal, :partition, p3, nothing, :failed, t(11), t(12))])]
+                         step(:p_process_energy_cal, :partition, p3, nothing, :failed, t(11), t(12))],
+                timings = [(; process = :process_dsp_cal, level = :run, category = :cal, items = 12, min = 1.5, median = 10.2, max = 30.0)])]
     grid = JuLeAna.history_grid(processors, [p2 => runs2, p3 => [r0]], overview, history)
 
     # controller snapshot with the given selection; everything is selected by default
@@ -93,7 +94,7 @@ detail_text(page) = join(first.(JuLeAna.history_detail(page)))
         @test !page.all_runs && run_labels(page) == ["p02-r007", "p02-r009"]
         text = history_text(render_history_page(page))
         @test occursin("History, selected runs", text) && !occursin("p03", text)
-        @test detail_text(page) == "dsp cal  p02-r007  warning  2026-10-15 10:00 UTC  report"
+        @test detail_text(page) == "dsp cal  p02-r007  warning  2026-10-15 10:00 UTC  report  min/med/max 1.5/10.2/30.0 s (12 items)"
         # a partition-level cell spans only the shown runs of its period
         page.row = 3
         @test detail_text(page) == "energy cal  p02  ok  2026-10-15 10:00 UTC  report"
@@ -136,9 +137,10 @@ detail_text(page) = join(first.(JuLeAna.history_detail(page)))
     @testset "cursor and details" begin
         page = loaded_page()
         @test length(page.columns) == 11
-        @test detail_text(page) == "dsp cal  p02-r006  failed  2026-10-15 12:00 UTC  history, log folder /log/a"
+        @test detail_text(page) ==
+              "dsp cal  p02-r006  failed  2026-10-15 12:00 UTC  history, log folder /log/a  min/med/max 1.5/10.2/30.0 s (12 items)"
         JuLeAna.history_key!(page, KeyEvent(:right))
-        @test detail_text(page) == "dsp cal  p02-r007  warning  2026-10-15 10:00 UTC  report"
+        @test detail_text(page) == "dsp cal  p02-r007  warning  2026-10-15 10:00 UTC  report  min/med/max 1.5/10.2/30.0 s (12 items)"
         JuLeAna.history_key!(page, KeyEvent(:left))
         JuLeAna.history_key!(page, KeyEvent(:left))
         @test page.col == 1
@@ -161,7 +163,8 @@ detail_text(page) = join(first.(JuLeAna.history_detail(page)))
         @test page.col == 11
         JuLeAna.history_key!(page, KeyEvent(:up))
         JuLeAna.history_key!(page, KeyEvent(:up))
-        @test detail_text(page) == "dsp cal  p03-r000  cancelled  2026-10-15 13:00 UTC  history, log folder /log/a"
+        @test detail_text(page) ==
+              "dsp cal  p03-r000  cancelled  2026-10-15 13:00 UTC  history, log folder /log/a  min/med/max 1.5/10.2/30.0 s (12 items)"
         JuLeAna.history_key!(page, KeyEvent(:home))
         @test page.col == 1
         render_history_page(page)

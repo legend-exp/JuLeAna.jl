@@ -785,8 +785,9 @@ function apply!(ctrl::DataflowController, cmd::StartProcessing)
     return nothing
 end
 
-# Append the steps of the processing run that ended with `outcome` to the processing
-# history of `l200`; an error is logged and does not change the outcome.
+# Append the steps and the item times of the processing run that ended with `outcome` to the
+# processing history of `l200` and log the item times; an error is logged and does not change
+# the outcome.
 function write_history(ctrl::DataflowController, cfg::ProcessingConfig, l200, outcome::Symbol, finished::DateTime)
     try
         steps = map(progress(ctrl).steps) do e
@@ -794,10 +795,18 @@ function write_history(ctrl::DataflowController, cfg::ProcessingConfig, l200, ou
             return (; process = e.step, level, category, e.period, e.run, outcome = e.state, e.started, e.finished, e.done, e.failed,
                     e.notrun)
         end
+        timings = map(item_timings(ctrl.progress)) do t
+            (; level, category) = processor_spec(cfg, t.process)
+            return (; t.process, level, category, t.items, min = round(t.min; digits = 1), median = round(t.median; digits = 1),
+                    max = round(t.max; digits = 1))
+        end
+        isempty(timings) || @info "Item times in seconds, min/median/max:\n" *
+                                  join(("$(t.process): $(t.min)/$(t.median)/$(t.max) over $(t.items) items" for t in timings), "\n")
         path = append_history(history_path(l200),
                               (; ctrl.started, finished, user = get(ENV, "USER", "unknown"), host = gethostname(), outcome, cfg.log_path,
                                software = software_version(ctrl.software_snapshot),
-                               metadata = isnothing(ctrl.metadata_record) ? nothing : "setup/metadata/$(ctrl.metadata_record)", steps))
+                               metadata = isnothing(ctrl.metadata_record) ? nothing : "setup/metadata/$(ctrl.metadata_record)", steps,
+                               timings))
         @info "Added the processing run to the history in $path"
     catch e
         @error "Writing the processing history failed" exception = (e, catch_backtrace())

@@ -748,6 +748,35 @@ const REPORT = """
         @test JuLeAna.PROCESSOR_TRAITS[:process_evt_phy].items isa Function
     end
 
+    @testset "item times" begin
+        original_pool = ppt_worker_pool()
+        ppt_worker_pool!(FlexWorkerPool(withmyid = true, label = "item times test"; maxoccupancy = 1))
+        try
+            Row = NamedTuple{(:Detector, :usability, :Status, :Error)}
+            function run_a(cfg, l200, period, run; reprocess::Bool = false)
+                parallel([(detector = Symbol(:V, i), usability = :on) for i in 1:2], Row) do itr
+                    sleep(0.2)
+                    (processed = true, log = Row((itr.detector, :on, 1, "")))
+                end
+                return nothing
+            end
+            cfg = ProcessingConfig(; processors = Dict(:run_a => ProcessorSpec(; name = :run_a, level = :run, category = :cal, rank = 1)),
+                                   p_processors = Dict{Symbol,ProcessorSpec}())
+            store = ProgressStore()
+            timed_run(; kwargs...) = run_processing(cfg, FakeData(), [DataPeriod(3)], [:run_a], Symbol[],
+                                                    stub_status([DataPeriod(3)], DataRun.(1:2), [:run_a], Symbol[])...;
+                                                    processors = Dict{Symbol,Any}(:run_a => run_a), progress_store = store, kwargs...)
+            timed_run(; reprocess = true)
+            t = only(JuLeAna.item_timings(store))
+            @test t.process === :run_a && t.items == 4 && t.min >= 0.2
+            # a step that keeps its outputs is not timed
+            @test_logs (:info, "Item times are not recorded: run_a run with reprocess = false") match_mode = :any timed_run()
+            @test isempty(JuLeAna.item_timings(store))
+        finally
+            ppt_worker_pool!(original_pool)
+        end
+    end
+
     @testset "selected_steps and runprocs_mode" begin
         processors = Dict(:run_a => ProcessorSpec(; name = :run_a, level = :run, category = :cal, rank = 1))
         p_processors = Dict(:p_part_b => ProcessorSpec(; name = :p_part_b, level = :partition, category = :cal, rank = 1))

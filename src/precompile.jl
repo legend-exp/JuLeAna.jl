@@ -79,6 +79,7 @@
         item_started!(store, run_key, id + 1, 1, "fk1")
         item_finished!(store, run_key, id, :done)
         item_finished!(store, run_key, id + 1, :failed)
+        item_timings(store)
         item_started!(store, run_key, id + 2, 2, "fk2")
         for (level, text) in ((Logging.Info, "Processing fk0"), (Logging.Warn, "Fit did not converge\n  channel = V02"),
                               (Logging.Error, "Processing fk1 failed"))
@@ -106,13 +107,15 @@
                 index_row(:p_process_aoe_cut_cal, "p02", nothing, :missing; level = :partition)]
         step(process, level, period, run, outcome) = (; process, level, category = :cal, period, run, outcome, started = t0, finished = t0,
                                                       done = 0, failed = 0, notrun = 0)
+        timing = (; process = :process_dsp_cal, level = :run, category = :cal, items = 10, min = 1.2, median = 3.4, max = 9.8)
         grid = history_grid([(; name = p.name, p.level, p.category) for p in processors], [p2 => runs2, p3 => [r0]],
                             [(; name = "dsp_cal", level = :run, category = "cal",
                               reports = [(; period = "p02", run = "r006", path = "/jlrep/dsp.md", state = :ok, date = t0),
                                          (; period = "p02", run = "r007", path = "/jlrep/dsp7.md", state = :failed, date = t0)])],
                             [(; started = t0, finished = t0, user = "u", host = "h", outcome = :failed, log_path = "/log/a",
                               steps = [step(:process_dsp_cal, :run, p2, runs2[2], :failed), step(:process_dsp_cal, :run, p3, r0, :stopped),
-                                       step(:p_process_aoe_cut_cal, :partition, p3, nothing, :cancelled)])])
+                                       step(:p_process_aoe_cut_cal, :partition, p3, nothing, :cancelled)],
+                              timings = [timing])])
         allocation(id, state, backend; output = String[]) = (; id, backend, job_name = "julia-$id", started = t0, finished = nothing, state,
                                                              exit_code = nothing, job_ids = ["4711"], output)
         overview = convert(WorkersOverview,
@@ -135,7 +138,9 @@
         end
         m.page = 6
         reports_visit!(m.reports_page, snap)
-        deliver!(Tachikoma.TaskEvent(:reports, (; request = only(take_requests!(m.reports_page)), value = rows, history = nothing)))
+        deliver!(Tachikoma.TaskEvent(:reports,
+                                     (; request = only(take_requests!(m.reports_page)), value = rows, history = nothing,
+                                      timings = Dict{Any,Any}(("dsp_cal", :run, "cal") => timing))))
         m.page = 7
         history_visit!(m.history_page, snap)
         deliver!(Tachikoma.TaskEvent(:history, (; request = only(take_requests!(m.history_page)), value = grid)))
