@@ -196,7 +196,7 @@ press(page, key) = JuLeAna.reports_key!(page, KeyEvent(key))
                                 (; request = merge(request, (; generation = request.generation - 1)), value = OVERVIEW_ROWS,
                                  history = nothing, timings = Dict()))
         @test !page.loaded && page.reading
-        timing = (; process = :process_dsp_cal, level = :run, category = :cal, items = 3, min = 0.5, median = 1.2, max = 4.0)
+        timing = (; process = :process_dsp_cal, level = :run, category = :cal, items = 3, min = 0.5, median = 1.2, p95 = 3.9, max = 4.0)
         JuLeAna.reports_result!(page,
                                 (; request, value = OVERVIEW_ROWS, history = nothing, timings = Dict(("dsp_cal", :run, "cal") => timing)))
         @test page.loaded && !page.reading
@@ -205,7 +205,7 @@ press(page, key) = JuLeAna.reports_key!(page, KeyEvent(key))
         tb = render_reports_page(page)
         @test find_text(tb, "ok 1  warn 0  fail 0") !== nothing && find_text(tb, "miss") === nothing
         # the item times of the processor follow its counts
-        @test find_text(render_reports_page(page, 160), "fail 0  min/med/max 0.5/1.2/4.0 s") !== nothing
+        @test find_text(render_reports_page(page, 160), "fail 0  min/med/95%/max 0.5/1.2/3.9/4.0 s") !== nothing
         # `r` reads again and keeps the source
         @test press(page, 'r')
         request = only(JuLeAna.take_requests!(page))

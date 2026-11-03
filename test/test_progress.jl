@@ -172,7 +172,7 @@ waitfor(cond; timeout = 60) = timedwait(cond, timeout; pollint = 0.05) === :ok
         # the items of both runs are pooled per processor
         t = only(JuLeAna.item_timings(store))
         @test t.process === :run_a && t.items == 3
-        @test t.min < t.median < t.max && t.median >= 0.05 && t.max >= 0.15
+        @test t.min < t.median < t.p95 < t.max && t.median >= 0.05 && t.max >= 0.15
         # a new run starts without item times; an untimed run records none
         JuLeAna.reset_progress!(store, [a]; timed = false)
         @test isempty(JuLeAna.item_timings(store))

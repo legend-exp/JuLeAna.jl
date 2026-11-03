@@ -798,10 +798,10 @@ function write_history(ctrl::DataflowController, cfg::ProcessingConfig, l200, ou
         timings = map(item_timings(ctrl.progress)) do t
             (; level, category) = processor_spec(cfg, t.process)
             return (; t.process, level, category, t.items, min = round(t.min; digits = 1), median = round(t.median; digits = 1),
-                    max = round(t.max; digits = 1))
+                    p95 = round(t.p95; digits = 1), max = round(t.max; digits = 1))
         end
-        isempty(timings) || @info "Item times in seconds, min/median/max:\n" *
-                                  join(("$(t.process): $(t.min)/$(t.median)/$(t.max) over $(t.items) items" for t in timings), "\n")
+        isempty(timings) || @info "Item times in seconds, min/median/95%/max:\n" *
+                                  join(("$(t.process): $(t.min)/$(t.median)/$(t.p95)/$(t.max) over $(t.items) items" for t in timings), "\n")
         path = append_history(history_path(l200),
                               (; ctrl.started, finished, user = get(ENV, "USER", "unknown"), host = gethostname(), outcome, cfg.log_path,
                                software = software_version(ctrl.software_snapshot),

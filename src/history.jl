@@ -3,7 +3,7 @@
 const HISTORY_TITLE = "# Processing history"
 const HISTORY_COLUMNS = ["Processor", "Level", "Category", "Period", "Run", "Outcome", "Started (UTC)", "Finished (UTC)",
                          "Items ok/failed/not run"]
-const ITEM_TIME_COLUMNS = ["Processor", "Level", "Category", "Timed items", "Min (s)", "Median (s)", "Max (s)"]
+const ITEM_TIME_COLUMNS = ["Processor", "Level", "Category", "Timed items", "Min (s)", "Median (s)", "95% (s)", "Max (s)"]
 const HISTORY_TIME_FORMAT = dateformat"yyyy-mm-dd HH:MM:SS"
 
 """
@@ -47,7 +47,8 @@ function history_section(entry)
     println(io, "| ", join(ITEM_TIME_COLUMNS, " | "), " |")
     println(io, "|", repeat("---|", length(ITEM_TIME_COLUMNS)))
     for t in timings
-        cells = [string(t.process), string(t.level), string(t.category), string(t.items), string(t.min), string(t.median), string(t.max)]
+        cells = [string(t.process), string(t.level), string(t.category), string(t.items), string(t.min), string(t.median), string(t.p95),
+                 string(t.max)]
         println(io, "| ", join(cells, " | "), " |")
     end
     return String(take!(io))
@@ -81,8 +82,8 @@ or `nothing`,
 and `steps` a vector of `(; process, level, category, period, run, outcome, started,
 finished, done, failed, notrun)` with `period` a `DataPeriod` and `run` a `DataRun`, or
 `nothing` for a partition-level step. `timings` is a vector of `(; process, level, category,
-items, min, median, max)`, the number of timed items of a processor and their durations in
-seconds over all periods and runs (see [`JuLeAna.item_timings`](@ref)), empty for a section
+items, min, median, p95, max)`, the number of timed items of a processor and their durations in
+seconds over all periods and runs, with `p95` the 95th percentile (see [`JuLeAna.item_timings`](@ref)), empty for a section
 without them.
 
 Throws an `ArgumentError` naming the file and line of a line that does not follow the
@@ -121,11 +122,11 @@ function read_history(path::AbstractString)
             (cells == HISTORY_COLUMNS || cells == ITEM_TIME_COLUMNS || all(c -> c == "---", cells)) && continue
             if timing_rows
                 length(cells) == length(ITEM_TIME_COLUMNS) || malformed(i, line)
-                items, seconds = tryparse(Int, cells[4]), tryparse.(Float64, cells[5:7])
+                items, seconds = tryparse(Int, cells[4]), tryparse.(Float64, cells[5:8])
                 (isnothing(items) || any(isnothing, seconds)) && malformed(i, line)
                 push!(current.timings,
                       (; process = Symbol(cells[1]), level = Symbol(cells[2]), category = Symbol(cells[3]), items, min = seconds[1],
-                       median = seconds[2], max = seconds[3]))
+                       median = seconds[2], p95 = seconds[3], max = seconds[4]))
                 continue
             end
             length(cells) == length(HISTORY_COLUMNS) || malformed(i, line)
@@ -161,7 +162,7 @@ run (run level) or period (partition level).
 Return `(; periods, rows)` with `periods` the vector of `(; period, runs)` and `rows` one
 `(; process, level, category, cells, timing)` per processor. `timing` is the latest entry of
 the processor in the `timings` of the history, `(; process, level, category, items, min,
-median, max)`, or `nothing`. `cells` is a `Dict` from
+median, p95, max)`, or `nothing`. `cells` is a `Dict` from
 `(period, run)`, with `run = nothing` for the partition level, to
 `(; state, date, source, path)`:
 

@@ -542,7 +542,7 @@ function report_counts_text(c, with_missing)
 end
 
 # Item times of a processor, an entry of the `timings` of `read_history`.
-item_time_text(t) = "min/med/max $(t.min)/$(t.median)/$(t.max) s"
+item_time_text(t) = "min/med/95%/max $(t.min)/$(t.median)/$(t.p95)/$(t.max) s"
 
 function history_spans()
     return [("▪ ", Tachikoma.tstyle(:primary, bold = true)), ("Processing history", Tachikoma.tstyle(:primary, bold = true))]
@@ -684,7 +684,7 @@ end
 Draw the Reports page into `area` of `buf`. The left block, about 45% of the width, lists the
 reports grouped by processor: a group row shows the fold arrow, the name, the level, the
 category, the number of reports that are ok, have warnings, failed and (for the current run) are missing
-and the minimum, median and maximum item time in seconds of the processor's latest
+and the minimum, median, 95th percentile and maximum item time in seconds of the processor's latest
 processing run in the history that timed its items; the
 rows of an unfolded group show the period and run, the state and the processing date in UTC. The
 right block shows the failures of the processor under the cursor, per detector the runs it

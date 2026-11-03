@@ -526,8 +526,8 @@ failed, `s` stopped or `c` cancelled; `–` if the processor never processed the
 partition-level cell spans the runs of its period, as `[ ✓ ]`. The cell under the cursor
 is highlighted, the grid scrolls to keep it visible while the names stay in place, and the
 last two lines show the legend and the description of the cell under the cursor: processor, period and run,
-state, processing date in UTC and source, followed by the minimum, median and maximum item
-time in seconds of the processor's latest processing run in the history that timed its items. While no session is loaded or a read is under way the page says so, and
+state, processing date in UTC and source, followed by the minimum, median, 95th percentile and
+maximum item time in seconds of the processor's latest processing run in the history that timed its items. While no session is loaded or a read is under way the page says so, and
 the error of a failed read replaces the grid. The title says whether the columns are the
 selected runs or all runs (`a`).
 

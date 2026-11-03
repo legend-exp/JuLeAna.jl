@@ -107,7 +107,7 @@
                 index_row(:p_process_aoe_cut_cal, "p02", nothing, :missing; level = :partition)]
         step(process, level, period, run, outcome) = (; process, level, category = :cal, period, run, outcome, started = t0, finished = t0,
                                                       done = 0, failed = 0, notrun = 0)
-        timing = (; process = :process_dsp_cal, level = :run, category = :cal, items = 10, min = 1.2, median = 3.4, max = 9.8)
+        timing = (; process = :process_dsp_cal, level = :run, category = :cal, items = 10, min = 1.2, median = 3.4, p95 = 8.1, max = 9.8)
         grid = history_grid([(; name = p.name, p.level, p.category) for p in processors], [p2 => runs2, p3 => [r0]],
                             [(; name = "dsp_cal", level = :run, category = "cal",
                               reports = [(; period = "p02", run = "r006", path = "/jlrep/dsp.md", state = :ok, date = t0),

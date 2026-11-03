@@ -254,14 +254,15 @@ end
 
 Return the durations in seconds of the items of the current or last processing run that
 ended done, per processor over all periods and runs, as a vector of `(; process, items,
-min, median, max)` sorted by `process`, where `items` is the number of timed items. A
+min, median, p95, max)` sorted by `process`, where `items` is the number of timed items and
+`p95` the 95th percentile. A
 processor without a done item is left out, and so is every processor of a processing run
 that is not timed. The duration of an item runs from the moment its last worker got it
 until its call returned.
 """
 function item_timings(store::ProgressStore)
     @lock store.lock begin
-        return [(; process, items = length(d), min = first(d), median = median(d), max = last(d))
+        return [(; process, items = length(d), min = first(d), median = median(d), p95 = quantile(d, 0.95; sorted = true), max = last(d))
                 for (process, d) in sort!(collect(store.durations); by = first)]
     end
 end
