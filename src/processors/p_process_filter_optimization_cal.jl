@@ -11,13 +11,12 @@ The method is the same as in `process_filter_optimization_cal`. The waveforms of
 - `dataprod_config(l200).dsp(filekey)`, in particular `flt_optimization.p_default` and the per-detector entries `flt_optimization.p`, and the DSP config used for the filter grids.
 - `l200.par.ppars.pz[det, part]` (decay times).
 - Quality-cut evaluator loaded by `load_qc_evaluator(l200, filekey)`.
-- `l200.par.ppars.aoeopt[det, part]` (SG window length of the A/E crosscheck, if present; otherwise the DSP config default).
 - `l200.par.ppars.fltopt[det, part]` (existing results, if present).
 
 # Outputs
 - `l200.par.ppars.fltopt[det, part]`: per filter type the objective, the optimal rise time and flat-top time, FWHM and W90 at the optimum and the legacy optimum, with validity entries for the partition; the validity of all partitions of the period is written to `l200.par.ppars.fltopt`.
 - Per detector and filter type, the tables `fltopt_tables_<filter_type>.lh5` next to the plots, always written.
-- Per detector and filter type, the plots `noise_sweep_<filter_type>`, `ft_scan_<filter_type>`, `rtft_landscape_<filter_type>`, the crosscheck figures (`ctc_*`, `peaks_*`, `crosscheck_*`, `residuals_*`, `aoe_cut_*`) and `example_wvfs_<filter_type>`, saved only at the debug plot level.
+- Per detector and filter type, the plots `noise_sweep_<filter_type>`, `ft_scan_<filter_type>`, `rtft_landscape_<filter_type>`, the crosscheck figures (`ctc_*`, `peaks_*`, `crosscheck_*`, `residuals_*`) and `example_wvfs_<filter_type>`, saved only at the debug plot level.
 - Partition report `:filter_optimization` (Main Log, Metadata, Results table with one row per detector, partition and filter type).
 
 # Keywords
@@ -86,10 +85,6 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
         pars_tau = get_values(PropDict(l200.par.ppars.pz[det, part]))
         @debug "Loaded decay times"
 
-        # A/E filter optimization pars of this partition, empty if the detector has none yet
-        aoeopt_filename = joinpath(data_path(l200.par.ppars.aoeopt), "$det", "$part.yaml")
-        pars_aoeopt_det = isfile(aoeopt_filename) ? get_values(PropDict(l200.par.ppars.aoeopt[det, part])) : PropDict()
-
         dsp_config_pd = dataprod_config(l200).dsp(filekey_det)
         dsp_config_det = DSPConfig(merge(dsp_config_pd.default, get(dsp_config_pd, det, PropDict())))
         @debug "Loaded DSP config: $(lstring(dsp_config_det))"
@@ -145,23 +140,13 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
         end
 
         haskey(pars_tau, det) && haskey(pars_tau[det], :τ) || throw(ErrorException("Detector $det has no decay time τ in the pz pars of partition $part"))
-        haskey(pars_aoeopt_det, det) && !(haskey(pars_aoeopt_det[det], :sg) && haskey(pars_aoeopt_det[det].sg, :wl)) &&
-            throw(ErrorException("Detector $det has no SG window length sg.wl in the aoeopt pars of partition $part"))
-
-        # SG window length of the A/E crosscheck: aoeopt pars of this partition, else the DSP config default
-        sg_wl, sg_wl_source = if haskey(pars_aoeopt_det, det)
-            pars_aoeopt_det[det].sg.wl, "aoeopt pars"
-        else
-            dsp_config_det.default_flt_param.sg, "DSP config default"
-        end
-        @info "Detector $det ($part): SG window length $sg_wl from $sg_wl_source"
 
         @debug "Loading peak data from $(part), select $(ifelse(select_random, "randomly ", ""))$n_evts events from each run"
         # the steps of loading, preparation and each filter are named in run_filter_optimization_channel
         results = run_filter_optimization_channel(peakname -> load_peak_waveforms(l200, partinfo_det, det, peakname, max_wvfs; n_evts,
                                                                                          select_random),
                                                   filter(!in(keys(processed_dict)), e_filter), dsp_config_det, optimization_config_det,
-                                                  pars_tau[det].τ, f_evaluate_qc, sg_wl, sg_wl_source;
+                                                  pars_tau[det].τ, f_evaluate_qc;
                                                   detector = det, f_title = (label, flt) -> get_plottitle(filekey_det, part, det, label;
                                                                                           additional_type = string(flt)),
                                                   f_save = (fig, name) -> @debug_plot(save_plot(fig, l200, part, filekey_det, det,
