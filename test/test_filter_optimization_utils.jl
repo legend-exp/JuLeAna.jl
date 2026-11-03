@@ -196,7 +196,7 @@ using JuLeAna: DEP_WINDOW, ELECTRON_MASS_ENERGY, crosscheck_optimum, crosscheck_
             :containment => 0.9, :apply_ctc => false)
         flt_config = PropDict(:min_e_fep => 80000.0, :max_e_fep => 480000.0, :rel_cut_fit_e_fep => 0.5, :nbins_e_fep => 200)
         cc = @test_logs (:warn, r"Crosscheck fit of the peak at 2103.51\d* keV failed \(SEP of trap at rt = 4.0 .s, ft = 2.0 .s\)") match_mode = :any crosscheck_optimum(
-            sets, pulse, ones(n), nothing, opt_config, flt_config, :trap, 4.0u"µs", 2.0u"µs")
+            sets, pulse, nothing, opt_config, flt_config, :trap, 4.0u"µs", 2.0u"µs")
         @test map(r -> r.peak, cc.rows) == ["FEP", "DEP", "SEP"]
         @test map(r -> r.status == "ok", cc.rows) == [true, true, false]
         @test startswith(cc.rows[3].status, "failed: ")
@@ -276,7 +276,7 @@ using JuLeAna: DEP_WINDOW, ELECTRON_MASS_ENERGY, crosscheck_optimum, crosscheck_
     @testset "failing steps are named" begin
         run_channel(f_load) = run_filter_optimization_channel(f_load, [:trap], nothing, PropDict(:joint_search => true, :ctc_rel_uncertainty => 0.1,
             :peakname => "Tl208FEP", :crosscheck => PropDict(:dep => false, :sep => false)), 500.0u"µs",
-            nothing, 100.0u"ns", "test"; detector = "V00000A", f_title = (label, flt) -> label, f_save = (fig, name) -> nothing, f_tablepath = flt -> "")
+            nothing; detector = "V00000A", f_title = (label, flt) -> label, f_save = (fig, name) -> nothing, f_tablepath = flt -> "")
         err = try
             with_logger(NullLogger()) do
                 run_channel(name -> error("no data"))
@@ -292,7 +292,7 @@ using JuLeAna: DEP_WINDOW, ELECTRON_MASS_ENERGY, crosscheck_optimum, crosscheck_
     @testset "config validation" begin
         # the keys are checked before any data is loaded
         run_channel(opt_config) = run_filter_optimization_channel(name -> error("no data"), [:trap], nothing, opt_config, 500.0u"µs",
-            nothing, 100.0u"ns", "test"; detector = "V00000A", f_title = (label, flt) -> label, f_save = (fig, name) -> nothing, f_tablepath = flt -> "")
+            nothing; detector = "V00000A", f_title = (label, flt) -> label, f_save = (fig, name) -> nothing, f_tablepath = flt -> "")
         valid = PropDict(:joint_search => true, :ctc_rel_uncertainty => 0.1)
         @test_throws "joint_search must be a Bool" run_channel(merge(valid, PropDict(:joint_search => "false")))
         @test_throws "joint_search must be a Bool" run_channel(merge(valid, PropDict(:joint_search => 0)))
@@ -302,7 +302,7 @@ using JuLeAna: DEP_WINDOW, ELECTRON_MASS_ENERGY, crosscheck_optimum, crosscheck_
     end
 
     @testset "driver entry points" begin
-        @test hasmethod(optimize_channel_filter, Tuple{NamedTuple, NamedTuple, Symbol, DSPConfig, PropDict, typeof(1.0u"µs"), typeof(1.0u"ns"), String}, (:detector, :f_title, :f_save, :f_tablepath))
-        @test hasmethod(run_filter_optimization_channel, Tuple{Function, Vector{Union{Int, Symbol}}, DSPConfig, PropDict, typeof(1.0u"µs"), Function, typeof(1.0u"ns"), String}, (:detector, :f_title, :f_save, :f_tablepath))
+        @test hasmethod(optimize_channel_filter, Tuple{NamedTuple, NamedTuple, Symbol, DSPConfig, PropDict, typeof(1.0u"µs")}, (:detector, :f_title, :f_save, :f_tablepath))
+        @test hasmethod(run_filter_optimization_channel, Tuple{Function, Vector{Union{Int, Symbol}}, DSPConfig, PropDict, typeof(1.0u"µs"), Function}, (:detector, :f_title, :f_save, :f_tablepath))
     end
 end
