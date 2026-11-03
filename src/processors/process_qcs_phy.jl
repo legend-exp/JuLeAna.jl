@@ -15,7 +15,7 @@ removed filekeys: the survival fraction of each flag is computed for the pulser 
 forced-trigger events. A detector with single-pulse events that fail the `is_valid_dsp` flag gets the
 status warning. The pulser single-pulse and forced-trigger empty-trace survival fractions of each
 filekey are compared with those of the other nonremoved filekeys by an exact count test, and
-deviations above `stability_sigma` are reported.
+deviations above `stability_sigma` are reported without changing the status.
 
 # Inputs
 - `jldsp` tier of the `phy` filekeys of the run listed in the runinfo, except the filekeys marked unprocessable
@@ -296,7 +296,8 @@ function process_qcs_phy(processing_config, l200::LegendData, period::DataPeriod
         end
 
         log_det = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability),
-                          ProcessStatus(isempty(status_messages) ? 1 : -1), pulser_sf.is_single_pulse, forced_trigger_sf.is_empty_trace, n_pulser, n_forced, n_physics,
+                          # Filekey deviations are only reported; they leave the detector and processor status unchanged.
+                          ProcessStatus(n_invalid_dsp_single_pulse > 0 ? -1 : 1), pulser_sf.is_single_pulse, forced_trigger_sf.is_empty_trace, n_pulser, n_forced, n_physics,
                           n_invalid_dsp_single_pulse, isempty(status_messages) ? "-" : join(status_messages, " ")))
         return (result = (filekey_summary = filekey_summary, func = qc_propfunc, survival_fractions = survival_fractions, n_pulser = n_pulser,
                           n_forced = n_forced, n_single_pulse = n_single_pulse, n_physics = n_physics,

@@ -14,7 +14,7 @@ Only the Tl-208 FEP survival fraction of `is_single_pulse` has an uncertainty; i
 A detector with fewer than 5000 events fails. A detector with single-pulse events that fail the
 `is_valid_e` flag gets the status warning. The single-pulse survival fraction of the pulser events of each filekey is
 compared with that of the other nonremoved filekeys by an exact count test, and deviations above
-`stability_sigma` are reported; the non-pulser survival fraction is shown for diagnosis only.
+`stability_sigma` are reported without changing the status; the non-pulser survival fraction is shown for diagnosis only.
 
 # Inputs
 - `jldsp` tier of the `cal` filekeys of the run listed in the runinfo, except the filekeys marked unprocessable
@@ -318,7 +318,8 @@ function process_qcs_cal(processing_config, l200::LegendData, period::DataPeriod
             end
 
             log_det = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability),
-                              ProcessStatus(isempty(status_messages) ? 1 : -1), pulser_sf.is_single_pulse, fep_sf.is_single_pulse, n_pulser, n_single_pulse, n_invalid_e_single_pulse,
+                              # Filekey deviations are only reported; they leave the detector and processor status unchanged.
+                              ProcessStatus(n_invalid_e_single_pulse > 0 ? -1 : 1), pulser_sf.is_single_pulse, fep_sf.is_single_pulse, n_pulser, n_single_pulse, n_invalid_e_single_pulse,
                               isempty(status_messages) ? "-" : join(status_messages, " ")))
             return (result = (filekey_summary = filekey_summary, func = qc_propfunc, survival_fractions = survival_fractions,
                               n_pulser = n_pulser, n_single_pulse = n_single_pulse, n_invalid_e_single_pulse = n_invalid_e_single_pulse),
