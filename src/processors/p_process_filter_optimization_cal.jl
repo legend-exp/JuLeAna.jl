@@ -157,11 +157,12 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
         @info "Detector $det ($part): SG window length $sg_wl from $sg_wl_source"
 
         @debug "Loading peak data from $(part), select $(ifelse(select_random, "randomly ", ""))$n_evts events from each run"
+        # the steps of loading, preparation and each filter are named in run_filter_optimization_channel
         results = run_filter_optimization_channel(peakname -> load_peak_waveforms(l200, partinfo_det, det, peakname, max_wvfs; n_evts,
                                                                                          select_random),
                                                   filter(!in(keys(processed_dict)), e_filter), dsp_config_det, optimization_config_det,
                                                   pars_tau[det].τ, f_evaluate_qc, sg_wl, sg_wl_source;
-                                                  f_title = (label, flt) -> get_plottitle(filekey_det, part, det, label;
+                                                  detector = det, f_title = (label, flt) -> get_plottitle(filekey_det, part, det, label;
                                                                                           additional_type = string(flt)),
                                                   f_save = (fig, name) -> @debug_plot(save_plot(fig, l200, part, filekey_det, det,
                                                                                                 name)),
@@ -198,9 +199,11 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
                 delete!(pars_db_det[det], filter_type)
             end
         end
-        pars_db_det = create_pars(pars_db_det, result_flt_det)
-        write_pars(l200.par.ppars.fltopt[det], part, pars_db_det)
-        write_validity(l200.par.ppars.fltopt[det], filekey_det, part)
+        @process_step "fltopt pars writing" begin
+            pars_db_det = create_pars(pars_db_det, result_flt_det)
+            write_pars(l200.par.ppars.fltopt[det], part, pars_db_det)
+            write_validity(l200.par.ppars.fltopt[det], filekey_det, part)
+        end
 
         # return results
         return result_det
