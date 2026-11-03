@@ -132,11 +132,12 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
         end
         @info "Detector $det: SG window length $sg_wl from $sg_wl_source"
 
+        # the steps of loading, preparation and each filter are named in run_filter_optimization_channel
         results = run_filter_optimization_channel(peakname -> load_peak_waveforms(l200, filekey, det, peakname,
                                                                                   optimization_config_det.max_wvfs),
                                                   filter(!in(keys(processed_dict)), e_filter), dsp_config_det, optimization_config_det,
                                                   pars_tau[det].τ, f_evaluate_qc, sg_wl, sg_wl_source;
-                                                  f_title = (label, flt) -> get_plottitle(filekey, det, label;
+                                                  detector = det, f_title = (label, flt) -> get_plottitle(filekey, det, label;
                                                                                           additional_type = string(flt)),
                                                   f_save = (fig, name) -> @debug_plot(save_plot(fig, l200, filekey, det, name)),
                                                   f_tablepath = flt -> replace(get_pltfilename(l200, filekey, det,
@@ -183,9 +184,11 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
             end
         end
     end
-    pars_db = create_pars(pars_db, result_flt)
-    write_pars(l200.par.rpars.fltopt[period], run, pars_db)
-    write_validity(l200.par.rpars.fltopt, filekey, (period, run))
+    @process_step "fltopt pars writing" begin
+        pars_db = create_pars(pars_db, result_flt)
+        write_pars(l200.par.rpars.fltopt[period], run, pars_db)
+        write_validity(l200.par.rpars.fltopt, filekey, (period, run))
+    end
     @info "Saved pars to disk"
 
     report = lreport()

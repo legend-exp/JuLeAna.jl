@@ -260,10 +260,26 @@ using JuLeAna: DEP_WINDOW, ELECTRON_MASS_ENERGY, crosscheck_optimum, crosscheck_
         @test result.n_evals < 80
     end
 
+    @testset "failing steps are named" begin
+        run_channel(f_load) = run_filter_optimization_channel(f_load, [:trap], nothing, PropDict(:joint_search => true, :ctc_rel_uncertainty => 0.1,
+            :peakname => "Tl208FEP", :crosscheck => PropDict(:dep => false, :sep => false)), 500.0u"µs",
+            nothing, 100.0u"ns", "test"; detector = "V00000A", f_title = (label, flt) -> label, f_save = (fig, name) -> nothing, f_tablepath = flt -> "")
+        err = try
+            with_logger(NullLogger()) do
+                run_channel(name -> error("no data"))
+            end
+        catch e
+            e
+        end
+        @test err isa JuLeAna.ProcessStepError
+        @test err.name == "Tl208FEP data loader"
+        @test occursin("no data", sprint(showerror, err))
+    end
+
     @testset "config validation" begin
         # the keys are checked before any data is loaded
         run_channel(opt_config) = run_filter_optimization_channel(name -> error("no data"), [:trap], nothing, opt_config, 500.0u"µs",
-            nothing, 100.0u"ns", "test"; f_title = (label, flt) -> label, f_save = (fig, name) -> nothing, f_tablepath = flt -> "")
+            nothing, 100.0u"ns", "test"; detector = "V00000A", f_title = (label, flt) -> label, f_save = (fig, name) -> nothing, f_tablepath = flt -> "")
         valid = PropDict(:joint_search => true, :ctc_rel_uncertainty => 0.1)
         @test_throws "joint_search must be a Bool" run_channel(merge(valid, PropDict(:joint_search => "false")))
         @test_throws "joint_search must be a Bool" run_channel(merge(valid, PropDict(:joint_search => 0)))
@@ -273,7 +289,7 @@ using JuLeAna: DEP_WINDOW, ELECTRON_MASS_ENERGY, crosscheck_optimum, crosscheck_
     end
 
     @testset "driver entry points" begin
-        @test hasmethod(optimize_channel_filter, Tuple{NamedTuple, NamedTuple, Symbol, DSPConfig, PropDict, typeof(1.0u"µs"), typeof(1.0u"ns"), String}, (:f_title, :f_save, :f_tablepath))
-        @test hasmethod(run_filter_optimization_channel, Tuple{Function, Vector{Union{Int, Symbol}}, DSPConfig, PropDict, typeof(1.0u"µs"), Function, typeof(1.0u"ns"), String}, (:f_title, :f_save, :f_tablepath))
+        @test hasmethod(optimize_channel_filter, Tuple{NamedTuple, NamedTuple, Symbol, DSPConfig, PropDict, typeof(1.0u"µs"), typeof(1.0u"ns"), String}, (:detector, :f_title, :f_save, :f_tablepath))
+        @test hasmethod(run_filter_optimization_channel, Tuple{Function, Vector{Union{Int, Symbol}}, DSPConfig, PropDict, typeof(1.0u"µs"), Function, typeof(1.0u"ns"), String}, (:detector, :f_title, :f_save, :f_tablepath))
     end
 end
