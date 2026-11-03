@@ -10,7 +10,7 @@ import LegendMakie, Makie
 using Measurements: value as mvalue
 
 using JuLeAna
-using JuLeAna: DEP_WINDOW, ELECTRON_MASS_ENERGY, crosscheck_optimum, crosscheck_peak_figure, crosscheck_warning, fit_crosscheck_peak,
+using JuLeAna: DEP_WINDOW, ELECTRON_MASS_ENERGY, crosscheck_optimum, crosscheck_peak_figure, crosscheck_warning, fit_crosscheck_peak, flat_top_edge,
                limit_peak_waveforms, optimize_channel_filter, run_filter_optimization_channel, snap_seed, try_fit_crosscheck_peak,
                write_fltopt_tables
 
@@ -258,6 +258,19 @@ using JuLeAna: DEP_WINDOW, ELECTRON_MASS_ENERGY, crosscheck_optimum, crosscheck_
         @test abs(result.ft - 21dt) <= 2dt
         @test abs(result.rt - 5.0u"µs") <= 0.5u"µs"
         @test result.n_evals < 80
+    end
+
+    @testset "flat_top_edge" begin
+        lattice = 0.128u"µs"
+        range = (10lattice, 40lattice)
+        @test flat_top_edge(40lattice, range, lattice) == :upper
+        @test flat_top_edge(10lattice, range, lattice) == :lower
+        @test flat_top_edge(25lattice, range, lattice) === nothing
+        # one sample inside the grid is not on the edge
+        @test flat_top_edge(39lattice, range, lattice) === nothing
+        # equality at lattice precision, in other units and with rounding noise
+        @test flat_top_edge(uconvert(u"ns", 40lattice) * (1 + 1e-12), range, lattice) == :upper
+        @test flat_top_edge(5.0u"µs", (1.0u"µs", 5.0u"µs"), 0.1u"µs") == :upper
     end
 
     @testset "failing steps are named" begin
