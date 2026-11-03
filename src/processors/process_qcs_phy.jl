@@ -12,10 +12,10 @@ of the pulser channel (`pulser.puls_detector`) and of the forced-trigger channel
 the detectors of the event-tier selection) that pass QC, i.e. in which every germanium row is a
 single pulse, an empty trace or crosstalk. Each detector is then summarized over the run without the
 removed filekeys: the survival fraction of each flag is computed for the pulser events and for the
-forced-trigger events. A warning is logged if single-pulse events fail the `is_valid_dsp` flag. The
-pulser single-pulse and forced-trigger empty-trace survival fractions of each filekey are compared
-with those of the other nonremoved filekeys by an exact count test, and deviations above
-`stability_sigma` are reported; the non-pulser survival fraction is shown for diagnosis only.
+forced-trigger events. A detector with single-pulse events that fail the `is_valid_dsp` flag gets the
+status warning. The pulser single-pulse and forced-trigger empty-trace survival fractions of each
+filekey are compared with those of the other nonremoved filekeys by an exact count test, and
+deviations above `stability_sigma` are reported.
 
 # Inputs
 - `jldsp` tier of the `phy` filekeys of the run listed in the runinfo, except the filekeys marked unprocessable
@@ -199,14 +199,12 @@ function process_qcs_phy(processing_config, l200::LegendData, period::DataPeriod
             foreach(summary -> summary[:stability] = PropDict(), summaries)
             warnings = warning_nt[]
             x_fk = collect(eachindex(filekeys))
-            tick_indices = unique(round.(Int, range(1, length(filekeys); length = min(12, length(filekeys)))))
-            fig = Makie.Figure(size = (1100, 500))
+            fig = Makie.Figure(size = (max(1100, 200 + 14 * length(filekeys)), 500))
             ax = Makie.Axis(fig[1, 1]; title = get_plottitle(filekey, det, "QC Efficiency per Filekey"), xlabel = "Filekey start (UTC)", ylabel = "Survival fraction (%)",
-                            xticks = (tick_indices, [string(filekeys[i].time) for i in tick_indices]), xticklabelrotation = pi / 3,
-                            limits = (nothing, (-2, 102)))
-            for (selection, n_key, k_key, color, label, monitor) in ((:pulser, :n_pulser, :n_pulser_pass, LegendMakie.AchatBlue, "Pulser single pulse", true),
-                                                                     (:nonpulser, :n_nonpulser, :n_nonpulser_pass, LegendMakie.BEGeOrange, "Non-pulser single pulse", false),
-                                                                     (:forced_trigger, :n_forced, :n_forced_pass, :purple, "Forced trigger empty trace", true))
+                            xticks = (x_fk, [string(fk.time) for fk in filekeys]), xticklabelrotation = pi / 3, xticklabelsize = 10)
+            plotted_sf = Float64[]
+            for (selection, n_key, k_key, color, label) in ((:pulser, :n_pulser, :n_pulser_pass, LegendMakie.AchatBlue, "Pulser single pulse"),
+                                                            (:forced_trigger, :n_forced, :n_forced_pass, :purple, "Forced trigger empty trace"))
                 n = [getproperty(summary, n_key) for summary in summaries]
                 k = [getproperty(summary, k_key) for summary in summaries]
                 efficiency = [n[i] == 0 ? NaN : k[i] / n[i] for i in eachindex(n)]
@@ -224,7 +222,7 @@ function process_qcs_phy(processing_config, l200::LegendData, period::DataPeriod
                         tail = min(cdf(null, k[i]), ccdf(null, k[i] - 1), 0.5)
                         sigma = sign(efficiency[i] - reference) * -quantile(Normal(), max(tail, floatmin(Float64)))
                     end
-                    flagged = monitor && included_filekeys[i] && abs(sigma) > stability_sigma
+                    flagged = included_filekeys[i] && abs(sigma) > stability_sigma
                     summaries[i].stability[selection] = PropDict(:reference => 100 * reference, :reference_events => ref_n, :sigma => sigma,
                                                                  :flagged => flagged, :available => isfinite(sigma))
                     if flagged
@@ -242,6 +240,13 @@ function process_qcs_phy(processing_config, l200::LegendData, period::DataPeriod
                 isempty(outliers) ||
                     Makie.scatter!(ax, x_fk[outliers], 100 .* efficiency[outliers]; color = :red, marker = :xcross, markersize = 16,
                                    label = "$selection outlier")
+                append!(plotted_sf, filter(isfinite, 100 .* efficiency))
+            end
+            # Zoom to the survival fractions; the long error bars of short filekeys are clipped.
+            if !isempty(plotted_sf)
+                sf_min, sf_max = extrema(plotted_sf)
+                pad = max(0.1 * (sf_max - sf_min), 0.5)
+                Makie.ylims!(ax, sf_min - pad, sf_max + pad)
             end
             removed_indices = findall(!, included_filekeys)
             isempty(removed_indices) || Makie.vlines!(ax, removed_indices; color = (:red, 0.3), linestyle = :dash, label = "Removed cycle")
@@ -250,8 +255,10 @@ function process_qcs_phy(processing_config, l200::LegendData, period::DataPeriod
             save_plot(fig, l200, filekey, det, :qc_filekey_efficiency)
             warnings
         end
-        stability_message = isempty(stability_warnings) ? "-" :
-                            "$(length(stability_warnings)) filekey survival fractions deviate by more than $(stability_sigma)σ; see QC stability warnings."
+        status_messages = String[]
+        n_invalid_dsp_single_pulse > 0 && push!(status_messages, "$n_invalid_dsp_single_pulse single-pulse events fail is_valid_dsp.")
+        isempty(stability_warnings) ||
+            push!(status_messages, "$(length(stability_warnings)) filekey survival fractions deviate by more than $(stability_sigma)σ; see QC stability warnings.")
 
         @process_step "pulser survival fraction plot" begin
             # plot pulser survival fractions for is_single_pulse and its component flags
@@ -289,8 +296,8 @@ function process_qcs_phy(processing_config, l200::LegendData, period::DataPeriod
         end
 
         log_det = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability),
-                          ProcessStatus(isempty(stability_warnings) ? 1 : -1), pulser_sf.is_single_pulse, forced_trigger_sf.is_empty_trace, n_pulser, n_forced, n_physics,
-                          n_invalid_dsp_single_pulse, stability_message))
+                          ProcessStatus(isempty(status_messages) ? 1 : -1), pulser_sf.is_single_pulse, forced_trigger_sf.is_empty_trace, n_pulser, n_forced, n_physics,
+                          n_invalid_dsp_single_pulse, isempty(status_messages) ? "-" : join(status_messages, " ")))
         return (result = (filekey_summary = filekey_summary, func = qc_propfunc, survival_fractions = survival_fractions, n_pulser = n_pulser,
                           n_forced = n_forced, n_single_pulse = n_single_pulse, n_physics = n_physics,
                           n_invalid_dsp_single_pulse = n_invalid_dsp_single_pulse),
@@ -379,7 +386,7 @@ function process_qcs_phy(processing_config, l200::LegendData, period::DataPeriod
     lreport!(report, "# QC stability warnings")
     lreport!(report,
              "Threshold: $(stability_sigma)σ, two-sided exact count comparison against the other nonremoved filekeys. Red crosses mark unexpected deviations; " *
-             "dashed reference lines pool nonremoved filekeys. Error bars are one-sigma Wilson intervals. Non-pulser survival is diagnostic only.")
+             "dashed reference lines pool nonremoved filekeys. Error bars are one-sigma Wilson intervals.")
     lreport!(report, isempty(warning_rows) ? "No unexpected filekey survival fraction deviations." : StructArray(warning_rows))
     # lreport!(report, "# Detector overview")
     # lreport!(report, fig)
