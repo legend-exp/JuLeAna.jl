@@ -6,7 +6,7 @@ Optimize the energy filter rise time and flat-top time per detector and `cal` pa
 
 The method is the same as in `process_filter_optimization_cal`: for each filter type listed under `e_filter`, the rise time is chosen from a baseline noise sweep and the flat-top time from a sweep over full-energy-peak events. The waveforms of the peak named by `peakname` are read from the `jlpks` tier of all runs of the partition (`n_evts` events per run, drawn randomly if `select_random` is set) and at most `max_wvfs` of them are used after the quality cuts (`qc_mad` and `qc` expression, as in `process_filter_optimization_cal`).
 
-If `e_filter` lists `dplms`, a DPLMS filter is synthesized on the same waveforms for every point of LegendDSP's `dplms_default_grid`. The grid points that share all weights (`nm`, `za`, `ft`, `ct`, `zo`) form a family; for each family the flat-top widening `ff` with the smallest FEP FWHM is selected with the same fit as the flat-top time of the other filters, and the family with the smallest FWHM is kept. The result stores the FWHM and `ff` of every family under `families`.
+If `e_filter` lists `dplms`, a DPLMS filter is synthesized on the same waveforms for every point of LegendDSP's `dplms_default_grid`, with the flat-top widenings `ff` of the config range `e_filter.dplms.ff` (start, stop, step; whole multiples of the sample time) if given and multiples of the rise time otherwise. The grid points that share all weights (`nm`, `za`, `ft`, `ct`, `zo`) form a family; for each family the flat-top widening `ff` with the smallest FEP FWHM is selected with the same fit as the flat-top time of the other filters, and the family with the smallest FWHM is kept. The result stores the FWHM and `ff` of every family and its FEP FWHM against `ff` (`scan`) under `families`.
 
 # Inputs
 - `jlpks` tier of the `cal` runs of each partition, for each detector.
@@ -16,8 +16,8 @@ If `e_filter` lists `dplms`, a DPLMS filter is synthesized on the same waveforms
 - `l200.par.ppars.fltopt[det, part]` (existing results, if present).
 
 # Outputs
-- `l200.par.ppars.fltopt[det, part]`: per filter type the optimal rise time, flat-top time and minimal FWHM, with validity entries for the partition; the validity of all partitions of the period is written to `l200.par.ppars.fltopt`. For `dplms`: the filter `coefficients`, the read-out time `t_pickoff` after `t50`, `shaping_time`, `flat_top`, `ff`, `n_pre`, `n_post`, the synthesis `weights` and `min_fwhm` of the selected grid point.
-- Per detector, partition and filter type, plots `noise_sweep_<filter_type>` and `fwhm_ft_scan_<filter_type>`, for `dplms` `fwhm_ft_scan_dplms` and `dplms_filter`, saved only at the debug plot level.
+- `l200.par.ppars.fltopt[det, part]`: per filter type the optimal rise time, flat-top time and minimal FWHM, with validity entries for the partition; the validity of all partitions of the period is written to `l200.par.ppars.fltopt`. For `dplms`: the filter `coefficients`, the `reference` pulse over the window (`n_pre` samples before to `n_post` after `t50`, unit plateau), its filter output `response` over the `n_pre + n_post + 1` samples from `t50`, the read-out time `t_pickoff` after `t50`, `shaping_time`, `flat_top`, `ff`, `n_pre`, `n_post`, the synthesis `weights` and `min_fwhm` of the selected grid point.
+- Per detector, partition and filter type, plots `noise_sweep_<filter_type>` and `fwhm_ft_scan_<filter_type>`, for `dplms` `fwhm_ft_scan_dplms`, `dplms_filter`, `dplms_reference`, `dplms_response` and `dplms_matrices`, saved only at the debug plot level.
 - Partition report `:filter_optimization` (Main Log, Metadata, Results table with one row per detector, partition and filter type; the DPLMS row shows shaping time and flat top in the rise-time and flat-top columns).
 
 # Keywords
@@ -278,8 +278,18 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
             try
                 @debug "Synthesize DPLMS filter"
                 optimization_config_flt = optimization_config_det.e_filter.dplms
+                # flat-top widenings of the config range `ff` in whole samples, else multiples of the rise time
+                dplms_grid = if haskey(optimization_config_flt, :ff)
+                    ff_cfg = optimization_config_flt.ff
+                    ffs = uconvert.(Unitful.NoUnits, (ff_cfg.start:ff_cfg.step:ff_cfg.stop) ./ step(first(wvfs_det_pre.time)))
+                    all(f -> isapprox(f, round(f); atol = 1e-6), ffs) ||
+                        throw(ArgumentError("DPLMS flat-top widenings $(ff_cfg.start):$(ff_cfg.step):$(ff_cfg.stop) are not whole multiples of the sample time"))
+                    n -> dplms_default_grid(n; ff = round.(Int, ffs))
+                else
+                    dplms_default_grid
+                end
                 res = @process_step "dplms filter synthesis for FEP" begin
-                    dsp_dplms_optimization(wvfs_det_pre, dsp_config_det, pars_tau[det].τ, qdrift)
+                    dsp_dplms_optimization(wvfs_det_pre, dsp_config_det, pars_tau[det].τ, qdrift; grid = dplms_grid)
                 end
                 yield()
                 Δt = step(res.superpulse.time)
@@ -305,22 +315,39 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
                 w = res.grid[i]
                 @debug "Selected DPLMS zo = $(w.zo), ff = $(w.ff) samples with FWHM $(round(u"keV", result_ft.min_fwhm, digits=2))"
                 @debug_plot begin
-                    p = LegendMakie.lplot(report_ft,
+                    p = LegendMakie.lplot(report_ft; xlabel = "Flat-Top Widening ff", xlegendlabel = "ff",
                                           title = get_plottitle(filekey_det, part, det, "FEP Flat-Top Widening Scan";
                                                                 additional_type = "dplms"))
                     save_plot(p, l200, part, filekey_det, det, :fwhm_ft_scan_dplms)
                     p = LegendMakie.lplot((; res.coeffs, res.grid, res.superpulse, res.t_pickoff, res.n_pre, res.n_post); idxs = [i],
                                           title = get_plottitle(filekey_det, part, det, "DPLMS Filter"))
                     save_plot(p, l200, part, filekey_det, det, :dplms_filter)
+                    p = LegendMakie.lplot((; res.superpulse, res.ref, res.ref_bins, res.t50, res.t_pickoff, res.n_pre, res.n_post);
+                                          figsize = (1200, 800), title = get_plottitle(filekey_det, part, det, "DPLMS Reference"))
+                    save_plot(p, l200, part, filekey_det, det, :dplms_reference)
+                    p = LegendMakie.lplot((; res.superpulse, res.response, res.grid, res.t50, res.t_pickoff, res.n_pre, res.n_post); idxs = [i],
+                                          xlims = (-(res.n_pre + 8), res.n_pre + res.n_post + 16) .* ustrip(u"µs", Δt),
+                                          figsize = (1200, 600), title = get_plottitle(filekey_det, part, det, "DPLMS Response"))
+                    save_plot(p, l200, part, filekey_det, det, :dplms_response)
+                    p = LegendMakie.lplot((; res.noise, res.flattops, res.ref, res.superpulse, res.n_pre, res.n_post); ff = w.ff,
+                                          figsize = (1200, 1000), title = get_plottitle(filekey_det, part, det, "DPLMS Matrices"))
+                    save_plot(p, l200, part, filekey_det, det, :dplms_matrices)
                 end
 
-                result_rt_ft_dict[:dplms] = (coefficients = res.coeffs[i], t_pickoff = uconvert(u"µs", res.t_pickoff),
+                # filter output for the superpulse over the n samples from the alignment point; the
+                # output has its own time axis
+                k0 = argmin(abs.(res.response[i].time .- median(res.t50)))
+                response = res.response[i].signal[k0:(k0 + length(res.ref) - 1)]
+
+                result_rt_ft_dict[:dplms] = (coefficients = res.coeffs[i], reference = res.ref, response, t_pickoff = uconvert(u"µs", res.t_pickoff),
                                              shaping_time = uconvert(u"µs", res.shaping_time[i]), flat_top = uconvert(u"µs", res.flat_top[i]),
                                              ff = w.ff, n_pre = res.n_pre, n_post = res.n_post,
                                              weights = weights_of(w), output_area = uconvert(u"µs", res.output_area[i]),
                                              min_fwhm = result_ft.min_fwhm,
                                              families = [(weights = weights_of(res.grid[f.i]), ff = res.grid[f.i].ff,
-                                                          min_fwhm = f.result_ft.min_fwhm) for f in fits])
+                                                          min_fwhm = f.result_ft.min_fwhm,
+                                                          scan = (ff = uconvert.(u"µs", f.report_ft.e_grid_ft),
+                                                                  fwhm = mvalue.(uconvert.(u"keV", f.report_ft.fwhm)))) for f in fits])
                 log_info_dict[:dplms] = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
                                                 ProcessStatus(1), :dplms, result_rt_ft_dict[:dplms].shaping_time,
                                                 result_rt_ft_dict[:dplms].flat_top, result_ft.min_fwhm, "-"))
