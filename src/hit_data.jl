@@ -20,8 +20,8 @@ function read_hit_cal(l200::LegendData, det, runs, e_types::AbstractVector{Symbo
         cal_funcs = [ljl_propfunc(LegendDataManagement._get_e_cal_propsfunc_str(l200, filekey, DetectorId(det),
                                                                                 Symbol(chopsuffix(string(e_type), "_cal"))))
                      for e_type in e_types]
-        is_qc = read_ldata(@pf($is_single_pulse && !$is_pulser), l200, :jlqcs, filekey, det)
-        dsp = Table(read_ldata(Tuple(union(columns_out, _input_columns(cal_funcs))), l200, :jldsp, :cal, period, run, det))[is_qc]
+        dsp = Table(read_ldata(Tuple(union(columns_out, _input_columns(cal_funcs))), l200, :jldsp, :cal, period, run, det;
+                               filterby = :jlqcs => @pf($is_single_pulse && !$is_pulser)))
         return Table(merge(columns(dsp)[columns_out], NamedTuple{Tuple(e_types)}(map(f -> f.(dsp), cal_funcs))))
     end
     return fast_flatten(tables)
