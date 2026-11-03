@@ -152,6 +152,12 @@ const STUB_PROCESSORS = Dict{Symbol,Any}(:process_a => process_a, :p_process_b =
         @test ProcessingConfig(edited(d -> d["config"]["idle_timeout_minutes"] = 2.5)).idle_timeout_minutes == 2.5
         @test_throws "`config.idle_timeout_minutes` must be zero or positive, got -1.0" ProcessingConfig(edited(d -> d["config"]["idle_timeout_minutes"] = -1))
         @test_throws "`config.idle_timeout_minutes` must be a Real" ProcessingConfig(edited(d -> d["config"]["idle_timeout_minutes"] = "20"))
+        @test shipped.slurm_worker_memory === :shared
+        @test ProcessingConfig(edited(d -> delete!(d["config"]["runmode_settings"]["slurm"], "worker_memory"))).slurm_worker_memory ===
+              :shared
+        @test ProcessingConfig(edited(d -> d["config"]["runmode_settings"]["slurm"]["worker_memory"] = "fixed")).slurm_worker_memory ===
+              :fixed
+        @test_throws "`config.runmode_settings.slurm.worker_memory` must be \"shared\" or \"fixed\", got :half" ProcessingConfig(edited(d -> d["config"]["runmode_settings"]["slurm"]["worker_memory"] = "half"))
         @test_throws "`p_processors.p_process_energy_cal.category` must be \"cal\" or \"phy\"" ProcessingConfig(edited(d -> d["p_processors"]["p_process_energy_cal"]["category"] = "physics"))
         @test_throws "`processors.process_dsp_cal.enabled` must be a Bool" ProcessingConfig(edited(d -> d["processors"]["process_dsp_cal"]["enabled"] = "yes"))
         @test_throws "`processors.process_dsp_cal.rank` must be a $Int" ProcessingConfig(edited(d -> d["processors"]["process_dsp_cal"]["rank"] = 5.5))
@@ -223,6 +229,7 @@ const STUB_PROCESSORS = Dict{Symbol,Any}(:process_a => process_a, :p_process_b =
         positional(; kw...) = ProcessingConfig(values(merge(fields, kw))...)
         @test_throws "runmode must be \"local\" or \"slurm\", got :cluster" positional(runmode = :cluster)
         @test_throws "`config.runmode_settings.local.n` must be positive" positional(local_n = 0)
+        @test_throws "`config.runmode_settings.slurm.worker_memory` must be \"shared\" or \"fixed\", got :half" positional(slurm_worker_memory = :half)
         @test_throws "only one of `only_partitions` or `only_runs`" positional(only_runs = true, only_partitions = true)
         @test_throws "`config.processor_plot_level` must be \"info\" or \"debug\"" positional(processor_plot_level = :verbose)
         @test_throws "`config.plot_formats` must list only" positional(plot_formats = [:gif])

@@ -12,7 +12,8 @@ exist, JuLeAna first copies the config shipped with JuLeAna there; a `processing
 current settings to that file and keeps the previous file as `processing_config.yaml.bak`.
 See [Running the dataflow](running.md). The
 file is loaded into a [`ProcessingConfig`](@ref); all keys of the `config` and
-`processing` sections are required except `idle_timeout_minutes`, `processor_log_level`, `processor_plot_level` and `plot_formats`, and a missing or
+`processing` sections are required except `idle_timeout_minutes`, `processor_log_level`, `processor_plot_level`, `plot_formats` and
+`runmode_settings.slurm.worker_memory`, and a missing or
 unknown key stops the dataflow with an error that names the key.
 
 ## `config`
@@ -26,6 +27,12 @@ The run mode, the worker settings, environment variables and logging:
    - **`slurm.flags`**: options passed to SLURM, see the
      [SLURM documentation](https://slurm.schedmd.com) and the documentation of the
      cluster you use.
+   - **`slurm.worker_memory`** (optional): `"shared"` (the default) or `"fixed"`. Each
+     SLURM worker runs as its own job step. With `"shared"` the workers of a job share its
+     memory (`--mem`): a worker can use more than its part while others use less, and when
+     the job as a whole reaches its memory, the system ends the worker process that uses the
+     most. With `"fixed"` each worker gets the memory of the job per node divided by the
+     workers per node, and a worker that needs more is ended even if the others use less.
    - **`julia_settings`**: options passed to the `julia` processes of the workers, such
      as `--heap-size-hint`; see the
      [`julia` command line documentation](https://docs.julialang.org/en/v1/manual/command-line-interface/).

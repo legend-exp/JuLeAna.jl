@@ -6,9 +6,10 @@ const ALLOCATION_OUTPUT_LINES = 1000
 # The SLURM job name in a start script; every allocation gets its own.
 const SLURM_JOB_NAME = r"--job-name=julia-\d+-\d+"
 
-# Signal number of SIGTERM and error number of ESRCH (no such process), the same on Linux
-# and macOS.
+# Signal numbers of SIGTERM and SIGKILL and error number of ESRCH (no such process), the same
+# on Linux and macOS.
 const SIGTERM_SIGNAL = 15
+const SIGKILL_SIGNAL = 9
 const ESRCH_ERRNO = 3
 
 """
@@ -43,7 +44,104 @@ mutable struct WorkerAllocation
 end
 
 """
-    WorkerManager(; squeue::Cmd = `squeue`, scancel::Cmd = `scancel`, sinfo::Cmd = `sinfo`)
+    JuLeAna.WorkerAttributes
+
+The attributes a worker process reports once (see [`JuLeAna.worker_attributes`](@ref)), a
+`NamedTuple` with the fields
+
+- `host::String`: the host name;
+- `os_pid::Int`: the process ID on the host;
+- `threads::Int`: the number of Julia threads;
+- `memory::Int`: the bytes of memory the process may use, `Sys.total_memory()`: the limit of
+  its control group, such as the memory of its SLURM job or step, else the memory of the host;
+- `job`, `step`: the SLURM job and step ID, `""` outside SLURM;
+- `tasks`: the number of tasks of the SLURM step (`SLURM_STEP_NUM_TASKS`), `""` outside SLURM;
+- `cpus`: the CPUs per task of the SLURM step (`SLURM_CPUS_PER_TASK`), `""` if not set;
+- `gpus`: the GPUs of the SLURM step (`SLURM_STEP_GPUS`), `""` without GPUs.
+"""
+const WorkerAttributes = @NamedTuple{host::String, os_pid::Int, threads::Int, memory::Int, job::String, step::String, tasks::String,
+                                     cpus::String, gpus::String}
+
+# Run on a worker with `include_string`: it needs nothing but Base, so it also works before
+# the worker has loaded JuLeAna.
+const WORKER_ATTRIBUTES_CODE = """
+    (; host = gethostname(), os_pid = getpid(), threads = Threads.nthreads(), memory = Int(Sys.total_memory()),
+     job = get(ENV, "SLURM_JOB_ID", ""), step = get(ENV, "SLURM_STEP_ID", ""), tasks = get(ENV, "SLURM_STEP_NUM_TASKS", ""),
+     cpus = get(ENV, "SLURM_CPUS_PER_TASK", ""), gpus = get(ENV, "SLURM_STEP_GPUS", ""))
+    """
+
+# Attributes of the worker processes by process ID; Distributed never reuses a process ID.
+const WORKER_ATTRIBUTES = Dict{Int,WorkerAttributes}()
+const WORKER_ATTRIBUTES_LOCK = ReentrantLock()
+
+"""
+    JuLeAna.worker_attributes(pid::Integer)
+
+Return the [`JuLeAna.WorkerAttributes`](@ref) of the worker process `pid`. The first call asks
+the worker, later calls return the same attributes without asking. The worker must answer,
+so the first call must come while it is not busy.
+"""
+function worker_attributes(pid::Integer)
+    a = @lock WORKER_ATTRIBUTES_LOCK get(WORKER_ATTRIBUTES, pid, nothing)
+    isnothing(a) || return a
+    a = convert(WorkerAttributes, remotecall_fetch(include_string, pid, Main, WORKER_ATTRIBUTES_CODE))
+    @lock WORKER_ATTRIBUTES_LOCK WORKER_ATTRIBUTES[pid] = a
+    return a
+end
+
+"""
+    JuLeAna.kill_worker(pid::Integer; scancel::Cmd = `scancel`)
+
+End the process of the worker `pid` at once with SIGKILL, also while it computes and does not
+answer: a worker that is the only task of a SLURM job step (other than the step of this
+process) with `scancel --signal=KILL <job>.<step>`, a worker on this host with `kill -9`.
+Its [`JuLeAna.worker_attributes`](@ref) must have been asked for before. Distributed then
+removes the worker, and the calls running on it throw a `ProcessExitedException`.
+
+Throws an `ArgumentError` for the main process, for a worker whose attributes are not known,
+and for a worker on another host that is not the only task of its job step.
+"""
+function kill_worker(pid::Integer; scancel::Cmd = `scancel`)
+    pid == myid() && throw(ArgumentError("kill_worker: process $pid is the main process"))
+    a = @lock WORKER_ATTRIBUTES_LOCK get(WORKER_ATTRIBUTES, pid, nothing)
+    isnothing(a) && throw(ArgumentError("kill_worker: the attributes of worker $pid are not known"))
+    if !isempty(a.job) && a.tasks == "1" && (a.job, a.step) != (get(ENV, "SLURM_JOB_ID", ""), get(ENV, "SLURM_STEP_ID", ""))
+        run(`$scancel --signal=KILL $(a.job).$(a.step)`)
+    elseif a.host == gethostname()
+        if ccall(:kill, Cint, (Cint, Cint), a.os_pid, SIGKILL_SIGNAL) != 0 && Libc.errno() != ESRCH_ERRNO
+            throw(SystemError("kill_worker: kill of process $(a.os_pid) of worker $pid", Libc.errno()))
+        end
+    else
+        throw(ArgumentError("kill_worker: worker $pid runs on $(a.host), not as the only task of a SLURM job step"))
+    end
+    return nothing
+end
+
+"""
+    JuLeAna.StepInfo
+
+A SLURM job step of a worker allocation as `sacct` and `sstat` report it (see
+[`JuLeAna.update_steps!`](@ref)), a `NamedTuple` with the fields
+
+- `id::String`: `<job ID>.<step ID>`;
+- `node::String`: the node of the step;
+- `state::String`: the state, such as `RUNNING`, `COMPLETED`, `CANCELLED` or `OUT_OF_MEMORY`;
+- `exit_code::String`: `<exit code>:<signal>`;
+- `elapsed::String`: the run time as `sacct` prints it;
+- `rss`: the resident memory in bytes at the last sample, `nothing` once the step ended;
+- `max_rss`: the peak of the resident memory in bytes, `nothing` if not reported. SLURM
+  samples the memory every few seconds, so a short peak can be missing.
+"""
+const StepInfo = @NamedTuple{id::String, node::String, state::String, exit_code::String, elapsed::String, rss::Union{Nothing,Int},
+                             max_rss::Union{Nothing,Int}}
+
+# Minimum time between two queries of the job steps; SLURM samples the memory of a step every
+# 10 s (viper) to 30 s (raven).
+const STEPS_READ_SECONDS = 10
+
+"""
+    WorkerManager(; squeue::Cmd = `squeue`, scancel::Cmd = `scancel`, sinfo::Cmd = `sinfo`,
+                  sacct::Cmd = `sacct`, sstat::Cmd = `sstat`)
 
 The worker allocations of this process and the worker start script they run.
 
@@ -59,7 +157,7 @@ Running allocations are cancelled when nothing has used them for the
 `idle_timeout_minutes` of the config: see [`JuLeAna.idle_deadline`](@ref) and
 [`JuLeAna.check_idle!`](@ref).
 
-`squeue`, `scancel` and `sinfo` are the SLURM commands, without arguments; SLURM counts as
+`squeue`, `scancel`, `sinfo`, `sacct` and `sstat` are the SLURM commands, without arguments; SLURM counts as
 available when the program of `squeue` is found. [`JuLeAna.workers_overview`](@ref) collects
 everything the Workers page shows. All functions may be called from any task.
 """
@@ -68,9 +166,14 @@ mutable struct WorkerManager
     const squeue::Cmd
     const scancel::Cmd
     const sinfo::Cmd
-    # host names of the workers, by process ID
-    const hosts::Dict{Int,String}
+    const sacct::Cmd
+    const sstat::Cmd
+    # attributes of the workers by process ID: `nothing` while asked for, `missing` if the request failed
+    const attributes::Dict{Int,Union{Nothing,Missing,WorkerAttributes}}
     const allocations::Vector{WorkerAllocation}
+    # job steps of the SLURM allocations by job ID, and the `time()` of their last query
+    const steps::Dict{String,Vector{StepInfo}}
+    steps_read::Float64
     config::Union{Nothing,ProcessingConfig}
     script_path::Union{Nothing,String}
     script::Union{Nothing,String}
@@ -80,9 +183,9 @@ mutable struct WorkerManager
     last_activity::DateTime
 end
 
-function WorkerManager(; squeue::Cmd = `squeue`, scancel::Cmd = `scancel`, sinfo::Cmd = `sinfo`)
-    return WorkerManager(ReentrantLock(), squeue, scancel, sinfo, Dict{Int,String}(), WorkerAllocation[], nothing, nothing, nothing, 0,
-                         now(UTC))
+function WorkerManager(; squeue::Cmd = `squeue`, scancel::Cmd = `scancel`, sinfo::Cmd = `sinfo`, sacct::Cmd = `sacct`, sstat::Cmd = `sstat`)
+    return WorkerManager(ReentrantLock(), squeue, scancel, sinfo, sacct, sstat, Dict{Int,Union{Nothing,Missing,WorkerAttributes}}(),
+                         WorkerAllocation[], Dict{String,Vector{StepInfo}}(), -Inf, nothing, nothing, nothing, 0, now(UTC))
 end
 
 """
@@ -98,13 +201,116 @@ function set_worker_config!(mgr::WorkerManager, config::ProcessingConfig)
     return mgr
 end
 
+# A worker of a start script that ends this many seconds after its start or later is started
+# again; one that ends sooner leaves its slot empty, so that an error at start-up is not repeated.
+const WORKER_MIN_SECONDS = 300
+
+# Bash lines that run `cmd` in `n` slots at the same time and start it again in its slot
+# whenever it ends, unless it ended less than `min_seconds` after its start.
+function restart_loop(n::Integer, cmd::AbstractString; min_seconds::Integer = WORKER_MIN_SECONDS)
+    return """
+        for slot in \$(seq $n); do
+          while true; do
+            start=\$SECONDS
+            $cmd
+            runtime=\$((SECONDS - start))
+            if [ \$runtime -lt $min_seconds ]; then
+              echo "Worker slot \$slot: the worker ended \$runtime s after its start, not starting it again"
+              break
+            fi
+            echo "Worker slot \$slot: the worker ended after \$runtime s, starting a new one"
+          done &
+        done
+        wait
+        """
+end
+
+"""
+    JuLeAna.worker_start_script(cfg::ProcessingConfig)
+
+Return the text of the bash script that starts the workers of the run mode of `cfg` and
+connects them to this process. A worker that ends is started again, unless it ended within
+5 minutes of its start: then its slot stays empty and the script prints why.
+
+In the `local` run mode the script starts `cfg.local_n` workers on the host it runs on.
+
+In the `slurm` run mode it submits one job with `sbatch --wait`, the job name
+`julia-<pid of this process>-0` (see [`JuLeAna.add_workers!`](@ref)) and the SLURM flags of
+`cfg` except `--cpu-bind`, and prints the output of the job until the job ends; ended with
+SIGTERM, it cancels the job by its name. The output goes
+to `julia-workers-<pid of the script>.out` in the log directory of `cfg`, or in the current
+directory if `cfg` has none. The job runs every worker as its own job step on one node, with the
+CPUs per task and the `--cpu-bind` and `--mem-bind` flags of `cfg`. With
+`cfg.slurm_worker_memory === :shared` the steps share the memory of the job; with `:fixed` each
+step gets the memory of the job per worker. Throws an `ArgumentError` for `:fixed` without
+`--mem` or `--mem-per-cpu` in the flags, and for a `--cpu-bind` or `--mem-bind` flag without `=`.
+"""
+function worker_start_script(cfg::ProcessingConfig)
+    cmd, _, n = worker_start_command(runprocs_mode(cfg), ppt_cluster_manager())
+    if cfg.runmode === :local
+        return """
+            #!/bin/bash
+            # Starts $n Julia workers on this host. A worker that ends is started again, unless it
+            # ended within $WORKER_MIN_SECONDS s of its start.
+            """ * restart_loop(n, Base.shell_escape_posixly(cmd))
+    end
+    flags = cfg.slurm_flags
+    any(in(("--cpu-bind", "--mem-bind")), flags) &&
+        throw(ArgumentError("worker_start_script: write the SLURM flags `--cpu-bind` and `--mem-bind` as `--cpu-bind=<value>` and `--mem-bind=<value>`"))
+    # `cmd` is `srun --job-name=… --chdir=… <flags> <worker command>`
+    args, last_flag = collect(cmd), 3 + length(flags)
+    first(args) == "srun" && args[4:last_flag] == flags ||
+        error("worker_start_script: unexpected SLURM start command of ParallelProcessingTools: $cmd")
+    # the CPUs and memory per task as ParallelProcessingTools reads them for the threads and heap size of the worker command
+    tasks = ParallelProcessingTools._get_slurm_taskconf(Cmd(flags), ENV)
+    memory = if cfg.slurm_worker_memory === :shared
+        "0"
+    else
+        per_task = ParallelProcessingTools._slurm_mem_per_task(tasks)
+        isnothing(per_task) &&
+            throw(ArgumentError("worker_start_script: `worker_memory: fixed` needs `--mem` or `--mem-per-cpu` in the SLURM flags"))
+        "$(div(per_task, 1024^2))M"
+    end
+    cpus = isnothing(tasks.cpus_per_task) ? `` : `--cpus-per-task=$(tasks.cpus_per_task)`
+    binding = filter(f -> startswith(f, "--cpu-bind=") || startswith(f, "--mem-bind="), flags)
+    step = `srun --nodes=1 --ntasks=1 --exact $cpus --mem=$memory $binding $(Cmd(args[(last_flag + 1):end]))`
+    job_flags = filter(f -> !startswith(f, "--cpu-bind="), flags)
+    output = joinpath(isempty(cfg.log_path) ? pwd() : cfg.log_path, "julia-workers-")
+    return """
+        #!/bin/bash
+        # Submits a SLURM job that runs each of its $n Julia workers as its own job step, waits for
+        # the job and prints its output. A worker that ends is started again in a new step, unless
+        # it ended within $WORKER_MIN_SECONDS s of its start.
+        job_name=--job-name=julia-$(getpid())-0
+        output=$(Base.shell_escape_posixly(output))\$\$.out
+        # exists before the job starts, so that `tail` can follow it
+        touch "\$output"
+        # SIGTERM ends `sbatch --wait` but not the job
+        trap 'scancel --user="\$USER" --name="\${job_name#--job-name=}"' TERM
+        sbatch --wait "\$job_name" $(Base.shell_escape_posixly(Cmd(job_flags))) --output="\$output" <<'JOB' &
+        #!/bin/bash
+        # every step runs one task; the job's tasks per node would make `srun` warn at every start
+        unset SLURM_NTASKS_PER_NODE
+        $(restart_loop(n, Base.shell_escape_posixly(step)))JOB
+        job=\$!
+        tail -n +1 -F "\$output" 2>/dev/null &
+        follow=\$!
+        wait \$job
+        status=\$?
+        # time for `tail` to print the last lines
+        sleep 2
+        kill \$follow 2>/dev/null
+        exit \$status
+        """
+end
+
 """
     JuLeAna.start_script!(mgr::WorkerManager)
 
 Return `(; path, text)` of the start script of `mgr`. The first call after
 [`JuLeAna.set_worker_config!`](@ref) generates the script for the run mode of the config with
-`ParallelProcessingTools.write_worker_start_script` and writes it to `startjlworkers.sh` in
-the [`JuLeAna.production_config_dir`](@ref), keeping an existing file as
+[`JuLeAna.worker_start_script`](@ref) and writes it to `startjlworkers.sh` in the
+[`JuLeAna.production_config_dir`](@ref), readable only by the user, keeping an existing file as
 `startjlworkers.sh.bak`. Throws an `ArgumentError` if no config is set.
 """
 function start_script!(mgr::WorkerManager)
@@ -113,8 +319,13 @@ function start_script!(mgr::WorkerManager)
         if isnothing(mgr.script)
             path = joinpath(mkpath(production_config_dir()), "startjlworkers.sh")
             isfile(path) && cp(path, path * ".bak"; force = true)
-            write_worker_start_script(path, runprocs_mode(mgr.config))
-            mgr.script_path, mgr.script = path, read(path, String)
+            text = worker_start_script(mgr.config)
+            # the script holds the cluster cookie
+            open(path, "w") do io
+                chmod(path, 0o700)
+                write(io, text)
+            end
+            mgr.script_path, mgr.script = path, text
         end
         return (; path = mgr.script_path, text = mgr.script)
     end
@@ -215,13 +426,63 @@ function update_job_ids!(mgr::WorkerManager)
     return mgr
 end
 
+const SLURM_MEMORY_UNITS = Dict("" => 1, "K" => 1024, "M" => 1024^2, "G" => 1024^3, "T" => 1024^4)
+
+# Bytes of a memory size as `sacct` and `sstat` print it, such as `36812K`; `nothing` for an empty field.
+function slurm_bytes(text::AbstractString)
+    isempty(text) && return nothing
+    m = match(r"^(\d+(?:\.\d+)?)([KMGT]?)$", text)
+    isnothing(m) && throw(ArgumentError("slurm_bytes: unexpected memory size $(repr(text))"))
+    return round(Int, parse(Float64, m[1]) * SLURM_MEMORY_UNITS[m[2]])
+end
+
+"""
+    JuLeAna.update_steps!(mgr::WorkerManager; at::Real = time())
+
+Query `sacct` and `sstat` for the job steps of the workers of the SLURM allocations of `mgr`
+(not the `batch` and `extern` steps) and keep them as [`JuLeAna.StepInfo`](@ref)s by job ID.
+Queries the jobs of the running allocations (see [`JuLeAna.update_job_ids!`](@ref)) and, until
+their steps have ended, the jobs that had running steps at the previous query. Does nothing
+less than $(STEPS_READ_SECONDS) seconds after the previous query (`at` is the current
+`time()`) or without such jobs.
+"""
+function update_steps!(mgr::WorkerManager; at::Real = time())
+    running, unfinished = @lock mgr.lock begin
+        at - mgr.steps_read < STEPS_READ_SECONDS && return mgr
+        mgr.steps_read = at
+        ids = unique!([id for a in mgr.allocations if a.state === :running && a.backend === :slurm for id in a.job_ids])
+        ids, [id for (id, steps) in mgr.steps if id ∉ ids && any(s -> s.state in ("RUNNING", "PENDING"), steps)]
+    end
+    jobs = [running; unfinished]
+    isempty(jobs) && return mgr
+    acct = read(`$(mgr.sacct) --noheader --parsable2 --jobs=$(join(jobs, ",")) --format=JobID,NodeList,State,ExitCode,Elapsed,MaxRSS`,
+                String)
+    # `sstat` fails for a job without running steps
+    stat = isempty(running) ? "" :
+           read(pipeline(ignorestatus(`$(mgr.sstat) --noheader --parsable2 --allsteps --jobs=$(join(running, ",")) --format=JobID,AveRSS,MaxRSS`);
+                         stderr = devnull), String)
+    live = Dict(String(f[1]) => (slurm_bytes(f[2]), slurm_bytes(f[3])) for f in split.(eachline(IOBuffer(stat)), '|') if length(f) == 3)
+    steps = Dict(id => StepInfo[] for id in jobs)
+    for f in split.(eachline(IOBuffer(acct)), '|')
+        length(f) == 6 && occursin(r"^\d+\.\d+$", f[1]) || continue
+        id = String(f[1])
+        rss, max_rss = get(live, id, (nothing, nothing))
+        # `CANCELLED by <user ID>`
+        push!(get!(steps, first(split(id, '.')), StepInfo[]),
+              (; id, node = String(f[2]), state = String(first(split(f[3]))), exit_code = String(f[4]), elapsed = String(f[5]), rss,
+               max_rss = something(max_rss, slurm_bytes(f[6]), Some(nothing))))
+    end
+    @lock mgr.lock merge!(mgr.steps, steps)
+    return mgr
+end
+
 """
     JuLeAna.cancel_allocation!(mgr::WorkerManager, id::Integer)
 
 End the allocation `id` of `mgr` if it is running: for a SLURM allocation, `scancel` the
 jobs that `squeue` lists for this user under the allocation's job name (and no others),
 then send `SIGTERM` to the process group of its script, which ends the local workers or
-`srun`. The workers of the allocation leave the worker pool; items running on them fail.
+`sbatch`. The workers of the allocation leave the worker pool; items running on them fail.
 Throws an `ArgumentError` for an unknown `id`.
 """
 function cancel_allocation!(mgr::WorkerManager, id::Integer)
@@ -326,21 +587,24 @@ end
 
 # Type of the value of `workers_overview`, with fixed field types.
 const WorkersOverview = @NamedTuple{allocations::Vector{AllocationOutputInfo}, script::Union{String,@NamedTuple{path::String,text::String}},
-                                    workers::Vector{@NamedTuple{pid::Int,host::Union{Nothing,String}}},
-                                    slurm::Union{Nothing,@NamedTuple{queue::String,idle::String}}}
+                                    workers::Vector{@NamedTuple{pid::Int,attributes::Union{Nothing,Missing,WorkerAttributes}}},
+                                    steps::Vector{StepInfo}, slurm::Union{Nothing,@NamedTuple{queue::String,idle::String}}}
 
 """
     JuLeAna.workers_overview(mgr::WorkerManager)
 
 Collect what the Workers page shows and return a `JuLeAna.WorkersOverview`
-`(; allocations, script, workers, slurm)`:
+`(; allocations, script, workers, steps, slurm)`:
 
 - `allocations`: [`JuLeAna.allocations`](@ref) with their output, after
   [`JuLeAna.update_job_ids!`](@ref);
 - `script`: the `(; path, text)` of [`JuLeAna.start_script!`](@ref), or the message of the
   error that kept it from being generated;
-- `workers`: one `(; pid, host)` per worker process, `host` `nothing` until it is known;
-  the host of a new worker is asked for in the background;
+- `workers`: one `(; pid, attributes)` per worker process with its
+  [`JuLeAna.WorkerAttributes`](@ref), `nothing` until they are known and `missing` if the
+  worker did not answer; the attributes of a new worker are asked for in the background;
+- `steps`: the [`JuLeAna.StepInfo`](@ref)s of the SLURM jobs, after
+  [`JuLeAna.update_steps!`](@ref), by job and step ID;
 - `slurm`: `nothing` without SLURM, else `(; queue, idle)`, the output of
   `squeue -u <user>` and of `sinfo -t idle`.
 
@@ -348,7 +612,7 @@ Runs SLURM commands, so it can take a while; call it in the background.
 """
 function workers_overview(mgr::WorkerManager)
     slurm_available = !isnothing(Sys.which(first(mgr.squeue.exec)))
-    slurm_available && update_job_ids!(mgr)
+    slurm_available && (update_job_ids!(mgr); update_steps!(mgr))
     script = try
         start_script!(mgr)
     catch e
@@ -357,21 +621,23 @@ function workers_overview(mgr::WorkerManager)
     pids = nprocs() > 1 ? workers() : Int[]
     workers_now = @lock mgr.lock begin
         for pid in pids
-            haskey(mgr.hosts, pid) && continue
-            # asked once per worker; a failed request is shown as "?"
-            mgr.hosts[pid] = ""
+            haskey(mgr.attributes, pid) && continue
+            # asked once per worker
+            mgr.attributes[pid] = nothing
             errormonitor(Threads.@spawn begin
-                             host = try
-                                 remotecall_fetch(gethostname, pid)
+                             attributes = try
+                                 worker_attributes(pid)
                              catch
-                                 "?"
+                                 missing
                              end
-                             @lock mgr.lock mgr.hosts[pid] = host
+                             @lock mgr.lock mgr.attributes[pid] = attributes
                          end)
         end
-        [(; pid, host = isempty(mgr.hosts[pid]) ? nothing : mgr.hosts[pid]) for pid in pids]
+        [(; pid, attributes = mgr.attributes[pid]) for pid in pids]
     end
+    step_number(s) = parse.(Int, split(s.id, '.'))
+    steps = @lock mgr.lock sort!(reduce(vcat, values(mgr.steps); init = StepInfo[]); by = step_number)
     user = get(ENV, "USER", "")
     slurm = slurm_available ? (; queue = read(`$(mgr.squeue) -u $user`, String), idle = read(`$(mgr.sinfo) -t idle`, String)) : nothing
-    return convert(WorkersOverview, (; allocations = allocations(mgr), script, workers = workers_now, slurm))
+    return convert(WorkersOverview, (; allocations = allocations(mgr), script, workers = workers_now, steps, slurm))
 end

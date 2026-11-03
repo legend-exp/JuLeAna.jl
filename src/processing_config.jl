@@ -144,6 +144,8 @@ Fields:
 - `local_julia_settings::Vector{String}`: Julia flags for local workers.
 - `slurm_flags::Vector{String}`: SLURM flags for SLURM workers.
 - `slurm_julia_settings::Vector{String}`: Julia flags for SLURM workers.
+- `slurm_worker_memory::Symbol`: `:shared`, the SLURM workers of a job share its memory, or
+  `:fixed`, each worker gets the job's memory per node divided by its workers per node.
 - `env_variables::Dict{String,String}`: environment variables for the driver and workers.
 - `periods::Union{Nothing,Vector{DataPeriod}}`: selected periods; `nothing` selects all.
 - `runs::Union{Nothing,Vector{DataRun}}`: selected runs; `nothing` selects all.
@@ -172,9 +174,10 @@ Besides the positional constructor and the config-file constructors documented b
 keywords named like the fields. Every field except the two processor tables has a
 default: empty flag and settings lists, no environment variables, `periods` and `runs`
 of `nothing`, all `Bool` fields `false`, `max_parallel_steps = 0`, `local_n = 1`, `log_path = ""`,
-`log_level = Logging.Info`, `processor_log_level = nothing`, `processor_plot_level = nothing`,
+`slurm_worker_memory = :shared`, `log_level = Logging.Info`, `processor_log_level = nothing`, `processor_plot_level = nothing`,
 `plot_formats = [:png]` and `idle_timeout_minutes = 20`. Every
 constructor throws an `ArgumentError` when `runmode` is not `:local` or `:slurm`,
+`slurm_worker_memory` is not `:shared` or `:fixed`,
 `processor_plot_level` is not `nothing`, `:info` or `:debug`, `plot_formats` is empty, repeats
 an entry or holds anything but `:png` and `:jls`, `local_n < 1`, `max_parallel_steps < 0`, `idle_timeout_minutes` is negative or not finite, both `only_runs` and `only_partitions` are set, a table key differs from
 its spec's name or level, a name appears in both tables, a dependency names an unknown
@@ -189,6 +192,7 @@ struct ProcessingConfig
     local_julia_settings::Vector{String}
     slurm_flags::Vector{String}
     slurm_julia_settings::Vector{String}
+    slurm_worker_memory::Symbol
     env_variables::Dict{String,String}
     periods::Union{Nothing,Vector{DataPeriod}}
     runs::Union{Nothing,Vector{DataRun}}
@@ -205,14 +209,19 @@ struct ProcessingConfig
     processors::Dict{Symbol,ProcessorSpec}
     p_processors::Dict{Symbol,ProcessorSpec}
 
-    function ProcessingConfig(runmode, submit_jobs, local_n, local_julia_settings, slurm_flags, slurm_julia_settings, env_variables,
-                              periods, runs, analysis_runs_only, only_partitions, only_runs, max_parallel_steps, log_path, log_level,
-                              processor_log_level, processor_plot_level, plot_formats, idle_timeout_minutes, processors, p_processors)
-        cfg = new(runmode, submit_jobs, local_n, local_julia_settings, slurm_flags, slurm_julia_settings, env_variables, periods, runs,
-                  analysis_runs_only, only_partitions, only_runs, max_parallel_steps, log_path, log_level, processor_log_level,
+    function ProcessingConfig(runmode, submit_jobs, local_n, local_julia_settings, slurm_flags, slurm_julia_settings, slurm_worker_memory,
+                              env_variables, periods, runs, analysis_runs_only, only_partitions, only_runs, max_parallel_steps, log_path,
+                              log_level, processor_log_level, processor_plot_level, plot_formats, idle_timeout_minutes, processors,
+                              p_processors)
+        cfg = new(runmode, submit_jobs, local_n, local_julia_settings, slurm_flags, slurm_julia_settings, slurm_worker_memory,
+                  env_variables,
+                  periods, runs, analysis_runs_only, only_partitions, only_runs, max_parallel_steps, log_path, log_level,
+                  processor_log_level,
                   processor_plot_level, plot_formats, idle_timeout_minutes, processors, p_processors)
         cfg.runmode in (:local, :slurm) ||
             throw(ArgumentError("processing_config: runmode must be \"local\" or \"slurm\", got $(repr(cfg.runmode))"))
+        cfg.slurm_worker_memory in (:shared, :fixed) ||
+            throw(ArgumentError("processing_config: key `config.runmode_settings.slurm.worker_memory` must be \"shared\" or \"fixed\", got $(repr(cfg.slurm_worker_memory))"))
         isnothing(cfg.processor_plot_level) ||
             cfg.processor_plot_level in PLOT_LEVEL_VALUES ||
             throw(ArgumentError("processing_config: key `config.processor_plot_level` must be \"info\" or \"debug\", got $(repr(cfg.processor_plot_level))"))
@@ -255,13 +264,15 @@ struct ProcessingConfig
 end
 
 function ProcessingConfig(; processors, p_processors, runmode = :local, submit_jobs = false, local_n = 1, local_julia_settings = String[],
-                          slurm_flags = String[], slurm_julia_settings = String[], env_variables = Dict{String,String}(), periods = nothing,
-                          runs = nothing, analysis_runs_only = false, only_partitions = false, only_runs = false, max_parallel_steps = 0,
+                          slurm_flags = String[], slurm_julia_settings = String[], slurm_worker_memory = :shared,
+                          env_variables = Dict{String,String}(), periods = nothing, runs = nothing, analysis_runs_only = false,
+                          only_partitions = false, only_runs = false, max_parallel_steps = 0,
                           log_path = "", log_level = Logging.Info, processor_log_level = nothing, processor_plot_level = nothing,
                           plot_formats = [:png], idle_timeout_minutes = 20)
-    return ProcessingConfig(runmode, submit_jobs, local_n, local_julia_settings, slurm_flags, slurm_julia_settings, env_variables, periods,
-                            runs, analysis_runs_only, only_partitions, only_runs, max_parallel_steps, log_path, log_level,
-                            processor_log_level, processor_plot_level, plot_formats, idle_timeout_minutes, processors, p_processors)
+    return ProcessingConfig(runmode, submit_jobs, local_n, local_julia_settings, slurm_flags, slurm_julia_settings, slurm_worker_memory,
+                            env_variables, periods, runs, analysis_runs_only, only_partitions, only_runs, max_parallel_steps, log_path,
+                            log_level, processor_log_level, processor_plot_level, plot_formats, idle_timeout_minutes, processors,
+                            p_processors)
 end
 
 # Recursively convert nested dictionaries to `Dict{Symbol,Any}`.
@@ -434,7 +445,8 @@ The config must contain exactly these keys; a missing or unknown key throws an
 
 - `config`: `runmode` (`"local"` or `"slurm"`), `submit_jobs::Bool`,
   `runmode_settings.local.{n, julia_settings}`,
-  `runmode_settings.slurm.{flags, julia_settings}`, `env_variables`, `log_level`
+  `runmode_settings.slurm.{flags, julia_settings}` (and optionally
+  `runmode_settings.slurm.worker_memory`, `"shared"`, the default, or `"fixed"`), `env_variables`, `log_level`
   (`"debug"`, `"info"`, `"warn"` or `"error"`), and optionally `processor_log_level`
   (same values, default `nothing`), `processor_plot_level` (`"info"` or `"debug"`, default
   `nothing`), `plot_formats` (a list of `"png"` and `"jls"`, default `["png"]`) and
@@ -516,7 +528,7 @@ function ProcessingConfig(dict::AbstractDict; runmode::Union{Nothing,AbstractStr
     local_settings = _typed(settings, :local, AbstractDict, "config.runmode_settings.")
     _check_keys(local_settings, (:n, :julia_settings), "config.runmode_settings.local.")
     slurm_settings = _typed(settings, :slurm, AbstractDict, "config.runmode_settings.")
-    _check_keys(slurm_settings, (:flags, :julia_settings), "config.runmode_settings.slurm.")
+    _check_keys(slurm_settings, (:flags, :julia_settings), "config.runmode_settings.slurm."; optional = (:worker_memory,))
     processing = _typed(d, :processing, AbstractDict, "")
     _check_keys(processing, (:periods, :runs, :analysis_runs_only, :only_partitions, :only_runs), "processing.";
                 optional = (:order, :max_parallel_steps))
@@ -561,8 +573,10 @@ function ProcessingConfig(dict::AbstractDict; runmode::Union{Nothing,AbstractStr
 
     return ProcessingConfig(sel_runmode, sel_submit_jobs, n, _strings(local_settings, :julia_settings, "config.runmode_settings.local."),
                             _strings(slurm_settings, :flags, "config.runmode_settings.slurm."),
-                            _strings(slurm_settings, :julia_settings, "config.runmode_settings.slurm."), env_variables, sel_periods,
-                            sel_runs, sel_analysis_runs_only, sel_only_partitions, sel_only_runs,
+                            _strings(slurm_settings, :julia_settings, "config.runmode_settings.slurm."),
+                            Symbol(haskey(slurm_settings, :worker_memory) ?
+                                   _typed(slurm_settings, :worker_memory, AbstractString, "config.runmode_settings.slurm.") : "shared"),
+                            env_variables, sel_periods, sel_runs, sel_analysis_runs_only, sel_only_partitions, sel_only_runs,
                             haskey(processing, :max_parallel_steps) ? _typed(processing, :max_parallel_steps, Int, "processing.") : 0,
                             log_path, parse_log_level(_typed(config, :log_level, AbstractString, "config.")),
                             haskey(config, :processor_log_level) ? _log_level(config, :processor_log_level, "config.") : nothing,

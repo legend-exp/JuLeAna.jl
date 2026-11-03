@@ -100,10 +100,16 @@ JuLeAna.check_idle!(::DataflowController)
 JuLeAna.WorkerManager
 JuLeAna.WorkerAllocation
 JuLeAna.set_worker_config!
+JuLeAna.worker_start_script
 JuLeAna.start_script!
 JuLeAna.edit_start_script!
 JuLeAna.add_workers!
 JuLeAna.update_job_ids!
+JuLeAna.update_steps!
+JuLeAna.WorkerAttributes
+JuLeAna.StepInfo
+JuLeAna.worker_attributes
+JuLeAna.kill_worker
 JuLeAna.cancel_allocation!
 JuLeAna.cancel_all!
 JuLeAna.allocations

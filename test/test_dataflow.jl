@@ -693,6 +693,43 @@ const REPORT = """
         end
     end
 
+    @testset "timeout ends the worker" begin
+        Row = NamedTuple{(:Detector, :usability, :Status, :Error)}
+        original_pool = ppt_worker_pool()
+        pool = FlexWorkerPool(withmyid = false, label = "timeout test"; maxoccupancy = 1)
+        ppt_worker_pool!(pool)
+        pids = Int[]
+        try
+            push!(pids, only(addprocs(1; exeflags = "--project=$(Base.active_project())")))
+            @everywhere [pids[1]] using JuLeAna
+            push!(pool, pids[1])
+            t0 = time()
+            # the item computes without yielding, so its worker does not answer until the end
+            result = parallel([(detector = :V1, usability = :on)], Row; timeout = 3) do itr
+                t = time()
+                while time() - t < 120
+                end
+                (processed = true, log = Row((itr.detector, :on, 1, "")))
+            end
+            @test time() - t0 < 60
+            row = only(result)
+            @test !last(row).processed
+            @test occursin("ran longer than its timeout of 3.0 s on 1 worker, which was ended", last(row).log.Error)
+            @test pids[1] ∉ Distributed.workers()
+            # a new worker joins and takes the next items at once
+            push!(pids, only(addprocs(1; exeflags = "--project=$(Base.active_project())")))
+            @everywhere [pids[2]] using JuLeAna
+            push!(pool, pids[2])
+            result = parallel([(detector = :V2, usability = :on)], Row; timeout = 30) do itr
+                (processed = true, log = Row((itr.detector, :on, 1, "")), worker = myid())
+            end
+            @test last(only(result)).processed && last(only(result)).worker == pids[2]
+        finally
+            ppt_worker_pool!(original_pool)
+            rmprocs(filter(in(Distributed.workers()), pids))
+        end
+    end
+
     @testset "skipped runs" begin
         p3, r1 = DataPeriod(3), DataRun(1)
         run_a(cfg, l200, period, run; reprocess::Bool = false) = error("run_a must be skipped")

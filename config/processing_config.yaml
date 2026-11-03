@@ -13,6 +13,7 @@ config:
         - "--cpus-per-task=2"
         - "--mem=480GB"
       julia_settings: []
+      worker_memory: shared
     local:
       n: 64
       julia_settings: []

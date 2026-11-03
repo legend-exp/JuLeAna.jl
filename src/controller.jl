@@ -521,10 +521,10 @@ function effective_config(ctrl::DataflowController)
     settings = ctrl.runmode_settings
     return ProcessingConfig(something(ctrl.runmode, cfg.runmode), cfg.submit_jobs, get(settings, :local_n, cfg.local_n),
                             get(settings, :local_julia_settings, cfg.local_julia_settings), get(settings, :slurm_flags, cfg.slurm_flags),
-                            get(settings, :slurm_julia_settings, cfg.slurm_julia_settings), cfg.env_variables, cfg.periods, cfg.runs,
-                            something(ctrl.analysis_runs_only, cfg.analysis_runs_only), cfg.only_partitions, cfg.only_runs,
-                            cfg.max_parallel_steps, cfg.log_path, cfg.log_level, cfg.processor_log_level, cfg.processor_plot_level,
-                            cfg.plot_formats, cfg.idle_timeout_minutes,
+                            get(settings, :slurm_julia_settings, cfg.slurm_julia_settings), cfg.slurm_worker_memory, cfg.env_variables,
+                            cfg.periods, cfg.runs, something(ctrl.analysis_runs_only, cfg.analysis_runs_only), cfg.only_partitions,
+                            cfg.only_runs, cfg.max_parallel_steps, cfg.log_path, cfg.log_level, cfg.processor_log_level,
+                            cfg.processor_plot_level, cfg.plot_formats, cfg.idle_timeout_minutes,
                             with_overrides(cfg.processors, ctrl.kwarg_overrides, ctrl.level_overrides),
                             with_overrides(cfg.p_processors, ctrl.kwarg_overrides, ctrl.level_overrides))
 end

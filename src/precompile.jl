@@ -122,7 +122,11 @@
                            (;
                             allocations = [allocation(1, :running, :slurm; output = ["starting workers"]), allocation(2, :failed, :local)],
                             script = (; path = "/prod/config/startjlworkers.sh", text = "#!/bin/bash\nsrun julia\n"),
-                            workers = [(; pid = 2, host = "cslg4"), (; pid = 3, host = nothing)],
+                            workers = [(; pid = 2,
+                                        attributes = (; host = "viper", os_pid = 101, threads = 2, memory = 2^33, job = "4711", step = "0",
+                                                      tasks = "1", cpus = "2", gpus = "")), (; pid = 3, attributes = nothing)],
+                            steps = [(; id = "4711.0", node = "viper", state = "RUNNING", exit_code = "0:0", elapsed = "00:01:00",
+                                      rss = 2^30, max_rss = 2^31)],
                             slurm = (; queue = "JOBID NAME\n4711 julia-1\n", idle = "debug up\n")))
         report_text = "# Report\n\n## Summary\n\n| detector | status |\n|---|---|\n| V00 | ok |\n| V01 | failed |\n\n```\nfit failed\n```\n"
         m.reports_page.source = :run

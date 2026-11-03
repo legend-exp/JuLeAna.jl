@@ -177,6 +177,54 @@ function watch_tasks(advance, tasks::AbstractArray{Task}; poll::Real = 2)
     return nothing
 end
 
+# Worker pool of one item of `parallel` with a `timeout`: once the item has run for `timeout`
+# seconds on a worker other than the main process, the process of that worker is ended (see
+# `kill_worker`), and after `tries` such ends `take!` throws instead of handing out another
+# worker. `onworker` does not count an ended worker as a try, so without this limit the item
+# would be tried again and again.
+mutable struct TimeoutPool{P<:AbstractWorkerPool} <: AbstractWorkerPool
+    const pool::P
+    const label::String
+    const timeout::Float64
+    const tries::Int
+    const timeouts::Threads.Atomic{Int}
+    timer::Union{Nothing,Timer}
+end
+
+function TimeoutPool(pool::AbstractWorkerPool, label::AbstractString, timeout::Real, tries::Integer)
+    return TimeoutPool(pool, String(label), Float64(timeout), Int(tries), Threads.Atomic{Int}(0), nothing)
+end
+
+function Base.take!(p::TimeoutPool)
+    n = p.timeouts[]
+    n >= p.tries &&
+        error("the item ran longer than its timeout of $(p.timeout) s on $n worker$(n == 1 ? ", which was" : "s, which were") ended")
+    worker = take!(p.pool)
+    worker == myid() && return worker
+    try
+        # asked now, while the worker answers, so that it can be ended later
+        worker_attributes(worker)
+    catch e
+        @warn "The attributes of worker $worker are not known, so the timeout of item $(p.label) cannot end it" exception = e
+        return worker
+    end
+    p.timer = Timer(p.timeout) do _
+        Threads.atomic_add!(p.timeouts, 1)
+        @warn "Item $(p.label) ran longer than its timeout of $(p.timeout) s: ending worker $worker"
+        try
+            kill_worker(worker)
+        catch e
+            @error "Could not end worker $worker after the timeout of item $(p.label)" exception = (e, catch_backtrace())
+        end
+    end
+    return worker
+end
+
+function Base.put!(p::TimeoutPool, worker::Int)
+    isnothing(p.timer) || close(p.timer)
+    return put!(p.pool, worker)
+end
+
 """
     parallel(f, iterator::AbstractArray, log_nt; timeout::Real=0, retry::Bool=false, process_name::AbstractString="")
     parallel(iterator::AbstractArray, log_nt; kwargs...) do itr
@@ -199,9 +247,12 @@ left to the step of an earlier period, counts as not run in the progress.
 
 An item whose `f` throws, or exceeds `timeout` seconds when `timeout > 0`, does not abort
 the batch: its pair is `itr => (processed = false, log = failure_log(log_nt, itr, msg))`.
-A timed-out item's worker process is terminated and not replaced; an item on the main
-process keeps running in the background. With `retry = true`, each item gets up to three
-attempts after a worker loss or a timeout; an error thrown by `f` is not retried.
+When an item exceeds `timeout` on a worker, the process of that worker is ended at once with
+[`JuLeAna.kill_worker`](@ref), also while it computes; a worker started by a start script of
+[`JuLeAna.worker_start_script`](@ref) is then replaced. An item on the main process has no
+timeout. With `retry = true`, an item that exceeded `timeout` is tried again, up to three
+times in all. An item whose worker is lost otherwise is tried again on another worker; an
+error thrown by `f` is not retried.
 
 Element types without a [`failure_log`](@ref) method for `log_nt` are rejected with an
 `ArgumentError` before any work starts.
@@ -291,11 +342,11 @@ function parallel(f, iterator::AbstractArray, log_nt::Type{<:NamedTuple}; timeou
     tasks = broadcast(iterator, ids) do itr, id
         Threads.@spawn begin
             started = isnothing(step) ? nothing : worker -> item_started!(step..., id, worker, label(itr))
+            item_workers = timeout > 0 ? TimeoutPool(item_pool(id), "$itr", timeout, retry ? 3 : 1) : item_pool(id)
             result, outcome = try
-                # Past `maxtime`, onworker terminates the worker (never the main process) and
-                # counts the timeout as a failed try; the last failure lands in the catch below.
+                # The last timeout or worker loss lands in the catch below.
                 with(ITEM_STARTED => started) do
-                    onworker(; pool = item_pool(id), tries = retry ? 3 : 1, label = "$itr", maxtime = timeout) do
+                    onworker(; pool = item_workers, tries = retry ? 3 : 1, label = "$itr") do
                         try
                             res = run_item(itr)
                             return itr => res, item_outcome(res)

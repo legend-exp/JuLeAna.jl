@@ -268,10 +268,9 @@ end
         e = only(JuLeAna.progress(store).steps)
         @test (e.done, e.failed, e.notrun) == (1, 0, 1)
 
-        # Without workers the item runs on the main process, which onworker does not terminate.
-        slow = parallel(k -> (sleep(5); (processed = true,)), [fk], FkLog; timeout = 0.2)
-        @test !only(slow).second.processed
-        @test only(slow).second.log.Status == ProcessStatus(0)
+        # Without workers the item runs on the main process, which a timeout never ends.
+        slow = parallel(k -> (sleep(1); (processed = true,)), [fk], FkLog; timeout = 0.2)
+        @test only(slow).second.processed
 
         finished = Threads.Atomic{Int}(0)
         staggered = [Threads.@spawn sleep(0.05 * k) for k in 1:4]
