@@ -8,9 +8,7 @@ The QC flags are generated per filekey: for each detector, the QC labels and the
 and `is_empty_trace` flags defined in the QC configuration are evaluated on the `jldsp` data.
 Pulser events and forced-trigger events (without pulser events) are taken from the `aux_trig` flags
 of the pulser channel (`pulser.puls_detector`) and of the forced-trigger channel
-(`forced_trigger.detector`) of the filekey. Each filekey also counts its global events (built from
-the detectors of the event-tier selection) that pass QC, i.e. in which every germanium row is a
-single pulse, an empty trace or crosstalk. Each detector is then summarized over the run without the
+(`forced_trigger.detector`) of the filekey. Each detector is then summarized over the run without the
 removed filekeys: the survival fraction of each flag is computed for the pulser events and for the
 forced-trigger events. A detector with single-pulse events that fail the `is_valid_dsp` flag gets the
 status warning. The pulser single-pulse and forced-trigger empty-trace survival fractions of each
@@ -21,14 +19,14 @@ deviations above `filekey_stability.sigma` of the QC config are reported without
 - `jldsp` tier of the `phy` filekeys of the run listed in the runinfo, except the filekeys marked unprocessable
 - `jlaux` tier column `aux_trig` of the pulser and forced-trigger channels
 - the filekeys marked removed in `datasets/ignored_daq_cycles`, which are left out of the run summary
-- `dataprod_config(l200).qc(filekey)`, and the event-tier detector selection and crosstalk definition
+- `dataprod_config(l200).qc(filekey)`
 - `l200.par.rpars.qcs[period, Symbol("<run>-phy")]` (existing parameters, unless `reprocess` is `true`)
 
 # Outputs
 - `jlqcs` tier file for each filekey, with one table per detector (QC flags, `timestamp`, `is_pulser`, `is_forced`)
-- `l200.par.rpars.qcs[period, Symbol("<run>-phy")]` (flag definition, survival fractions, event counts, and per filekey the event counts and stability tests in `filekey_summary`; the global event QC survival in `event_survival`) with its validity (category `phy`)
+- `l200.par.rpars.qcs[period, Symbol("<run>-phy")]` (flag definition, survival fractions, event counts, and per filekey the event counts and stability tests in `filekey_summary`) with its validity (category `phy`)
 - plots `:qc_filekey_efficiency`, `:qc_survival_fractions` and `:qc_survival_fractions_forced_trigger` for each detector; `:qc_survival_fractions_forced_trigger` is saved only at the debug plot level
-- run report `:qcs_phy`, with the global event QC survival, the stability warnings, one row per detector and one row per filekey
+- run report `:qcs_phy`, with the stability warnings, one row per detector and one row per filekey
 
 # Keywords
 - `reprocess`: remove the existing `jlqcs` files and parameters and process all detectors again; otherwise detectors already present in a `jlqcs` file are skipped there. The run summary of every detector is always recomputed.
@@ -51,7 +49,6 @@ function process_qcs_phy(processing_config, l200::LegendData, period::DataPeriod
 
     chinfo = channelinfo(l200, filekey; system = :geds) |> detector_filter(processing_config, :process_qcs_phy)
     @info "Loaded channel info with $(length(chinfo)) detectors"
-    event_detectors = filterby(get_ged_evt_detsel_propfunc(l200, filekey))(channelinfo(l200, filekey; system = :geds)).detector
     qc_config = dataprod_config(l200).qc(filekey)
     @debug "Loaded QC config: $(lstring(qc_config))"
     stability_sigma = qc_config.filekey_stability.sigma
@@ -117,27 +114,8 @@ function process_qcs_phy(processing_config, l200::LegendData, period::DataPeriod
                 end
             end
         end
-        # Count each global event of the filekey once. Only `run_step` with temporary outputs writes the
-        # flags of the selected detectors alone, so only there the events are built from those.
-        event_counts = @process_step "event QC survival" begin
-            evt_dets = WRITE_PARS[] ? event_detectors : filter(detector_selected, event_detectors)
-            event_data = Dict{DetectorId,StructArray}()
-            for det in evt_dets
-                qc = read_ldata(l200, DataTier(:jlqcs), fk, det)
-                is_crosstalk = get_ged_qc_is_crosstalk_propfunc(l200, filekey, det).(qc)
-                event_data[det] = StructArray(timestamp = qc.timestamp, is_valid_qc = qc.is_single_pulse .| qc.is_empty_trace .| is_crosstalk,
-                                              is_pulser = qc.is_pulser, is_forced = qc.is_forced)
-            end
-            events = build_global_events(event_data, evt_dets)
-            passed = all.(events.is_valid_qc)
-            pulser = any.(events.is_pulser)
-            forced = any.(events.is_forced) .& .!pulser
-            other = .!pulser .& .!forced
-            (n_events = length(events), n_pass = count(passed), n_pulser = count(pulser), n_pulser_pass = count(passed .& pulser),
-             n_forced = count(forced), n_forced_pass = count(passed .& forced), n_other = count(other), n_other_pass = count(passed .& other))
-        end
-        return (result = (event_counts = event_counts,), processed = n_processed > 0,
-                log = log_fk_nt((fk, ProcessStatus(isempty(failed_detectors) ? 1 : 0), n_processed, string.(failed_detectors), "")))
+        return (processed = n_processed > 0,
+                log =log_fk_nt((fk, ProcessStatus(isempty(failed_detectors) ? 1 : 0), n_processed, string.(failed_detectors), "")))
     end
 
     function det_qcs_phy(chinfo_det::NamedTuple)
@@ -150,7 +128,7 @@ function process_qcs_phy(processing_config, l200::LegendData, period::DataPeriod
         qc_parts, qc = @process_step "data loader" begin
             # Per filekey for the filekey summary, which includes the removed filekeys.
             qc_parts = [read_ldata(l200, DataTier(:jlqcs), fk, det) for fk in filekeys]
-            qc_parts, reduce(vcat, qc_parts[included_filekeys]; init = first(qc_parts)[1:0])
+            qc_parts, reduce(vcat, qc_parts[included_filekeys])
         end
         flag_names = [Symbol.(keys(qc_config_det.labels))...; :is_single_pulse; :is_empty_trace]
         qc_propfunc = merge(qc_config_det.labels,
@@ -242,26 +220,6 @@ function process_qcs_phy(processing_config, l200::LegendData, period::DataPeriod
         haskey(res, :filekey_summary) ? (pars_db[det] = PropDict(:filekey_summary => res.filekey_summary)) : delete!(pars_db, det)
     end
     pars_db = create_pars(pars_db, result_qc)
-    # Run totals exclude the removed filekeys, whose counts remain in the filekey summary.
-    event_survival = PropDict(:filekey_summary => PropDict(), :survival_fractions => PropDict(), :n_detectors => length(event_detectors),
-                              :complete => all(haskey(res, :result) for (_, res) in result_filekeys))
-    for (fk, res) in result_filekeys
-        haskey(res, :result) &&
-            (event_survival.filekey_summary[Symbol(fk)] = PropDict(pairs(merge(res.result.event_counts, (is_removed = fk in removed_filekeys,)))))
-    end
-    event_row_nt = NamedTuple{(:Selection, :Events, :Accepted, Symbol("Survival (%)")),Tuple{String,Int,Int,Float64}}
-    event_rows = event_row_nt[]
-    for (selection, n_key, k_key, label) in ((:all, :n_events, :n_pass, "All events"), (:pulser, :n_pulser, :n_pulser_pass, "Pulser"),
-                                             (:forced_trigger, :n_forced, :n_forced_pass, "Forced trigger"),
-                                             (:other, :n_other, :n_other_pass, "Other triggers"))
-        counted = [res.result.event_counts for (fk, res) in result_filekeys if !(fk in removed_filekeys) && haskey(res, :result)]
-        n = sum(getproperty.(counted, n_key); init = 0)
-        k = sum(getproperty.(counted, k_key); init = 0)
-        efficiency = n == 0 ? NaN : 100 * k / n
-        event_survival.survival_fractions[selection] = PropDict(:n_events => n, :n_pass => k, :efficiency => efficiency)
-        push!(event_rows, event_row_nt((label, n, k, efficiency)))
-    end
-    pars_db[:event_survival] = event_survival
     write_pars(l200.par.rpars.qcs[period], pars_file, pars_db)
     write_validity(l200.par.rpars.qcs, filekey, "$(period)/$(pars_file).yaml"; category = :phy)
     @info "Saved QC-survival pars to disk"
@@ -296,13 +254,6 @@ function process_qcs_phy(processing_config, l200::LegendData, period::DataPeriod
     lreport!(report, qcs_phy_log_text)
     lreport!(report, "# Metadata")
     lreport!(report, create_metadatatbl(filekey))
-    lreport!(report, "# Overall event QC survival")
-    lreport!(report,
-             "An event passes when every participating germanium row passes is_single_pulse, is_empty_trace, or is_crosstalk, using the event-tier detector selection and timestamp grouping. " *
-             "Each global event is counted once. Removed filekeys are excluded; no trigger multiplicity, energy, or PSD selection is applied. Other triggers exclude pulser and forced-trigger events.")
-    lreport!(report, StructArray(event_rows))
-    event_survival.complete ||
-        lreport!(report, "Incomplete event summary: one or more filekeys failed. Counts cover only successfully summarized filekeys; see Filekey Results.")
     lreport!(report, "# QC stability warnings")
     lreport!(report,
              "Pulser single-pulse and forced-trigger empty-trace survival fractions of filekeys that deviate from the other nonremoved filekeys by more than $(stability_sigma)σ.")

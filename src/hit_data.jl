@@ -27,6 +27,8 @@ function read_hit_cal(l200::LegendData, det, runs, e_types::AbstractVector{Symbo
     columns_out = union([:timestamp], _input_columns(ljl_propfunc.(expressions)))
     detector = DetectorId(det)
     aoe_classifiers, lq_classifiers = Symbol.(string.(aoe_types) .* "_classifier"), Symbol.(string.(lq_types) .* "_classifier")
+    # `pars` is a NamedTuple rather than keywords, so that the whole `get_ged_evt_kwargs` result,
+    # which also holds other settings, can be passed.
     e_cal   = (; pars_type = get(pars, :e_cal_pars_type, :rpars), pars_cat = get(pars, :e_cal_pars_cat, :ecal))
     aoe_cal = (; pars_type = get(pars, :aoe_cal_pars_type, :ppars), pars_cat = get(pars, :aoe_cal_pars_cat, :aoe))
     aoe_cut = (; pars_type = get(pars, :aoe_cut_pars_type, :ppars), pars_cat = get(pars, :aoe_cut_pars_cat, :aoe))
@@ -34,7 +36,10 @@ function read_hit_cal(l200::LegendData, det, runs, e_types::AbstractVector{Symbo
     lq_cut  = (; pars_type = get(pars, :lq_cut_pars_type, :ppars), pars_cat = get(pars, :lq_cut_pars_cat, :lq))
     tables = map(collect(runs)) do (period, run)
         sel = start_filekey(l200, (period, run, :cal))
-        # LegendDataManagement keeps the parsed parameters of each run in the process.
+        # Not the public `get_ged_cal_propfunc`, `get_ged_psd_propfunc` and cut functions: each compiles one
+        # function over all configured types, which needs the jldsp columns of all of them. The expressions
+        # of the requested types alone keep the read to the columns they use. LegendDataManagement keeps
+        # the parsed parameters of each run in the process.
         psd_funcs = [[c => ljl_propfunc(LegendDataManagement._get_aoe_cal_propfunc_str(l200, sel, detector, t; aoe_cal...))
                       for (t, c) in zip(aoe_types, aoe_classifiers)];
                      [c => ljl_propfunc(LegendDataManagement._get_lq_cal_propfunc_str(l200, sel, detector, t; lq_cal...))
