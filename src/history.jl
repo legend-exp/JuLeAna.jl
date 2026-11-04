@@ -148,6 +148,21 @@ end
 const HISTORY_GRID_OUTCOMES = (:failed, :stopped, :cancelled)
 
 """
+    JuLeAna.latest_item_seconds(history)
+
+Return the median item time in seconds of every processor in the `timings` of the entries of
+`history` ([`JuLeAna.read_history`](@ref)), from the last entry that has one, as a
+`Dict{Symbol,Float64}`.
+"""
+function latest_item_seconds(history)
+    seconds = Dict{Symbol,Float64}()
+    for entry in history, t in entry.timings
+        seconds[t.process] = t.median
+    end
+    return seconds
+end
+
+"""
     JuLeAna.history_grid(processors, period_runs, overview, history)
 
 Combine the reports on disk and the processing history into one cell per processor and

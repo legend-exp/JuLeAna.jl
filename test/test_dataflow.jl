@@ -325,6 +325,23 @@ const REPORT = """
         run_processing(cfg_m, FakeData(), [p3], steps_m, Symbol[], stub_status([p3], runs, steps_m, Symbol[])...;
                        processors = Dict{Symbol,Any}(n => step(n) for n in steps_m), max_parallel_steps = 1)
         @test starts()[1:4] == [(:w, runs[1]), (:w, runs[2]), (:u, runs[1]), (:u, runs[2])]
+        # when every step runs with reprocess and item times are known, the estimated time of the chain goes first:
+        # x takes 10 s, the chain y → z 2 s
+        timed_run(seconds; reprocess = true) = run_processing(cfg_h, FakeData(), [p3], steps_h, Symbol[],
+                                                              stub_status([p3], runs, steps_h, Symbol[])...;
+                                                              processors = Dict{Symbol,Any}(n => step(n) for n in steps_h),
+                                                              max_parallel_steps = 1, reprocess, recorded_item_seconds = seconds)
+        empty!(events)
+        timed_run(Dict(:x => 10.0, :y => 1.0, :z => 1.0))
+        @test starts()[1:2] == [(:x, runs[1]), (:x, runs[2])]
+        # a processor without a known time takes the median of the known ones: the chain y → z takes 20 s
+        empty!(events)
+        timed_run(Dict(:x => 10.0))
+        @test starts()[1:2] == [(:y, runs[1]), (:y, runs[2])]
+        # without reprocess the times are not used
+        empty!(events)
+        timed_run(Dict(:x => 10.0, :y => 1.0, :z => 1.0); reprocess = false)
+        @test starts()[1:2] == [(:y, runs[1]), (:y, runs[2])]
 
         # without dependency checks, a step still waits for its own level, but not for the other
         empty!(events)
@@ -335,6 +352,22 @@ const REPORT = """
                        processors = Dict{Symbol,Any}(:a => step(:a), :c => step(:c), :p => p_stub), check_dependencies = false)
         @test position(:start, :c, runs[1]) > position(:end, :a, runs[1])
         @test position(:start, :c, runs[1]) < position(:end, :p, runs[1])
+    end
+
+    @testset "chain seconds" begin
+        a, b, c = ((DataPeriod(3), DataRun(r), :s) for r in 1:3)
+        dependents = Dict(a => [b, c], b => [c], c => JuLeAna.ProgressKey[])
+        # a step of 10 items on 4 workers takes 2.5 item times, the steps without counted items one
+        @test JuLeAna.chain_seconds([a, b, c], dependents, step -> 2.0, Dict(a => 10), 4) == Dict(a => 9.0, b => 4.0, c => 2.0)
+        # medians of the sorted durations of this run
+        store = JuLeAna.ProgressStore()
+        store.durations[:odd], store.durations[:even] = [1.0, 2.0, 4.0], [1.0, 3.0]
+        @test JuLeAna.measured_item_seconds(store) == Dict(:odd => 2.0, :even => 2.0)
+        # the latest median of every processor in a history
+        history = [(; timings = [(; process = :a, median = 1.0)]),
+                   (; timings = [(; process = :a, median = 3.0), (; process = :b, median = 2.0)]),
+                   (; timings = NamedTuple[])]
+        @test JuLeAna.latest_item_seconds(history) == Dict(:a => 3.0, :b => 2.0)
     end
 
     @testset "worker queue" begin
@@ -370,6 +403,23 @@ const REPORT = """
         end
         @test err isa TaskFailedException && err.task.exception isa ProcessingStopped
         @test isempty(queue.waiting)
+
+        # the items wait by `order` of their keys; `resort!` and `refresh` apply a changed order
+        pool = Distributed.WorkerPool([myid()])
+        rank = Dict(1 => 1, 2 => 2, 3 => 3)
+        changed = Ref(false)
+        queue = JuLeAna.WorkerQueue(k -> rank[k], () -> changed[] ? false : (rank[3] = -1; changed[] = true))
+        held = take!(pool)
+        empty!(order)
+        tasks = map(item, [1, 2, 3])
+        @test waituntil(() -> length(queue.waiting) == 3)
+        rank[1] = 9
+        JuLeAna.resort!(queue)
+        @test [i.key for i in queue.waiting] == [2, 3, 1]
+        # `refresh` before the first handout puts 3 first
+        put!(pool, held)
+        foreach(wait, tasks)
+        @test order == [3, 2, 1]
         put!(pool, held)
 
         # in `run_processing`, the items of b (b → c) overtake the waiting items of a

@@ -34,6 +34,7 @@ JuLeAna.history_section
 JuLeAna.append_history
 JuLeAna.read_history
 JuLeAna.history_grid
+JuLeAna.latest_item_seconds
 JuLeAna.disk_counts
 JuLeAna.disk_state
 run_processing
@@ -45,6 +46,7 @@ JuLeAna.StepOutput
 JuLeAna.@using_packages
 ProcessingStopped
 JuLeAna.WorkerQueue
+JuLeAna.resort!
 JuLeAna.partition_periods
 JuLeAna.rank_order_dependencies
 ```

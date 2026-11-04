@@ -64,13 +64,15 @@ mutable struct QueuedItem
 end
 
 """
-    JuLeAna.WorkerQueue()
+    JuLeAna.WorkerQueue(order = identity, refresh = () -> false)
 
 Order in which the waiting items of [`parallel`](@ref) get free workers. [`run_processing`](@ref)
 sets one queue for all steps of a run. A free worker goes to the waiting item with the
-smallest key, and among equal keys to the item that came first. The key of an item is the
-priority of its step in `run_processing` followed by the item's position, so the items of a
-step get workers in their order.
+smallest `order(key)`, and among equal ones to the item that came first. The key of an item
+is its step in `run_processing` followed by the item's position, and `order` puts the
+priority of the step first, so the items of a step get workers in their order. When the
+priorities change, [`JuLeAna.resort!`](@ref) sorts the waiting items again; `refresh()` is
+called before every handout and returns whether they changed.
 
 Every waiting item adds one task that takes a worker from the pool, and that task hands the
 worker to the item that is first at that moment. These tasks wait side by side, so the
@@ -78,18 +80,28 @@ initialization of new workers, which happens when a worker is taken, also runs s
 """
 mutable struct WorkerQueue
     const lock::ReentrantLock
-    # sorted by `(key, seq)`
+    # sorted by `(order(key), seq)`
     const waiting::Vector{QueuedItem}
     seq::Int
+    const order::Any
+    const refresh::Any
 end
 
-WorkerQueue() = WorkerQueue(ReentrantLock(), QueuedItem[], 0)
+WorkerQueue(order = identity, refresh = () -> false) = WorkerQueue(ReentrantLock(), QueuedItem[], 0, order, refresh)
+
+"""
+    JuLeAna.resort!(q::WorkerQueue)
+
+Sort the waiting items of `q` by the current `order` of their keys.
+"""
+resort!(q::WorkerQueue) = @lock q.lock sort!(q.waiting; by = i -> (q.order(i.key), i.seq))
 
 # Worker queue of the current processing run, set by `run_processing`; `nothing` outside of it.
 const WORKER_QUEUE = ScopedValue{Union{Nothing,WorkerQueue}}(nothing)
 
-# Priority of the current processing step in its `WORKER_QUEUE`, set by `run_processing`.
-const STEP_PRIORITY = ScopedValue{Any}(nothing)
+# The current processing step `(period, run, processor)`, under which the items of `parallel`
+# wait in the `WORKER_QUEUE`; set by `run_processing`.
+const QUEUE_STEP = ScopedValue{Any}(nothing)
 
 # Number of items of the current processing step counted when `run_processing` started;
 # `nothing` when the step's items are not counted.
@@ -106,7 +118,7 @@ function Base.take!(p::QueuedPool)
     q = p.queue
     item = @lock q.lock begin
         item = QueuedItem(p.key, q.seq += 1, Threads.Event(), nothing)
-        insert!(q.waiting, searchsortedfirst(q.waiting, item; by = i -> (i.key, i.seq)), item)
+        insert!(q.waiting, searchsortedfirst(q.waiting, item; by = i -> (q.order(i.key), i.seq)), item)
         item
     end
     # The worker may go to another item, so the task must not report it as this item's.
@@ -128,7 +140,11 @@ function serve_first!(p::QueuedPool)
     catch e
         e
     end
-    item = @lock p.queue.lock popfirst!(p.queue.waiting)
+    q = p.queue
+    item = @lock q.lock begin
+        q.refresh() && sort!(q.waiting; by = i -> (q.order(i.key), i.seq))
+        popfirst!(q.waiting)
+    end
     item.result = result
     notify(item.ready)
     return nothing
@@ -314,8 +330,8 @@ function parallel(f, iterator::AbstractArray, log_nt::Type{<:NamedTuple}; timeou
                          PROCESSOR_LOG_LEVEL => log_level, PLOT_LEVEL => plot_level, PLOT_FORMATS => plot_formats, CURRENT_ITEM => itr)
     stop = PROCESSING_STOP[]
     pool = isnothing(stop) ? ppt_worker_pool() : StoppablePool(ppt_worker_pool(), stop)
-    queue, step_priority = WORKER_QUEUE[], STEP_PRIORITY[]
-    item_pool(id) = isnothing(queue) ? pool : QueuedPool(pool, queue, (step_priority, id))
+    queue, queue_step = WORKER_QUEUE[], QUEUE_STEP[]
+    item_pool(id) = isnothing(queue) ? pool : QueuedPool(pool, queue, (queue_step, id))
     counted = STEP_ITEMS[]
     isnothing(counted) || counted == length(iterator) ||
         @debug "parallel: $(length(iterator)) items, $counted counted when the processing run started"

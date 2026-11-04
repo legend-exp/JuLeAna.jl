@@ -768,7 +768,7 @@ function apply!(ctrl::DataflowController, cmd::StartProcessing)
             end
             run_processing(cfg, l200, periods, steps, p_steps, run_status, partition_status; processors = ctrl.processors,
                            check_dependencies, reprocess, processor_log_level, processor_plot_level, ctrl.stop, ctrl.abandon,
-                           progress_store = ctrl.progress)
+                           progress_store = ctrl.progress, recorded_item_seconds = latest_item_seconds(read_history(history_path(l200))))
             :finished, nothing
         catch e
             ctrl.stop[] ? (:stopped, nothing) : (:failed, e)

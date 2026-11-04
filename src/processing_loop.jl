@@ -18,6 +18,28 @@ function partition_periods(l200::LegendData, period::DataPeriod)
     return sort!(collect(periods))
 end
 
+# Estimated seconds of the longest chain of steps that starts with each step of a processing
+# run, and the number of workers it was computed for; replaced as a whole when the estimates
+# change, so that every task can read it.
+mutable struct ChainSeconds
+    @atomic seconds::Dict{ProgressKey,Float64}
+    @atomic workers::Int
+end
+
+# Seconds of the longest chain of steps from each of `nodes` through the steps that wait for it
+# (`dependents`): a step takes `item_seconds(processor) * max(1, items / workers)`, with its
+# number of items from `item_counts` or 1.
+function chain_seconds(nodes, dependents, item_seconds, item_counts, workers::Integer)
+    lengths = Dict{ProgressKey,Float64}()
+    function chain(node)
+        haskey(lengths, node) && return lengths[node]
+        own = item_seconds(node[3]) * max(1.0, get(item_counts, node, 1) / workers)
+        return lengths[node] = own + maximum(chain, dependents[node]; init = 0.0)
+    end
+    foreach(chain, nodes)
+    return lengths
+end
+
 """
     run_processing(cfg::ProcessingConfig, l200, periods, run_steps, partition_steps,
         run_status, partition_status; processors::AbstractDict{Symbol}=PROCESSORS,
@@ -26,7 +48,8 @@ end
         processor_plot_level::Union{Nothing,Symbol}=cfg.processor_plot_level,
         max_parallel_steps::Integer=cfg.max_parallel_steps, stop::Threads.Atomic{Bool}=Threads.Atomic{Bool}(false),
         abandon::Threads.Atomic{Bool}=Threads.Atomic{Bool}(false),
-        progress_store::Union{Nothing,ProgressStore}=nothing)
+        progress_store::Union{Nothing,ProgressStore}=nothing,
+        recorded_item_seconds::AbstractDict{Symbol,<:Real}=Dict{Symbol,Float64}())
 
 Run the partition-level steps `partition_steps` for every period in `periods` and the
 run-level steps `run_steps` for every period and every run listed in `run_status`.
@@ -53,7 +76,14 @@ steps of its own level, for the same run or period.
 Steps that are ready start, and the items they hand to [`parallel`](@ref) get free
 workers, in this order (see [`JuLeAna.waiting_chains`](@ref) and [`JuLeAna.WorkerQueue`](@ref)):
 the step with the longest chain of selected steps that wait for it first, then the one
-with the most selected steps that wait for it, then by rank, name, period and run. With
+with the most selected steps that wait for it, then by rank, name, period and run. When
+every step runs with `reprocess = true` and an item time is known, the estimated time of
+that chain comes first: a step takes the median item time of its processor times
+`max(1, items / workers)`, with the number of workers in the worker pool and, for a step
+without counted items, one item. The item time of a processor is the median of its items
+of this run once one has finished, else `recorded_item_seconds[processor]` (such as from the
+history of the production), else the median of the known ones. The order is updated after
+every finished step and before a worker is handed out when the number of workers changed. With
 `max_parallel_steps > 0` at most that many steps run at the same time. At the start, the
 items of every step whose processor registers an `items` function (see
 [`register_processor!`](@ref)) are counted, except for the runs that are skipped;
@@ -89,7 +119,8 @@ function run_processing(cfg::ProcessingConfig, l200, periods::AbstractVector{Dat
                         reprocess::Union{Nothing,Bool} = nothing, processor_log_level::Union{Nothing,LogLevel} = cfg.processor_log_level,
                         processor_plot_level::Union{Nothing,Symbol} = cfg.processor_plot_level,
                         max_parallel_steps::Integer = cfg.max_parallel_steps, stop::Threads.Atomic{Bool} = Threads.Atomic{Bool}(false),
-                        abandon::Threads.Atomic{Bool} = Threads.Atomic{Bool}(false), progress_store::Union{Nothing,ProgressStore} = nothing)
+                        abandon::Threads.Atomic{Bool} = Threads.Atomic{Bool}(false), progress_store::Union{Nothing,ProgressStore} = nothing,
+                        recorded_item_seconds::AbstractDict{Symbol,<:Real} = Dict{Symbol,Float64}())
     unregistered = filter(!in(keys(processors)), collect(Iterators.flatten((run_steps, partition_steps))))
     isempty(unregistered) || throw(ArgumentError("run_processing: unregistered processor(s) $(join(unregistered, ", "))"))
     max_parallel_steps >= 0 ||
@@ -150,15 +181,35 @@ function run_processing(cfg::ProcessingConfig, l200, periods::AbstractVector{Dat
 
         push!(dependents[pred], node)
     end
-    priority((period, run, step)) = (-chains[step].chain, -chains[step].successors, spec(step).rank, step, period.no,
-                                     isnothing(run) ? -1 : run.no)
+    # Estimated seconds of the longest chain of steps from each step, while all steps are timed
+    # and an item time is known; empty otherwise, which orders the steps by `chains` alone.
+    estimates = ChainSeconds(Dict{ProgressKey,Float64}(), 0)
+    function update_estimates!()
+        isempty(untimed) || return false
+        known = Dict{Symbol,Float64}(recorded_item_seconds)
+        isnothing(progress_store) || merge!(known, measured_item_seconds(progress_store))
+        isempty(known) && return false
+        fallback = median(collect(values(known)))
+        workers = max(1, nworkers(ppt_worker_pool()))
+        @atomic estimates.seconds = chain_seconds(nodes, dependents, step -> get(known, step, fallback), item_counts, workers)
+        @atomic estimates.workers = workers
+        return true
+    end
+    update_estimates!()
+    priority((period, run, step)) = (-get((@atomic estimates.seconds), (period, run, step), 0.0), -chains[step].chain,
+                                     -chains[step].successors, spec(step).rank, step, period.no, isnothing(run) ? -1 : run.no)
+    # orders the items in the worker queue by `(priority of the step, position)`; before a handout,
+    # updates the estimates when the number of workers changed
+    queue = WorkerQueue(((node, id),) -> (priority(node), id),
+                        () -> !isempty(untimed) || max(1, nworkers(ppt_worker_pool())) == (@atomic estimates.workers) ? false :
+                              update_estimates!())
     ready = sort!(ProgressKey[node for node in nodes if isempty(blockers[node])]; by = priority)
     # settings of the running step, also seen by `parallel`
     function step_scope(node)
         s = spec(node[3])
         return (ERROR_PLOTS => s.error_plots, PROCESSOR_LOG_LEVEL => something(processor_log_level, s.log_level),
                 PLOT_LEVEL => something(processor_plot_level, s.plot_level), PLOT_FORMATS => cfg.plot_formats,
-                STEP_PRIORITY => priority(node), STEP_ITEMS => get(item_counts, node, nothing))
+                QUEUE_STEP => node, STEP_ITEMS => get(item_counts, node, nothing))
     end
 
     # Run the step `node` and return whether it was skipped and, for a partition step,
@@ -216,8 +267,10 @@ function run_processing(cfg::ProcessingConfig, l200, periods::AbstractVector{Dat
         end
         for d in dependents[node]
             delete!(blockers[d], node)
-            isempty(blockers[d]) && insert!(ready, searchsortedfirst(ready, d; by = priority), d)
+            isempty(blockers[d]) && push!(ready, d)
         end
+        update_estimates!() && resort!(queue)
+        sort!(ready; by = priority)
         return foreach(n -> finish!(n, false), pop!(after_previous, node, ProgressKey[]))
     end
 
@@ -226,7 +279,7 @@ function run_processing(cfg::ProcessingConfig, l200, periods::AbstractVector{Dat
     errors = Any[]
     try
         # `parallel` reads the stop flags and the worker queue from the scope; spawned tasks inherit it.
-        with(PROCESSING_STOP => stop, PROCESSING_ABANDON => abandon, WORKER_QUEUE => WorkerQueue()) do
+        with(PROCESSING_STOP => stop, PROCESSING_ABANDON => abandon, WORKER_QUEUE => queue) do
             while true
                 while !isempty(ready) && isempty(errors) && !stop[] && (max_parallel_steps == 0 || length(tasks) < max_parallel_steps)
                     # local to the iteration: each task must report its own step

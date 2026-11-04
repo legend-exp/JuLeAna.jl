@@ -267,6 +267,13 @@ function item_timings(store::ProgressStore)
     end
 end
 
+# Median duration in seconds of the done items per processor of the current processing run.
+function measured_item_seconds(store::ProgressStore)
+    # the durations are sorted
+    middle(d) = isodd(length(d)) ? d[(end + 1) ÷ 2] : (d[end ÷ 2] + d[end ÷ 2 + 1]) / 2
+    return @lock store.lock Dict{Symbol,Float64}(process => middle(d) for (process, d) in store.durations if !isempty(d))
+end
+
 # A running step counts its items plus one unit for the work after the last item, so it
 # reaches 1 only when the step itself is final.
 function step_fraction(step::StepProgress)
