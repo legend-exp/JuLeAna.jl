@@ -724,6 +724,12 @@ const REPORT = """
                 (processed = true, log = Row((itr.detector, :on, 1, "")), worker = myid())
             end
             @test last(only(result)).processed && last(only(result)).worker == pids[2]
+            # an item whose worker process ends fails instead of being tried on the next worker
+            result = parallel([(detector = :V3, usability = :on)], Row) do itr
+                return exit(1)
+            end
+            @test occursin("the process of the worker ended while it ran the item, 1 time", last(only(result)).log.Error)
+            @test pids[2] ∉ Distributed.workers()
         finally
             ppt_worker_pool!(original_pool)
             rmprocs(filter(in(Distributed.workers()), pids))

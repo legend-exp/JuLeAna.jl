@@ -177,30 +177,37 @@ function watch_tasks(advance, tasks::AbstractArray{Task}; poll::Real = 2)
     return nothing
 end
 
-# Worker pool of one item of `parallel` with a `timeout`: once the item has run for `timeout`
-# seconds on a worker other than the main process, the process of that worker is ended (see
-# `kill_worker`), and after `tries` such ends `take!` throws instead of handing out another
-# worker. `onworker` does not count an ended worker as a try, so without this limit the item
-# would be tried again and again.
-mutable struct TimeoutPool{P<:AbstractWorkerPool} <: AbstractWorkerPool
+# Worker pool of one item of `parallel`. `onworker` does not count a worker whose process ends
+# while it runs the item as a try and tries the item again on another worker, which a start
+# script with a restart loop always provides; so an item that ends every worker, such as by
+# running out of memory, would be tried forever. This pool counts these ends and throws instead
+# of handing out a worker once there were `tries` of them. With `timeout > 0`, it also ends the
+# process of a worker other than the main process once the item has run for `timeout` seconds
+# on it (see `kill_worker`).
+mutable struct ItemPool{P<:AbstractWorkerPool} <: AbstractWorkerPool
     const pool::P
     const label::String
     const timeout::Float64
     const tries::Int
     const timeouts::Threads.Atomic{Int}
+    ended::Int
     timer::Union{Nothing,Timer}
 end
 
-function TimeoutPool(pool::AbstractWorkerPool, label::AbstractString, timeout::Real, tries::Integer)
-    return TimeoutPool(pool, String(label), Float64(timeout), Int(tries), Threads.Atomic{Int}(0), nothing)
+function ItemPool(pool::AbstractWorkerPool, label::AbstractString, timeout::Real, tries::Integer)
+    return ItemPool(pool, String(label), Float64(timeout), Int(tries), Threads.Atomic{Int}(0), 0, nothing)
 end
 
-function Base.take!(p::TimeoutPool)
-    n = p.timeouts[]
-    n >= p.tries &&
-        error("the item ran longer than its timeout of $(p.timeout) s on $n worker$(n == 1 ? ", which was" : "s, which were") ended")
+function Base.take!(p::ItemPool)
+    n, timeouts = p.ended, p.timeouts[]
+    if n >= p.tries
+        n == timeouts &&
+            error("the item ran longer than its timeout of $(p.timeout) s on $n worker$(n == 1 ? ", which was" : "s, which were") ended")
+        error("the process of the worker ended while it ran the item, $n time$(n == 1 ? "" : "s")" *
+              (timeouts > 0 ? ", $timeouts of them after the timeout of $(p.timeout) s" : ""))
+    end
     worker = take!(p.pool)
-    worker == myid() && return worker
+    (worker == myid() || p.timeout == 0) && return worker
     try
         # asked now, while the worker answers, so that it can be ended later
         worker_attributes(worker)
@@ -220,8 +227,9 @@ function Base.take!(p::TimeoutPool)
     return worker
 end
 
-function Base.put!(p::TimeoutPool, worker::Int)
+function Base.put!(p::ItemPool, worker::Int)
     isnothing(p.timer) || close(p.timer)
+    worker == myid() || worker in workers() || (p.ended += 1)
     return put!(p.pool, worker)
 end
 
@@ -250,9 +258,9 @@ the batch: its pair is `itr => (processed = false, log = failure_log(log_nt, itr
 When an item exceeds `timeout` on a worker, the process of that worker is ended at once with
 [`JuLeAna.kill_worker`](@ref), also while it computes; a worker started by a start script of
 [`JuLeAna.worker_start_script`](@ref) is then replaced. An item on the main process has no
-timeout. With `retry = true`, an item that exceeded `timeout` is tried again, up to three
-times in all. An item whose worker is lost otherwise is tried again on another worker; an
-error thrown by `f` is not retried.
+timeout. An item whose worker process ends while it runs, after the timeout or otherwise
+(such as for lack of memory), fails; with `retry = true` it is tried again on another worker,
+up to three times in all. An error thrown by `f` is not retried.
 
 Element types without a [`failure_log`](@ref) method for `log_nt` are rejected with an
 `ArgumentError` before any work starts.
@@ -342,7 +350,7 @@ function parallel(f, iterator::AbstractArray, log_nt::Type{<:NamedTuple}; timeou
     tasks = broadcast(iterator, ids) do itr, id
         Threads.@spawn begin
             started = isnothing(step) ? nothing : worker -> item_started!(step..., id, worker, label(itr))
-            item_workers = timeout > 0 ? TimeoutPool(item_pool(id), "$itr", timeout, retry ? 3 : 1) : item_pool(id)
+            item_workers = ItemPool(item_pool(id), "$itr", timeout, retry ? 3 : 1)
             result, outcome = try
                 # The last timeout or worker loss lands in the catch below.
                 with(ITEM_STARTED => started) do
