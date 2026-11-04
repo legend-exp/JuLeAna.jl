@@ -362,17 +362,69 @@ const REPORT = """
         # medians of the sorted durations of this run
         store = JuLeAna.ProgressStore()
         store.durations[:odd], store.durations[:even] = [1.0, 2.0, 4.0], [1.0, 3.0]
-        @test JuLeAna.measured_item_seconds(store) == Dict(:odd => 2.0, :even => 2.0)
-        @test JuLeAna.measured_item_seconds(store, :max) == Dict(:odd => 4.0, :even => 3.0)
-        @test JuLeAna.measured_item_seconds(store, :p95)[:even] ≈ 2.9
-        # the latest recorded statistic of every processor in a history
-        history = [(; timings = [(; process = :a, median = 1.0, p95 = 1.5, max = 2.0)]),
+        @test JuLeAna.measured_item_seconds(store; min_items = 1) == Dict(:odd => 2.0, :even => 2.0)
+        @test JuLeAna.measured_item_seconds(store, :max; min_items = 1) == Dict(:odd => 4.0, :even => 3.0)
+        @test JuLeAna.measured_item_seconds(store, :p95; min_items = 1)[:even] ≈ 2.9
+        # by default only the processors with 100 done items count
+        store.durations[:many] = collect(1.0:100.0)
+        @test JuLeAna.measured_item_seconds(store) == Dict(:many => 50.5)
+        @test JuLeAna.measured_item_seconds(store, :p99)[:many] ≈ 99.01
+        @test_throws "unknown statistic :p50" JuLeAna.measured_item_seconds(store, :p50)
+        # the latest recorded statistic of every processor in a history; a missing 99th percentile is skipped
+        history = [(; timings = [(; process = :a, median = 1.0, p95 = 1.5, p99 = 1.9, max = 2.0)]),
                    (;
-                    timings = [(; process = :a, median = 3.0, p95 = 3.5, max = 4.0), (; process = :b, median = 2.0, p95 = 2.5, max = 5.0)]),
+                    timings = [(; process = :a, median = 3.0, p95 = 3.5, p99 = nothing, max = 4.0),
+                               (; process = :b, median = 2.0, p95 = 2.5, p99 = 4.5, max = 5.0)]),
                    (; timings = NamedTuple[])]
         @test JuLeAna.latest_item_seconds(history) == Dict(:a => 3.0, :b => 2.0)
         @test JuLeAna.latest_item_seconds(history, :max) == Dict(:a => 4.0, :b => 5.0)
+        @test JuLeAna.latest_item_seconds(history, :p99) == Dict(:a => 1.9, :b => 4.5)
         @test_throws "unknown statistic :p50" JuLeAna.latest_item_seconds(history, :p50)
+    end
+
+    @testset "item timeouts" begin
+        original_pool = ppt_worker_pool()
+        ppt_worker_pool!(FlexWorkerPool(withmyid = true, label = "item timeout test"; maxoccupancy = 4))
+        try
+            Row = NamedTuple{(:Detector, :usability, :Status, :Error)}
+            runs = DataRun.(1:2)
+            timeouts = Dict{DataRun,Any}()
+            # a step of 100 short items that records its timeout
+            function timed_step(cfg, l200, period, run; reprocess::Bool = false, timeout::Real = 0)
+                timeouts[run] = timeout
+                parallel([(detector = Symbol(:V, i), usability = :on) for i in 1:100], Row; timeout) do itr
+                    (processed = true, log = Row((itr.detector, :on, 1, "")))
+                end
+                return nothing
+            end
+            config(timeout) = ProcessingConfig(;
+                                               processors = Dict(:t => ProcessorSpec(; name = :t, level = :run, category = :cal, rank = 1,
+                                                                                     kwargs = Dict{Symbol,Any}(:timeout => timeout))),
+                                               p_processors = Dict{Symbol,ProcessorSpec}(), item_timeout_factor = 3,
+                                               item_timeout_minimum_minutes = 1)
+            # the steps of runs 1 and 2 one after the other
+            run_t(cfg; kwargs...) = run_processing(cfg, FakeData(), [DataPeriod(3)], [:t], Symbol[],
+                                                   stub_status([DataPeriod(3)], runs, [:t], Symbol[])...;
+                                                   processors = Dict{Symbol,Any}(:t => timed_step), reprocess = true,
+                                                   max_parallel_steps = 1,
+                                                   kwargs...)
+            # without a known 99th percentile there is no timeout
+            @test_logs (:info, "Item timeout of t: none, no 99th percentile of its item times is known") match_mode = :any run_t(config("auto"))
+            @test timeouts == Dict(runs[1] => 0, runs[2] => 0)
+            # the factor times the recorded 99th percentile, at least the minimum
+            @test_logs (:info, "Item timeout of t: 300.0 s") match_mode = :any run_t(config("auto"); recorded_item_p99 = Dict(:t => 100.0))
+            @test timeouts == Dict(runs[1] => 300, runs[2] => 300)
+            run_t(config("auto"); recorded_item_p99 = Dict(:t => 10.0))
+            @test timeouts == Dict(runs[1] => 60, runs[2] => 60)
+            # once 100 items of this run have finished, their 99th percentile replaces the recorded one
+            run_t(config("auto"); recorded_item_p99 = Dict(:t => 100.0), progress_store = JuLeAna.ProgressStore())
+            @test timeouts == Dict(runs[1] => 300, runs[2] => 60)
+            # a number is passed as it is
+            run_t(config(5); recorded_item_p99 = Dict(:t => 100.0))
+            @test timeouts == Dict(runs[1] => 5, runs[2] => 5)
+        finally
+            ppt_worker_pool!(original_pool)
+        end
     end
 
     @testset "worker queue" begin

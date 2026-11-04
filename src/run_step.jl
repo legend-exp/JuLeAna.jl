@@ -189,7 +189,9 @@ the plots, reports and data files go to a temporary directory.
 - `processors`: the processors by name, [`JuLeAna.PROCESSORS`](@ref) by default.
 - `kwargs`: keyword arguments of the processor, e.g. `timeout = 0`. The processor gets the
   keyword arguments of `config`, then `only_first_period = false` for a partition-level
-  processor and `reprocess = true` when `detectors` is `nothing`, then `kwargs`.
+  processor and `reprocess = true` when `detectors` is `nothing`, then `kwargs`. A
+  `timeout` of `"auto"` becomes the item timeout from the latest 99th percentile of the item
+  times of the processor in the history of the production `l200` (see [`run_processing`](@ref)).
 
 # Workers
 The items of the processor, e.g. its detectors, go to the workers of the
@@ -271,11 +273,16 @@ function run_step(step::Symbol, period, run = nothing; detectors = nothing, outp
     capture = debug === false && isnothing(pause) ? nothing :
               merge(debug_capture(step, args; infiltrate = debug === :infiltrate, pause), (; failures))
     level = isnothing(log_level) ? spec.log_level : LOG_LEVELS[string(log_level)]
+    step_kwargs = merge(NamedTuple(spec.kwargs), defaults, NamedTuple(kwargs))
+    if get(step_kwargs, :timeout, 0) == "auto"
+        p99 = get(latest_item_seconds(read_history(history_path(l200)), :p99), step, nothing)
+        step_kwargs = merge(step_kwargs, (; timeout = item_timeout(cfg, step, p99)))
+    end
     started = time()
     run_processor() = with(DETECTOR_SELECTION => selection, WRITE_PARS => outputs === :production, STEP_RECORD => record,
                            DEBUG_CAPTURE => capture, ERROR_PLOTS => something(error_plots, spec.error_plots), PROCESSOR_LOG_LEVEL => level,
                            PLOT_LEVEL => something(plot_level, spec.plot_level), PLOT_FORMATS => cfg.plot_formats) do
-        return processors[step](cfg, step_l200, args...; merge(NamedTuple(spec.kwargs), defaults, NamedTuple(kwargs))...)
+        return processors[step](cfg, step_l200, args...; step_kwargs...)
     end
     # a level given here also applies to the terminal
     isnothing(log_level) ? run_processor() : Logging.with_logger(run_processor, ProcessorLevelLogger(Logging.current_logger(), level))

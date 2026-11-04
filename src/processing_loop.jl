@@ -40,6 +40,16 @@ function chain_seconds(nodes, dependents, item_seconds, item_counts, workers::In
     return lengths
 end
 
+# Item timeout in seconds of the processor `step` with `timeout = "auto"`, whose items took `p99`
+# seconds at the 99th percentile: `cfg.item_timeout_factor * p99`, at least
+# `cfg.item_timeout_minimum_minutes`, and 0 (no timeout) when `p99` is `nothing`.
+function item_timeout(cfg::ProcessingConfig, step::Symbol, p99::Union{Nothing,Real})
+    timeout = isnothing(p99) ? 0.0 : max(cfg.item_timeout_factor * p99, 60 * cfg.item_timeout_minimum_minutes)
+    @info "Item timeout of $step: " *
+          (timeout == 0 ? "none, no 99th percentile of its item times is known" : "$(round(timeout; digits = 1)) s")
+    return timeout
+end
+
 """
     run_processing(cfg::ProcessingConfig, l200, periods, run_steps, partition_steps,
         run_status, partition_status; processors::AbstractDict{Symbol}=PROCESSORS,
@@ -49,7 +59,8 @@ end
         max_parallel_steps::Integer=cfg.max_parallel_steps, stop::Threads.Atomic{Bool}=Threads.Atomic{Bool}(false),
         abandon::Threads.Atomic{Bool}=Threads.Atomic{Bool}(false),
         progress_store::Union{Nothing,ProgressStore}=nothing,
-        recorded_item_seconds::AbstractDict{Symbol,<:Real}=Dict{Symbol,Float64}())
+        recorded_item_seconds::AbstractDict{Symbol,<:Real}=Dict{Symbol,Float64}(),
+        recorded_item_p99::AbstractDict{Symbol,<:Real}=Dict{Symbol,Float64}())
 
 Run the partition-level steps `partition_steps` for every period in `periods` and the
 run-level steps `run_steps` for every period and every run listed in `run_status`.
@@ -81,8 +92,8 @@ every step runs with `reprocess = true` and an item time is known, the estimated
 that chain comes first: a step takes the item time of its processor times
 `max(1, items / workers)`, with the number of workers in the worker pool and, for a step
 without counted items, one item. The item time of a processor is the `cfg.item_time_estimate`
-(median, 95th percentile or maximum) of the durations of its items of this run once one has
-finished, else `recorded_item_seconds[processor]` (such as the same statistic from the history
+(median, 95th percentile or maximum) of the durations of its items of this run once 100 of them
+have finished, else `recorded_item_seconds[processor]` (such as the same statistic from the history
 of the production), else the median of the known ones. The order is updated after
 every finished step and before a worker is handed out when the number of workers changed. With
 `max_parallel_steps > 0` at most that many steps run at the same time. At the start, the
@@ -92,6 +103,13 @@ items of every step whose processor registers an `items` function (see
 skipped because the run is not an analysis run (with `cfg.analysis_runs_only`) or not in
 the run info counts as finished. `run_status[period][step][run]` and
 `partition_status[period][step]` are set to `true` when a step finishes.
+
+A processor whose keyword argument `timeout` is `"auto"` gets, when each of its steps starts,
+the item timeout `cfg.item_timeout_factor` times the 99th percentile of the durations of its
+items, at least `cfg.item_timeout_minimum_minutes`: of its items of this run once 100 of them
+have finished, else `recorded_item_p99[processor]` (such as the latest one in the history of
+the production). Without either it gets `timeout = 0`, no timeout. The timeout of a step does
+not change while it runs.
 
 When a step throws, no further step starts, and once the running steps have ended a
 `CompositeException` of the failures is thrown. Steps that wait for each other in a
@@ -121,7 +139,8 @@ function run_processing(cfg::ProcessingConfig, l200, periods::AbstractVector{Dat
                         processor_plot_level::Union{Nothing,Symbol} = cfg.processor_plot_level,
                         max_parallel_steps::Integer = cfg.max_parallel_steps, stop::Threads.Atomic{Bool} = Threads.Atomic{Bool}(false),
                         abandon::Threads.Atomic{Bool} = Threads.Atomic{Bool}(false), progress_store::Union{Nothing,ProgressStore} = nothing,
-                        recorded_item_seconds::AbstractDict{Symbol,<:Real} = Dict{Symbol,Float64}())
+                        recorded_item_seconds::AbstractDict{Symbol,<:Real} = Dict{Symbol,Float64}(),
+                        recorded_item_p99::AbstractDict{Symbol,<:Real} = Dict{Symbol,Float64}())
     unregistered = filter(!in(keys(processors)), collect(Iterators.flatten((run_steps, partition_steps))))
     isempty(unregistered) || throw(ArgumentError("run_processing: unregistered processor(s) $(join(unregistered, ", "))"))
     max_parallel_steps >= 0 ||
@@ -213,14 +232,20 @@ function run_processing(cfg::ProcessingConfig, l200, periods::AbstractVector{Dat
                 QUEUE_STEP => node, STEP_ITEMS => get(item_counts, node, nothing))
     end
 
+    # `kwargs` of `step` with a `timeout` of "auto" replaced by the item timeout of its processor
+    function with_item_timeout(kwargs, step)
+        get(kwargs, :timeout, 0) == "auto" || return kwargs
+        measured = isnothing(progress_store) ? Dict{Symbol,Float64}() : measured_item_seconds(progress_store, :p99)
+        return merge(kwargs, (; timeout = item_timeout(cfg, step, get(measured, step, get(recorded_item_p99, step, nothing)))))
+    end
     # Run the step `node` and return whether it was skipped and, for a partition step,
     # whether it must wait for the same step of the previous period.
     function run_node((period, run, step))
         node = (period, run, step)
         if isnothing(run)
             only_first_period = DataPeriod(period.no - 1) in periods
-            kwargs = merge(NamedTuple(spec(step).kwargs), (; only_first_period), overrides)
             @info "Process $step of $period"
+            kwargs = with_item_timeout(merge(NamedTuple(spec(step).kwargs), (; only_first_period), overrides), step)
             lower = tracked(node) do
                 return with(() -> processors[step](cfg, l200, period; kwargs...), step_scope(node)...)
             end
@@ -229,9 +254,10 @@ function run_processing(cfg::ProcessingConfig, l200, periods::AbstractVector{Dat
         reason = skip_reason(node)
         if isnothing(reason)
             @info "Process $step of $period-$run"
+            kwargs = with_item_timeout(merge(NamedTuple(spec(step).kwargs), overrides), step)
             tracked(node) do
                 with(step_scope(node)...) do
-                    return processors[step](cfg, l200, period, run; merge(NamedTuple(spec(step).kwargs), overrides)...)
+                    return processors[step](cfg, l200, period, run; kwargs...)
                 end
             end
             flush(stdout)

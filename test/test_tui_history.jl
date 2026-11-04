@@ -35,8 +35,9 @@ detail_text(page) = join(first.(JuLeAna.history_detail(page)))
                          step(:process_dsp_cal, :run, p2, DataRun(9), :stopped, t(11), t(12)),
                          step(:process_dsp_cal, :run, p3, r0, :cancelled, nothing, nothing),
                          step(:p_process_energy_cal, :partition, p3, nothing, :failed, t(11), t(12))],
+                # an item time table without the 99th percentile
                 timings = [(; process = :process_dsp_cal, level = :run, category = :cal, items = 12, min = 1.5, median = 10.2, p95 = 25.3,
-                            max = 30.0)])]
+                            p99 = nothing, max = 30.0)])]
     grid = JuLeAna.history_grid(processors, [p2 => runs2, p3 => [r0]], overview, history)
 
     # controller snapshot with the given selection; everything is selected by default

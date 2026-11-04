@@ -542,7 +542,10 @@ function report_counts_text(c, with_missing)
 end
 
 # Item times of a processor, an entry of the `timings` of `read_history`.
-item_time_text(t) = "min/med/95%/max $(t.min)/$(t.median)/$(t.p95)/$(t.max) s"
+function item_time_text(t)
+    return isnothing(t.p99) ? "min/med/95%/max $(t.min)/$(t.median)/$(t.p95)/$(t.max) s" :
+           "min/med/95%/99%/max $(t.min)/$(t.median)/$(t.p95)/$(t.p99)/$(t.max) s"
+end
 
 function history_spans()
     return [("▪ ", Tachikoma.tstyle(:primary, bold = true)), ("Processing history", Tachikoma.tstyle(:primary, bold = true))]

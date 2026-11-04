@@ -254,26 +254,34 @@ end
 
 Return the durations in seconds of the items of the current or last processing run that
 ended done, per processor over all periods and runs, as a vector of `(; process, items,
-min, median, p95, max)` sorted by `process`, where `items` is the number of timed items and
-`p95` the 95th percentile. A
+min, median, p95, p99, max)` sorted by `process`, where `items` is the number of timed items,
+`p95` the 95th and `p99` the 99th percentile. A
 processor without a done item is left out, and so is every processor of a processing run
 that is not timed. The duration of an item runs from the moment its last worker got it
 until its call returned.
 """
 function item_timings(store::ProgressStore)
     @lock store.lock begin
-        return [(; process, items = length(d), min = first(d), median = median(d), p95 = quantile(d, 0.95; sorted = true), max = last(d))
-                for (process, d) in sort!(collect(store.durations); by = first)]
+        return [(; process, items = length(d), min = first(d), median = median(d), p95 = quantile(d, 0.95; sorted = true),
+                 p99 = quantile(d, 0.99; sorted = true), max = last(d)) for (process, d) in sort!(collect(store.durations); by = first)]
     end
 end
 
-# The `statistic` (`:median`, `:p95` or `:max`, as in `item_timings`) of the durations in seconds
-# of the done items per processor of the current processing run.
-function measured_item_seconds(store::ProgressStore, statistic::Symbol = :median)
+# Number of done items of a processor in the current processing run from which its item times
+# replace the recorded ones: fewer items give an unreliable statistic, and the first items of a
+# run include the compilation.
+const MEASURED_ITEMS = 100
+
+# The `statistic` (`:median`, `:p95`, `:p99` or `:max`, as in `item_timings`) of the durations in
+# seconds of the done items per processor of the current processing run, for the processors
+# with at least `min_items` of them.
+function measured_item_seconds(store::ProgressStore, statistic::Symbol = :median; min_items::Integer = MEASURED_ITEMS)
+    statistic in (:median, :p95, :p99, :max) || throw(ArgumentError("measured_item_seconds: unknown statistic $(repr(statistic))"))
     # the durations are sorted
     value(d) = statistic === :max ? last(d) :
-               statistic === :p95 ? quantile(d, 0.95; sorted = true) : quantile(d, 0.5; sorted = true)
-    return @lock store.lock Dict{Symbol,Float64}(process => value(d) for (process, d) in store.durations if !isempty(d))
+               quantile(d, statistic === :p95 ? 0.95 : statistic === :p99 ? 0.99 : 0.5; sorted = true)
+    return @lock store.lock Dict{Symbol,Float64}(process => value(d)
+                                                 for (process, d) in store.durations if length(d) >= max(1, min_items))
 end
 
 # A running step counts its items plus one unit for the work after the last item, so it

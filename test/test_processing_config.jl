@@ -158,6 +158,21 @@ const STUB_PROCESSORS = Dict{Symbol,Any}(:process_a => process_a, :p_process_b =
         @test ProcessingConfig(edited(d -> delete!(d["config"], "item_time_estimate"))).item_time_estimate === :median
         @test ProcessingConfig(edited(d -> d["config"]["item_time_estimate"] = "max")).item_time_estimate === :max
         @test_throws "`config.item_time_estimate` must be \"median\", \"p95\" or \"max\", got :p50" ProcessingConfig(edited(d -> d["config"]["item_time_estimate"] = "p50"))
+        @test (shipped.item_timeout_factor, shipped.item_timeout_minimum_minutes) == (2, 5)
+        defaults = ProcessingConfig(edited(d -> foreach(k -> delete!(d["config"], k),
+                                                        ("item_timeout_factor", "item_timeout_minimum_minutes"))))
+        @test (defaults.item_timeout_factor, defaults.item_timeout_minimum_minutes) == (2, 5)
+        @test ProcessingConfig(edited(d -> d["config"]["item_timeout_factor"] = 1.5)).item_timeout_factor == 1.5
+        @test ProcessingConfig(edited(d -> d["config"]["item_timeout_minimum_minutes"] = 0)).item_timeout_minimum_minutes == 0
+        @test_throws "`config.item_timeout_factor` must be positive, got 0.0" ProcessingConfig(edited(d -> d["config"]["item_timeout_factor"] = 0))
+        @test_throws "`config.item_timeout_minimum_minutes` must be zero or positive, got -1.0" ProcessingConfig(edited(d -> d["config"]["item_timeout_minimum_minutes"] = -1))
+        @test_throws "`config.item_timeout_factor` must be a Real" ProcessingConfig(edited(d -> d["config"]["item_timeout_factor"] = "2"))
+        # a processor timeout is "auto" or a number of seconds
+        timeout(value) = ProcessingConfig(edited(d -> d["processors"]["process_dsp_cal"]["kwargs"]["timeout"] = value)).processors[:process_dsp_cal].kwargs[:timeout]
+        @test timeout("auto") == "auto"
+        @test timeout(600) == 600
+        @test_throws "`processors.process_dsp_cal.kwargs.timeout` must be \"auto\" or a number of seconds that is zero or positive, got \"never\"" timeout("never")
+        @test_throws "`processors.process_dsp_cal.kwargs.timeout` must be \"auto\" or a number of seconds that is zero or positive, got -1" timeout(-1)
         defaults = ProcessingConfig(edited(d -> foreach(k -> delete!(d["config"], k),
                                                         ("worker_restart_delay_seconds", "worker_heartbeat_timeout_minutes"))))
         @test (defaults.worker_restart_delay_seconds, defaults.worker_heartbeat_timeout_minutes) == (30, 5)

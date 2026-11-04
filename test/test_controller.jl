@@ -148,10 +148,10 @@ waituntil(cond; timeout = 60) = timedwait(cond, timeout; pollint = 0.05) === :ok
         JuLeAna.item_finished!(ctrl.progress, key, id, :done)
         write_entry() = JuLeAna.write_history(ctrl, ctrl.session.config, l200, :finished, snap.finished)
         @test_logs (:info,
-                    r"^Item times in seconds, min/median/95%/max:\nprocess_energy_calibration_cal: [\d.]+/[\d.]+/[\d.]+/[\d.]+ over 1 items$") match_mode = :any write_entry()
+                    r"^Item times in seconds, min/median/95%/99%/max:\nprocess_energy_calibration_cal: [\d.]+/[\d.]+/[\d.]+/[\d.]+/[\d.]+ over 1 items$") match_mode = :any write_entry()
         t = only(last(JuLeAna.read_history(JuLeAna.history_path(l200))).timings)
         @test (t.process, t.level, t.category, t.items) == (:process_energy_calibration_cal, :run, :cal, 1) &&
-              t.min == t.median == t.p95 == t.max
+              t.min == t.median == t.p95 == t.p99 == t.max
 
         dispatch!(ctrl, ResetKwargs(:process_energy_calibration_cal))
         @test isempty(snapshot(ctrl).processors[1].overridden)
