@@ -27,5 +27,8 @@ Test.@testset "ExplicitImports" begin
                                                     :fast_flatten, :set_timelimit, :_fix_vov, :AchatBlue, :BEGeOrange, :CoaxGreen,
                                                     :add_watermarks!, :parameterplot!, :tottime, :totallocated, :todict, :format_bytes,
                                                     # Cached calibration function of one energy type (`read_hit_cal`).
-                                                    :_get_e_cal_propsfunc_str))
+                                                    :_get_e_cal_propsfunc_str,
+                                                    # Unit type aliases for the time and energy arguments of the filter optimization,
+                                                    # and the plot file name of its LH5 tables.
+                                                    :Energy, :Time, :get_pltfilename))
 end # testset

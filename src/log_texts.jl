@@ -161,9 +161,15 @@ The centroid of the distribution is extracted as the decay time.
 """
 
 const filter_optimization_log_text = """## Filter Optimization
-This is the log for the energy filter optimization. The algorithm loads the FEP data of each channel.
-After a mini DSP, the optimal rise time is determined by performing a noise sweep on the baseline and look for minimal ENC with a fixed flat-top time.
-Then, the optimal rise time is used for a mini DSP while sweeping through flat-top times and selecting the one which has minimal FWHM at the FEP.
+This is the log for the energy filter optimization. The algorithm loads the FEP, DEP and SEP data of each detector.
+A noise sweep on the baseline gives the rise time with minimal ENC at a fixed flat-top time. A flat-top scan at that rise time
+gives the flat-top time that minimizes the configured objective and the legacy flat-top time with minimal FWHM.
+With joint_search enabled, a search over rise time and flat-top time on the sampling lattice, starting from that point, gives the optimum;
+otherwise the optimum is the flat-top scan optimum at the ENC rise time.
+The CUSP and ZAC filters round the flat-top time to whole samples and lengthen it by one sample if the filter length minus the flat top is odd;
+the flat-top times in the results are those the filters apply.
+The FEP, the DEP and the SEP are compared at the legacy and the new optimum;
+shifts of the DEP or SEP, peak fits that fail, changes of the residual of the highest-qdrift events and an optimum flat-top time on the edge of the flat-top grid appear in the column Crosscheck Warning.
 """
 
 const sg_filter_optimization_log_text = """## SG window length optimization

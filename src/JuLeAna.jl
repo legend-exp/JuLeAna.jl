@@ -24,7 +24,7 @@ import CairoMakie
 # Loading CommonMark activates Tachikoma's Markdown extension, which the report viewer renders with.
 import CommonMark
 using Dates: Dates, DateTime, Millisecond, Second, UTC, canonicalize, now, @dateformat_str
-using Format: Format, format
+using Format: Format
 import Graphs
 using IntervalSets: IntervalSets, (..), leftendpoint, rightendpoint
 using LaTeXStrings: LaTeXStrings, @L_str
@@ -35,19 +35,23 @@ using LegendDataManagement: LegendDataManagement, DataCategory, DataPeriod, Data
                             ljl_propfunc, lreport, lreport!, lstring, partitioninfo, process_failed, process_succeeded, process_warning,
                             read_ldata, readlprops, runinfo, start_filekey, writelprops, writelreport
 using LegendDataManagement.LDMUtils: LDMUtils, create_logtbl, create_metadatatbl, create_pars, create_validity, get_partitionvalidity,
-                                     get_plottitle, get_preportfilename, get_rreportfilename, savelfig, writevalidity
+                                     get_plottitle, get_pltfilename, get_preportfilename, get_rreportfilename, savelfig, writevalidity
 using LegendDataTypes: LegendDataTypes, decode_data, fast_flatten
-using LegendDSP: LegendDSP, DSPConfig, dsp_decay_times, dsp_icpc_compressed, dsp_pmts, dsp_qc_flt_optimization_compressed,
-                 dsp_qdrift_flt_optimization, dsp_sipm_compressed
+using LegendDSP: LegendDSP, DSPConfig, dsp_decay_times, dsp_energy_rtft, dsp_flt_optimization_prepare, dsp_icpc_compressed, dsp_pmts,
+                 dsp_qc_flt_optimization_compressed, dsp_qdrift_flt_optimization, dsp_sipm_compressed,
+                 realized_flattop
 using LegendEventAnalysis: LegendEventAnalysis, TimeEvolution, calibrate_all, calibrate_ged_detector_data, flag_coincidences, rate,
                            relative, smooth
 using LegendHDF5IO: LegendHDF5IO, delete_entry!, lh5open
 import LegendMakie
-using LegendSpecFits: LegendSpecFits, autocal_energy, ctc_energy, cut_single_peak, fit_aoe_compton, fit_aoe_compton_combined,
+using LegendSpecFits: LegendSpecFits, autocal_energy, ctc_energy, cut_single_peak, estimate_single_peak_stats, evaluate_energy_point,
+                      fit_aoe_compton, fit_aoe_compton_combined,
                       fit_aoe_corrections, fit_calibration, fit_enc_sigmas, fit_fwhm, fit_fwhm_ft, fit_peaks, fit_sf_wl,
-                      fit_single_trunc_gauss, fit_sipm_spectrum, fit_sipm_threshold, fit_sipm_wl, generate_aoe_compton_bands,
+                      fit_single_peak_th228, fit_single_trunc_gauss, fit_sipm_spectrum, fit_sipm_threshold, fit_sipm_wl,
+                      generate_aoe_compton_bands,
                       get_continuum_survival_fraction, get_low_aoe_cut, get_peak_survival_fraction, get_peaks_survival_fractions,
-                      lq_ctc_correction, lq_norm, peakhists_gamma, set_timelimit, simple_calibration, sipm_simple_calibration
+                      lq_ctc_correction, lq_norm, optimize_rtft, peak_width_metrics, peakhists_gamma, set_timelimit,
+                      simple_calibration, sipm_simple_calibration
 using Base.ScopedValues: ScopedValue, with
 using Distributed: Distributed, AbstractWorkerPool, RemoteException, myid, nprocs, nworkers, procs, remotecall_fetch, workers
 using Logging: Logging, AbstractLogger, LogLevel, global_logger
@@ -65,6 +69,8 @@ using ProgressLogging: ProgressLogging
 using ProgressMeter: ProgressMeter, Progress, next!, update!
 using PropDicts: PropDicts, PropDict
 using PropertyFunctions: PropertyFunctions, @pf, filterby
+using Random: Random, AbstractRNG, MersenneTwister, shuffle
+using RadiationDetectorDSP: RadiationDetectorDSP, CUSPChargeFilter, TrapezoidalChargeFilter, ZACChargeFilter
 using StatsBase: StatsBase, Histogram, fit, mean, median, quantile, sample, std
 using StructArrays: StructArray
 using Tachikoma: Tachikoma
@@ -73,7 +79,7 @@ import ThreadPinning
 import TOML
 using TimerOutputs: TimerOutputs, @timeit, TimerOutput
 using TypedTables: TypedTables, Table, columnnames, columns
-using Unitful: Unitful, @u_str, uconvert, unit, ustrip
+using Unitful: Unitful, @u_str, NoUnits, uconvert, unit, ustrip
 import UnitfulAtomic
 using UUIDs: UUID, uuid4
 
@@ -86,6 +92,7 @@ include("progress.jl")
 include("parallel.jl")
 include("qc.jl")
 include("hit_data.jl")
+include("filter_optimization_utils.jl")
 include("processing_config.jl")
 include("processor_graph.jl")
 include("processing_loop.jl")
