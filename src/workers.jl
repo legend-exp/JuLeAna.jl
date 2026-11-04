@@ -201,24 +201,15 @@ function set_worker_config!(mgr::WorkerManager, config::ProcessingConfig)
     return mgr
 end
 
-# A worker of a start script that ends this many seconds after its start or later is started
-# again; one that ends sooner leaves its slot empty, so that an error at start-up is not repeated.
-const WORKER_MIN_SECONDS = 300
-
 # Bash lines that run `cmd` in `n` slots at the same time and start it again in its slot
-# whenever it ends, unless it ended less than `min_seconds` after its start.
-function restart_loop(n::Integer, cmd::AbstractString; min_seconds::Integer = WORKER_MIN_SECONDS)
+# whenever it ends.
+function restart_loop(n::Integer, cmd::AbstractString)
     return """
         for slot in \$(seq $n); do
           while true; do
             start=\$SECONDS
             $cmd
-            runtime=\$((SECONDS - start))
-            if [ \$runtime -lt $min_seconds ]; then
-              echo "Worker slot \$slot: the worker ended \$runtime s after its start, not starting it again"
-              break
-            fi
-            echo "Worker slot \$slot: the worker ended after \$runtime s, starting a new one"
+            echo "Worker slot \$slot: the worker ended after \$((SECONDS - start)) s, starting a new one"
           done &
         done
         wait
@@ -229,14 +220,15 @@ end
     JuLeAna.worker_start_script(cfg::ProcessingConfig)
 
 Return the text of the bash script that starts the workers of the run mode of `cfg` and
-connects them to this process. A worker that ends is started again, unless it ended within
-5 minutes of its start: then its slot stays empty and the script prints why.
+connects them to this process. A worker that ends is started again in its slot, so the script
+runs until it is ended.
 
 In the `local` run mode the script starts `cfg.local_n` workers on the host it runs on.
 
 In the `slurm` run mode it submits one job with `sbatch --wait`, the job name
 `julia-<pid of this process>-0` (see [`JuLeAna.add_workers!`](@ref)) and the SLURM flags of
-`cfg` except `--cpu-bind`, and prints the output of the job until the job ends; ended with
+`cfg` except `--cpu-bind`, and prints the output of the job until the job ends (it is cancelled
+or reaches its time limit); ended with
 SIGTERM, it cancels the job by its name. The output goes
 to `julia-workers-<pid of the script>.out` in the log directory of `cfg`, or in the current
 directory if `cfg` has none. The job runs every worker as its own job step on one node, with the
@@ -250,8 +242,7 @@ function worker_start_script(cfg::ProcessingConfig)
     if cfg.runmode === :local
         return """
             #!/bin/bash
-            # Starts $n Julia workers on this host. A worker that ends is started again, unless it
-            # ended within $WORKER_MIN_SECONDS s of its start.
+            # Starts $n Julia workers on this host. A worker that ends is started again.
             """ * restart_loop(n, Base.shell_escape_posixly(cmd))
     end
     flags = cfg.slurm_flags
@@ -279,8 +270,7 @@ function worker_start_script(cfg::ProcessingConfig)
     return """
         #!/bin/bash
         # Submits a SLURM job that runs each of its $n Julia workers as its own job step, waits for
-        # the job and prints its output. A worker that ends is started again in a new step, unless
-        # it ended within $WORKER_MIN_SECONDS s of its start.
+        # the job and prints its output. A worker that ends is started again in a new step.
         job_name=--job-name=julia-$(getpid())-0
         output=$(Base.shell_escape_posixly(output))\$\$.out
         # exists before the job starts, so that `tail` can follow it

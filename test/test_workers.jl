@@ -140,16 +140,16 @@ state_of(mgr, id) = only(filter(a -> a.id == id, JuLeAna.allocations(mgr))).stat
         end
 
         @testset "restart loop" begin
-            # a worker that runs at least `min_seconds` is started again, one that ends sooner leaves its slot
-            runs = joinpath(mktempdir(), "runs")
-            cmd = "n=\$(cat $runs 2>/dev/null | wc -l); echo run >> $runs; [ \$n -ge 2 ] || sleep 2.5"
-            out = read(`bash -c $(JuLeAna.restart_loop(1, cmd; min_seconds = 2))`, String)
-            @test countlines(runs) == 3
-            @test length(collect(eachmatch(r"Worker slot 1: the worker ended after \d s, starting a new one", out))) == 2
-            @test occursin(r"Worker slot 1: the worker ended [01] s after its start, not starting it again", out)
-            # every slot runs the command; the loop ends when all slots are empty
-            out = read(`bash -c $(JuLeAna.restart_loop(3, "true"))`, String)
-            @test sort([m[1] for m in eachmatch(r"Worker slot (\d)", out)]) == ["1", "2", "3"]
+            # every slot runs the command again whenever it ends, until the loop is ended
+            dir = mktempdir()
+            runs, out = joinpath(dir, "runs"), joinpath(dir, "out")
+            loop = run(pipeline(detach(`bash -c $(JuLeAna.restart_loop(2, "echo \$slot >> $runs; sleep 0.1"))`); stdout = out);
+                       wait = false)
+            @test wait_until(() -> isfile(runs) && all(slot -> count(==(slot), readlines(runs)) >= 3, ("1", "2")))
+            # the loop leads its own process group
+            ccall(:kill, Cint, (Cint, Cint), -getpid(loop), 15)
+            wait(loop)
+            @test occursin(r"Worker slot 1: the worker ended after 0 s, starting a new one", read(out, String))
         end
 
         @testset "SLURM start script" begin
@@ -175,7 +175,8 @@ state_of(mgr, id) = only(filter(a -> a.id == id, JuLeAna.allocations(mgr))).stat
             flags = ["--ntasks=2", "--cpu-bind", "cores"]
             @test_throws "as `--cpu-bind=<value>`" JuLeAna.worker_start_script(slurm_config())
 
-            # the script with fake `sbatch` and `srun`: the batch script runs here, every step ends at once
+            # the script with fake `sbatch`, `srun` and `scancel`: the batch script runs here, and every
+            # step ends after a moment and is started again
             bin, logs = mktempdir(), mktempdir()
             write(joinpath(bin, "sbatch"), """
                 #!/bin/bash
@@ -184,40 +185,25 @@ state_of(mgr, id) = only(filter(a -> a.id == id, JuLeAna.allocations(mgr))).stat
                 echo "Submitted batch job 7"
                 bash > "\$out" 2>&1
                 """)
-            write(joinpath(bin, "srun"), "#!/bin/bash\necho \"srun \${*:1:5}\"\n")
-            chmod(joinpath(bin, "sbatch"), 0o755)
-            chmod(joinpath(bin, "srun"), 0o755)
-            flags = ["--ntasks=2", "--cpus-per-task=2"]
-            mgr = JuLeAna.WorkerManager()
-            JuLeAna.set_worker_config!(mgr, slurm_config(; log_path = logs))
-            withenv("PATH" => "$bin:$(ENV["PATH"])") do
-                return JuLeAna.add_workers!(mgr)
-            end
-            @test wait_until(() -> state_of(mgr, 1) !== :running)
-            a = only(JuLeAna.allocations(mgr))
-            @test a.state === :ended && a.exit_code == 0
-            @test first(a.output) == "Submitted batch job 7"
-            @test count(==("srun --nodes=1 --ntasks=1 --exact --cpus-per-task=2 --mem=0"), a.output) == 2
-            @test count(l -> occursin("not starting it again", l), a.output) == 2
-            sbatch_args = read(joinpath(bin, "sbatch.args"), String)
-            @test startswith(sbatch_args,
-                             "--wait --job-name=julia-$(getpid())-1 --ntasks=2 --cpus-per-task=2 --output=$logs/julia-workers-")
-
-            # a cancel also ends a job that `squeue` does not list: the script cancels it by its name
-            bin, logs = mktempdir(), mktempdir()
-            write(joinpath(bin, "sbatch"), "#!/bin/bash\nsleep 60\n")
+            write(joinpath(bin, "srun"), "#!/bin/bash\necho \"srun \${*:1:5}\"\nsleep 0.5\n")
             write(joinpath(bin, "scancel"), "#!/bin/bash\necho \"\$@\" >> $bin/scancel.args\n")
-            chmod(joinpath(bin, "sbatch"), 0o755)
-            chmod(joinpath(bin, "scancel"), 0o755)
+            foreach(name -> chmod(joinpath(bin, name), 0o755), ("sbatch", "srun", "scancel"))
+            flags = ["--ntasks=2", "--cpus-per-task=2"]
+            # `squeue` lists no job, so only the script itself can cancel it
             mgr = JuLeAna.WorkerManager(; squeue = `true`)
             JuLeAna.set_worker_config!(mgr, slurm_config(; log_path = logs))
             withenv("PATH" => "$bin:$(ENV["PATH"])") do
                 return JuLeAna.add_workers!(mgr)
             end
-            # the trap is set right after the output file is created
-            @test wait_until(() -> !isempty(readdir(logs)))
-            sleep(0.5)
+            output() = only(JuLeAna.allocations(mgr)).output
+            @test wait_until(() -> count(==("srun --nodes=1 --ntasks=1 --exact --cpus-per-task=2 --mem=0"), output()) >= 4)
+            @test first(output()) == "Submitted batch job 7"
+            @test any(l -> occursin(r"^Worker slot [12]: the worker ended after \d s, starting a new one$", l), output())
+            sbatch_args = read(joinpath(bin, "sbatch.args"), String)
+            @test startswith(sbatch_args,
+                             "--wait --job-name=julia-$(getpid())-1 --ntasks=2 --cpus-per-task=2 --output=$logs/julia-workers-")
             JuLeAna.cancel_allocation!(mgr, 1)
+            @test state_of(mgr, 1) === :cancelled
             @test wait_until(() -> isfile(joinpath(bin, "scancel.args")))
             @test read(joinpath(bin, "scancel.args"), String) == "--user=$(get(ENV, "USER", "")) --name=julia-$(getpid())-1\n"
         end

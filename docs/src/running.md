@@ -194,8 +194,7 @@ the session.
 
 An allocation is a group of workers started by one run of the script, local or as a SLURM
 job. A worker that ends, for example after running out of memory or after being stopped,
-is started again in its place; a worker that ends within 5 minutes of its start is not
-started again, and the output of the allocation says so. An allocation runs in its own process group. `c` cancels the selected allocation and
+is started again in its place, until the allocation is cancelled. An allocation runs in its own process group. `c` cancels the selected allocation and
 `C` all allocations, after a confirmation; a cancel ends the processes and cancels the
 SLURM jobs that carry the job name of the allocation. Quitting `juleana` cancels all
 allocations.
