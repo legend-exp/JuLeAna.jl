@@ -40,8 +40,8 @@ using LegendDataManagement.LDMUtils: LDMUtils, create_logtbl, create_metadatatbl
 using LegendDataTypes: LegendDataTypes, decode_data, fast_flatten
 using LegendDSP: LegendDSP, DSPConfig, dsp_decay_times, dsp_icpc_compressed, dsp_pmts, dsp_qc_flt_optimization_compressed,
                  dsp_qdrift_flt_optimization, dsp_sipm_compressed
-using LegendEventAnalysis: LegendEventAnalysis, TimeEvolution, build_global_events, calibrate_all, calibrate_ged_detector_data,
-                           flag_coincidences, rate, relative, smooth
+using LegendEventAnalysis: LegendEventAnalysis, TimeEvolution, build_global_events, calibrate_all, flag_coincidences, rate, relative,
+                           smooth
 using LegendHDF5IO: LegendHDF5IO, delete_entry!, lh5open
 import LegendMakie
 using LegendSpecFits: LegendSpecFits, autocal_energy, ctc_energy, cut_single_peak, fit_aoe_compton, fit_aoe_compton_combined,
