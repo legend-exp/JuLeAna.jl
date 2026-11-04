@@ -201,15 +201,47 @@ function set_worker_config!(mgr::WorkerManager, config::ProcessingConfig)
     return mgr
 end
 
+# Minutes after which the start scripts take this process as gone if it has not touched its
+# heartbeat file, which it does every minute (see `start_heartbeat`).
+const HEARTBEAT_MINUTES = 5
+
+# File that this process touches every minute while it has worker allocations, in the folder of
+# the start script, which the workers can read.
+heartbeat_file() = joinpath(production_config_dir(), "juleana-$(gethostname())-$(getpid()).alive")
+
+# Heartbeat tasks of this process by file.
+const HEARTBEATS = Dict{String,Task}()
+const HEARTBEATS_LOCK = ReentrantLock()
+
+# Touch `path` now and every minute for the rest of this process, and remove it when the
+# process exits; does nothing if that already happens.
+function start_heartbeat(path::AbstractString)
+    @lock HEARTBEATS_LOCK begin
+        haskey(HEARTBEATS, path) && return HEARTBEATS[path]
+        touch(path)
+        atexit(() -> rm(path; force = true))
+        return HEARTBEATS[path] = errormonitor(Threads.@spawn while true
+                                                   sleep(60)
+                                                   touch(path)
+                                               end)
+    end
+end
+
 # Bash lines that run `cmd` in `n` slots at the same time and start it again in its slot
-# whenever it ends.
-function restart_loop(n::Integer, cmd::AbstractString)
+# whenever it ends, as long as `heartbeat` was touched in the last `HEARTBEAT_MINUTES` minutes;
+# otherwise they run `stop`, which ends the allocation.
+function restart_loop(n::Integer, cmd::AbstractString, heartbeat::AbstractString, stop::AbstractString)
     return """
         for slot in \$(seq $n); do
           while true; do
             start=\$SECONDS
             $cmd
-            echo "Worker slot \$slot: the worker ended after \$((SECONDS - start)) s, starting a new one"
+            echo "Worker slot \$slot: the worker ended after \$((SECONDS - start)) s"
+            if [ -z "\$(find $(Base.shell_escape_posixly(heartbeat)) -mmin -$HEARTBEAT_MINUTES 2>/dev/null)" ]; then
+              echo "JuLeAna has not touched $(Base.shell_escape_posixly(heartbeat)) for $HEARTBEAT_MINUTES minutes: ending the allocation"
+              $stop
+              exit
+            fi
           done &
         done
         wait
@@ -221,7 +253,10 @@ end
 
 Return the text of the bash script that starts the workers of the run mode of `cfg` and
 connects them to this process. A worker that ends is started again in its slot, so the script
-runs until it is ended.
+runs until it is ended, as long as this process runs: when a worker ends and this process has
+not touched its heartbeat file for 5 minutes (see [`JuLeAna.add_workers!`](@ref)), the script
+ends the allocation, the local workers with SIGTERM to its process group, the SLURM job with
+`scancel`.
 
 In the `local` run mode the script starts `cfg.local_n` workers on the host it runs on.
 
@@ -243,7 +278,7 @@ function worker_start_script(cfg::ProcessingConfig)
         return """
             #!/bin/bash
             # Starts $n Julia workers on this host. A worker that ends is started again.
-            """ * restart_loop(n, Base.shell_escape_posixly(cmd))
+            """ * restart_loop(n, Base.shell_escape_posixly(cmd), heartbeat_file(), "kill 0")
     end
     flags = cfg.slurm_flags
     any(in(("--cpu-bind", "--mem-bind")), flags) &&
@@ -281,7 +316,7 @@ function worker_start_script(cfg::ProcessingConfig)
         #!/bin/bash
         # every step runs one task; the job's tasks per node would make `srun` warn at every start
         unset SLURM_NTASKS_PER_NODE
-        $(restart_loop(n, Base.shell_escape_posixly(step)))JOB
+        $(restart_loop(n, Base.shell_escape_posixly(step), heartbeat_file(), "scancel \"\$SLURM_JOB_ID\""))JOB
         job=\$!
         tail -n +1 -F "\$output" 2>/dev/null &
         follow=\$!
@@ -350,10 +385,16 @@ leads its own process group, so it keeps running when this process ends unless i
 cancelled. Its standard and error output are kept in the allocation. For the `slurm` run
 mode, the job name of the script is replaced by `julia-<pid of this process>-<n>` with a new `n`.
 The started workers connect to this process and join its worker pool.
+
+From the first allocation on, this process touches its heartbeat file
+`juleana-<host>-<pid>.alive` in the [`JuLeAna.production_config_dir`](@ref) every minute until
+it exits; the start scripts end their allocation when the file has not been touched for 5
+minutes (see [`JuLeAna.worker_start_script`](@ref)).
 """
 function add_workers!(mgr::WorkerManager)
     @lock mgr.lock begin
         (; text) = start_script!(mgr)
+        start_heartbeat(heartbeat_file())
         backend = mgr.config.runmode
         job_name = nothing
         if backend === :slurm
