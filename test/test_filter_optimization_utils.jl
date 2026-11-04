@@ -24,51 +24,36 @@ using JuLeAna: DEP_WINDOW, ELECTRON_MASS_ENERGY, crosscheck_optimum, crosscheck_
         base = (shifts = (DEP = (shift = 0.10u"keV", σ = 1.0u"keV"), SEP = (shift = -0.20u"keV", σ = 1.2u"keV")),
                 rows = ((peak = "FEP", status = "ok"), (peak = "DEP", status = "ok"), (peak = "SEP", status = "ok")),
                 slow_mean_residual = -0.30)
-        @test crosscheck_warning(base, base; max_shift_sigma = 0.5) == ""
-        # |0.70| > |0.10| + 0.5 * 1.0
-        grown = merge(base, (shifts = merge(base.shifts, (DEP = (shift = 0.70u"keV", σ = 1.0u"keV"),)),))
-        @test occursin("DEP shift grew", crosscheck_warning(base, grown; max_shift_sigma = 0.5))
-        @test !occursin("SEP", crosscheck_warning(base, grown; max_shift_sigma = 0.5))
-        # an improvement of the same size is not flagged
-        @test crosscheck_warning(grown, base; max_shift_sigma = 0.5) == ""
-        # a sign change without growth is not flagged: |-0.55| <= |0.10| + 0.5
-        flipped = merge(base, (shifts = merge(base.shifts, (DEP = (shift = -0.55u"keV", σ = 1.0u"keV"),)),))
-        @test crosscheck_warning(base, flipped; max_shift_sigma = 0.5) == ""
+        @test crosscheck_warning(base; max_shift_sigma = 0.5) == ""
+        # |0.70| > 0.5 * 1.0, the sign does not matter
+        for shift in (0.70u"keV", -0.70u"keV")
+            shifted = merge(base, (shifts = merge(base.shifts, (DEP = (shift, σ = 1.0u"keV"),)),))
+            @test occursin("DEP shifted by", crosscheck_warning(shifted; max_shift_sigma = 0.5))
+            @test !occursin("SEP", crosscheck_warning(shifted; max_shift_sigma = 0.5))
+        end
         slow = merge(base, (slow_mean_residual = -0.90,))
-        @test occursin("high-qdrift residual grew", crosscheck_warning(base, slow; max_shift_sigma = 0.5))
-        @test crosscheck_warning(slow, base; max_shift_sigma = 0.5) == ""
-        slow_flip = merge(base, (slow_mean_residual = 0.40,))
-        @test crosscheck_warning(base, slow_flip; max_shift_sigma = 0.5) == ""
-        missing_new = merge(base, (shifts = (SEP = base.shifts.SEP,),))
-        @test occursin("DEP crosscheck missing at the new optimum", crosscheck_warning(base, missing_new; max_shift_sigma = 0.5))
-        @test occursin("DEP crosscheck missing at the legacy optimum", crosscheck_warning(missing_new, base; max_shift_sigma = 0.5))
+        @test occursin("high-qdrift residual of -0.9σ", crosscheck_warning(slow; max_shift_sigma = 0.5))
+        @test crosscheck_warning(merge(base, (slow_mean_residual = 0.40,)); max_shift_sigma = 0.5) == ""
         nan_shift = merge(base, (shifts = merge(base.shifts, (DEP = (shift = NaN * u"keV", σ = 1.0u"keV"),)),))
-        @test occursin("DEP new shift not finite", crosscheck_warning(base, nan_shift; max_shift_sigma = 0.5))
-        @test occursin("DEP legacy shift not finite", crosscheck_warning(nan_shift, base; max_shift_sigma = 0.5))
+        @test occursin("DEP shift or σ not finite", crosscheck_warning(nan_shift; max_shift_sigma = 0.5))
         nan_sigma = merge(base, (shifts = merge(base.shifts, (DEP = (shift = 0.10u"keV", σ = NaN * u"keV"),)),))
-        @test occursin("DEP new σ not finite", crosscheck_warning(base, nan_sigma; max_shift_sigma = 0.5))
+        @test occursin("DEP shift or σ not finite", crosscheck_warning(nan_sigma; max_shift_sigma = 0.5))
         nan_slow = merge(base, (slow_mean_residual = NaN,))
-        @test occursin("high-qdrift residual not finite", crosscheck_warning(base, nan_slow; max_shift_sigma = 0.5))
-        @test occursin("high-qdrift residual not finite", crosscheck_warning(nan_slow, base; max_shift_sigma = 0.5))
+        @test occursin("high-qdrift residual not finite", crosscheck_warning(nan_slow; max_shift_sigma = 0.5))
         nothing_checked = (shifts = NamedTuple(), rows = ((peak = "FEP", status = "ok"),), slow_mean_residual = -0.30)
-        @test crosscheck_warning(nothing_checked, nothing_checked; max_shift_sigma = 0.5) == ""
-        # failed fits are reported from the table rows, also when the peak has no shift at either optimum
+        @test crosscheck_warning(nothing_checked; max_shift_sigma = 0.5) == ""
+        # failed fits are reported from the table rows, also when the peak has no shift
         failed_dep = (shifts = (SEP = base.shifts.SEP,), slow_mean_residual = -0.30,
                       rows = ((peak = "FEP", status = "ok"), (peak = "DEP", status = "failed: too few events"), (peak = "SEP", status = "ok")))
-        @test crosscheck_warning(failed_dep, failed_dep; max_shift_sigma = 0.5) == "DEP fit failed (legacy, new)"
-        # a fit that fails at one optimum is reported once, with that optimum
-        @test crosscheck_warning(base, failed_dep; max_shift_sigma = 0.5) == "DEP fit failed (new)"
-        @test crosscheck_warning(failed_dep, base; max_shift_sigma = 0.5) == "DEP fit failed (legacy)"
-        failed_sep = merge(base, (rows = ((peak = "FEP", status = "ok"), (peak = "SEP", status = "failed: x")),))
-        @test crosscheck_warning(base, failed_sep; max_shift_sigma = 0.5) == "SEP fit failed (new)"
-        both = crosscheck_warning(failed_dep, failed_sep; max_shift_sigma = 0.5)
-        @test occursin("DEP fit failed (legacy)", both) && occursin("SEP fit failed (new)", both)
-        # without a FEP fit the other peaks and the high-qdrift residual have no scale and are not compared
+        @test crosscheck_warning(failed_dep; max_shift_sigma = 0.5) == "DEP fit failed"
+        # a failed fit is not also reported as a non-finite shift
+        failed_shift = merge(base, (rows = ((peak = "FEP", status = "ok"), (peak = "DEP", status = "failed: x"), (peak = "SEP", status = "ok")),
+                                    shifts = merge(base.shifts, (DEP = (shift = NaN * u"keV", σ = NaN * u"keV"),))))
+        @test crosscheck_warning(failed_shift; max_shift_sigma = 0.5) == "DEP fit failed"
+        # without a FEP fit the high-qdrift residual has no scale and is not checked
         failed_fep = (shifts = NamedTuple(), slow_mean_residual = NaN,
                       rows = ((peak = "FEP", status = "failed: BoundsError"), (peak = "DEP", status = "ok"), (peak = "SEP", status = "ok")))
-        @test crosscheck_warning(failed_fep, base; max_shift_sigma = 0.5) == "FEP fit failed (legacy)"
-        @test crosscheck_warning(base, failed_fep; max_shift_sigma = 0.5) == "FEP fit failed (new)"
-        @test crosscheck_warning(failed_fep, failed_fep; max_shift_sigma = 0.5) == "FEP fit failed (legacy, new)"
+        @test crosscheck_warning(failed_fep; max_shift_sigma = 0.5) == "FEP fit failed"
     end
 
     @testset "write_fltopt_tables" begin
@@ -209,7 +194,7 @@ using JuLeAna: DEP_WINDOW, ELECTRON_MASS_ENERGY, crosscheck_optimum, crosscheck_
         top = cc.residuals.qdrift .>= quantile(cc.residuals.qdrift, 0.95)
         @test cc.residuals.slow_mean == mean(cc.residuals.residual[top])
         @test cc.slow_mean_residual == cc.residuals.slow_mean
-        @test occursin("SEP fit failed (legacy, new)", crosscheck_warning(cc, cc; max_shift_sigma = 0.5))
+        @test occursin("SEP fit failed", crosscheck_warning(cc; max_shift_sigma = 0.5))
     end
 
     @testset "snap_seed" begin

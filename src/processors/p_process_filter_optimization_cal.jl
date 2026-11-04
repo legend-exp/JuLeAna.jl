@@ -14,7 +14,7 @@ The method is the same as in `process_filter_optimization_cal`. The waveforms ar
 - `l200.par.ppars.fltopt[det, part]` (existing results, if present).
 
 # Outputs
-- `l200.par.ppars.fltopt[det, part]`: per filter type the objective, the optimal rise time and flat-top time, FWHM and W90 at the optimum and the legacy optimum, and validity entries for the partition. The validity of all partitions of the period is written to `l200.par.ppars.fltopt`.
+- `l200.par.ppars.fltopt[det, part]`: per filter type the objective, the optimal rise time and flat-top time, FWHM and W90 at the optimum, and validity entries for the partition. The validity of all partitions of the period is written to `l200.par.ppars.fltopt`.
 - Per detector and filter type, the tables `fltopt_tables_<filter_type>.lh5` next to the plots.
 - Per detector and filter type, the plots `noise_sweep_*`, `ft_scan_*`, `rtft_landscape_*`, `ctc_*`, `peaks_*`, `crosscheck_*`, `residuals_*` and `example_wvfs_*`, saved at the debug plot level.
 - Partition report `:filter_optimization` (Main Log, Metadata, Results table with one row per detector, partition and filter type).
@@ -50,7 +50,7 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
     end
 
     log_nt = NamedTuple{(:Detector, :usability, :psd_usability, :Partition, :Status, Symbol("Filter Type"), :Objective,
-                         Symbol("Rise Time"), Symbol("Flat-Top Time"), :FWHM, :W90, Symbol("Legacy RT"), Symbol("Legacy FT"),
+                         Symbol("Rise Time"), Symbol("Flat-Top Time"), :FWHM, :W90,
                          :Converged, Symbol("Crosscheck Warning"), :Error)}
 
     flush(stdout)
@@ -102,7 +102,7 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
             @info "Only first period in partition $part for $period in $det ($ch)"
             for filter_type in e_filter
                 log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
-                                   process_skipped, filter_type, fill("-", 9)..., "Only first periods --> skipped."))
+                                   process_skipped, filter_type, fill("-", 7)..., "Only first periods --> skipped."))
                 log_info_dict[filter_type] = log_info
                 processed_dict[filter_type] = false
             end
@@ -114,8 +114,7 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
             for filter_type in e_filter
                 haskey(pars_db_det[det], filter_type) || continue
                 pars_flt = pars_db_det[det][filter_type]
-                is_current = all(k -> haskey(pars_flt, k), (:objective, :w90, :ct_spread, :joint_search, :legacy)) &&
-                             haskey(pars_flt.legacy, :rt) && haskey(pars_flt.legacy, :ft)
+                is_current = all(k -> haskey(pars_flt, k), (:objective, :w90, :ct_spread, :joint_search))
                 if !is_current
                     @info "Detector $det, filter $filter_type: pars from the previous method, re-optimizing"
                 else
@@ -123,7 +122,7 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
                     log_info_dict[filter_type] = log_nt((det, detector_status(chinfo_det.usability),
                                                          detector_status(chinfo_det.psd_usability), part, ProcessStatus(1), filter_type,
                                                          pars_flt.objective, pars_flt.rt, pars_flt.ft, pars_flt.fwhm, pars_flt.w90,
-                                                         pars_flt.legacy.rt, pars_flt.legacy.ft, get(pars_flt, :converged, "-"), "-",
+                                                         get(pars_flt, :converged, "-"), "-",
                                                          "Already processed --> skipped."))
                     processed_dict[filter_type] = false
                 end
@@ -155,13 +154,13 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
             if res isa Exception
                 log_info_dict[filter_type] = log_nt((det, detector_status(chinfo_det.usability),
                                                      detector_status(chinfo_det.psd_usability), part, ProcessStatus(0), filter_type,
-                                                     fill("-", 9)..., truncate_error(res)))
+                                                     fill("-", 7)..., truncate_error(res)))
                 processed_dict[filter_type] = false
             else
                 log_info_dict[filter_type] = log_nt((det, detector_status(chinfo_det.usability),
                                                      detector_status(chinfo_det.psd_usability), part, ProcessStatus(1), filter_type,
                                                      res.log.objective, res.pars.rt, res.pars.ft, res.pars.fwhm, res.pars.w90,
-                                                     res.log.legacy_rt, res.log.legacy_ft, get(res.pars, :converged, "-"),
+                                                     get(res.pars, :converged, "-"),
                                                      res.log.crosscheck_warning, "-"))
                 result_rt_ft_dict[filter_type] = res.pars
                 processed_dict[filter_type] = true

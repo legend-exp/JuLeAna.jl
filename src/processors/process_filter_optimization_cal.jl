@@ -4,7 +4,7 @@
 
 Optimize the energy filter rise time and flat-top time for all processable HPGe detectors (`geds`) of the `cal` run.
 
-For each filter type listed under `e_filter` in the optimization config, `optimize_channel_filter` chooses the rise time from a baseline noise sweep and the flat-top time from a sweep over full-energy-peak events. With `joint_search` enabled, a lattice search over both times gives the optimum of the configured `objective`. The optimum is crosschecked against the legacy optimum (minimal FWHM at the ENC rise time) with FEP, DEP and SEP peak fits and the FEP residuals against qdrift. Waveforms come from the `jlpks` tier, are reduced by the `qc` expression of the optimization config and limited to `max_wvfs` events per peak. Filter types that already have results from this method are skipped unless `reprocess` is set; results of an older method are optimized again.
+For each filter type listed under `e_filter` in the optimization config, `optimize_channel_filter` chooses the rise time from a baseline noise sweep and the flat-top time from a sweep over full-energy-peak events. With `joint_search` enabled, a lattice search over both times gives the optimum of the configured `objective`. The optimum is crosschecked with FEP, DEP and SEP peak fits and the FEP residuals against qdrift. Waveforms come from the `jlpks` tier, are reduced by the `qc` expression of the optimization config and limited to `max_wvfs` events per peak. Filter types that already have results from this method are skipped unless `reprocess` is set; results of an older method are optimized again.
 
 # Inputs
 - `jlpks` tier of the start `cal` filekey of the run, for each detector (peak waveforms named by `peakname`).
@@ -14,7 +14,7 @@ For each filter type listed under `e_filter` in the optimization config, `optimi
 - `l200.par.rpars.fltopt[period, run]` (existing results, unless `reprocess` is set).
 
 # Outputs
-- `l200.par.rpars.fltopt[period, run]`: per detector and filter type the objective, the optimal rise time and flat-top time, FWHM and W90 at the optimum and the legacy optimum, and the validity entry for the run.
+- `l200.par.rpars.fltopt[period, run]`: per detector and filter type the objective, the optimal rise time and flat-top time, FWHM and W90 at the optimum, and the validity entry for the run.
 - Per detector and filter type, the tables `fltopt_tables_<filter_type>.lh5` next to the plots.
 - Per detector and filter type, the plots `noise_sweep_*`, `ft_scan_*`, `rtft_landscape_*`, `ctc_*`, `peaks_*`, `crosscheck_*`, `residuals_*` and `example_wvfs_*`, saved at the debug plot level.
 - Run report `:filter_optimization` (Main Log, Metadata, Results table with one row per detector and filter type).
@@ -60,7 +60,7 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
     f_evaluate_qc = load_qc_evaluator(l200, filekey)
 
     log_nt = NamedTuple{(:Detector, :usability, :psd_usability, :Status, Symbol("Filter Type"), :Objective, Symbol("Rise Time"),
-                         Symbol("Flat-Top Time"), :FWHM, :W90, Symbol("Legacy RT"), Symbol("Legacy FT"), :Converged,
+                         Symbol("Flat-Top Time"), :FWHM, :W90, :Converged,
                          Symbol("Crosscheck Warning"), :Error)}
 
     flush(stdout)
@@ -86,8 +86,7 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
             for filter_type in e_filter
                 haskey(pars_db[det], filter_type) || continue
                 pars_flt = pars_db[det][filter_type]
-                is_current = all(k -> haskey(pars_flt, k), (:objective, :w90, :ct_spread, :joint_search, :legacy)) &&
-                             haskey(pars_flt.legacy, :rt) && haskey(pars_flt.legacy, :ft)
+                is_current = all(k -> haskey(pars_flt, k), (:objective, :w90, :ct_spread, :joint_search))
                 if !is_current
                     @info "Detector $det, filter $filter_type: pars from the previous method, re-optimizing"
                 else
@@ -95,7 +94,7 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
                     log_info_dict[filter_type] = log_nt((det, detector_status(chinfo_det.usability),
                                                          detector_status(chinfo_det.psd_usability), ProcessStatus(1), filter_type,
                                                          pars_flt.objective, pars_flt.rt, pars_flt.ft, pars_flt.fwhm, pars_flt.w90,
-                                                         pars_flt.legacy.rt, pars_flt.legacy.ft, get(pars_flt, :converged, "-"), "-",
+                                                         get(pars_flt, :converged, "-"), "-",
                                                          "Already processed --> skipped."))
                     processed_dict[filter_type] = false
                 end
@@ -131,13 +130,13 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
             if res isa Exception
                 log_info_dict[filter_type] = log_nt((det, detector_status(chinfo_det.usability),
                                                      detector_status(chinfo_det.psd_usability), ProcessStatus(0), filter_type,
-                                                     fill("-", 9)..., truncate_error(res)))
+                                                     fill("-", 7)..., truncate_error(res)))
                 processed_dict[filter_type] = false
             else
                 log_info_dict[filter_type] = log_nt((det, detector_status(chinfo_det.usability),
                                                      detector_status(chinfo_det.psd_usability), ProcessStatus(1), filter_type,
                                                      res.log.objective, res.pars.rt, res.pars.ft, res.pars.fwhm, res.pars.w90,
-                                                     res.log.legacy_rt, res.log.legacy_ft, get(res.pars, :converged, "-"),
+                                                     get(res.pars, :converged, "-"),
                                                      res.log.crosscheck_warning, "-"))
                 result_rt_ft_dict[filter_type] = res.pars
                 processed_dict[filter_type] = true

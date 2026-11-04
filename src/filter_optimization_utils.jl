@@ -12,55 +12,38 @@ const DEP_PEAKNAME = :Tl208DEP_Bi212FEP
 const SEP_PEAKNAME = :Tl208SEP
 
 """
-    crosscheck_warning(legacy::NamedTuple, new::NamedTuple; max_shift_sigma::Real)
+    crosscheck_warning(cc::NamedTuple; max_shift_sigma::Real)
 
-Warning text for a new optimum that degrades the reconstruction relative to the legacy optimum,
-`""` if nothing is flagged. Both arguments are `crosscheck_optimum` results.
+Warning text for a `crosscheck_optimum` result `cc`, `""` if nothing is flagged.
 
-Flagged are: a peak whose shift grew by more than `max_shift_sigma * σ` (σ at the new optimum),
-a peak missing at one optimum, a peak whose fit failed, a non-finite shift or σ, and a growth of
-the high-qdrift residual by more than `max_shift_sigma`. Without a FEP fit the other peaks and the
-residual are not compared.
+Flagged are: a peak whose fit failed, a peak whose shift exceeds `max_shift_sigma * σ`, a
+non-finite shift or σ, and a high-qdrift residual whose magnitude exceeds `max_shift_sigma`.
+Without a FEP fit the shifts and the residual are not checked.
 """
-function crosscheck_warning(legacy::NamedTuple, new::NamedTuple; max_shift_sigma::Real)
+function crosscheck_warning(cc::NamedTuple; max_shift_sigma::Real)
     warnings = String[]
-    failed = Dict{String, Vector{String}}()
-    for (label, cc) in (("legacy", legacy), ("new", new)), row in cc.rows
-        row.status == "ok" || push!(get!(failed, row.peak, String[]), label)
-    end
+    failed = [row.peak for row in cc.rows if row.status != "ok"]
 
-    for peak in union(keys(legacy.shifts), keys(new.shifts))
-        (haskey(failed, String(peak)) || haskey(failed, "FEP")) && continue
-        if !(haskey(legacy.shifts, peak) && haskey(new.shifts, peak))
-            missing_at = haskey(new.shifts, peak) ? "legacy" : "new"
-            push!(warnings, "$peak crosscheck missing at the $missing_at optimum")
-            continue
-        end
-        s_legacy = legacy.shifts[peak].shift
-        s_new = new.shifts[peak].shift
-        σ_new = new.shifts[peak].σ
-        nonfinite = String[]
-        isfinite(s_legacy) || push!(nonfinite, "legacy shift")
-        isfinite(s_new) || push!(nonfinite, "new shift")
-        isfinite(σ_new) || push!(nonfinite, "new σ")
-        if !isempty(nonfinite)
-            push!(warnings, "$peak $(join(nonfinite, ", ")) not finite")
-        elseif abs(s_new) > abs(s_legacy) + max_shift_sigma * σ_new
-            push!(warnings, "$peak shift grew from $(round(u"keV", s_legacy, digits = 2)) to $(round(u"keV", s_new, digits = 2))")
+    for peak in keys(cc.shifts)
+        String(peak) in failed && continue
+        shift, σ = cc.shifts[peak].shift, cc.shifts[peak].σ
+        if !(isfinite(shift) && isfinite(σ))
+            push!(warnings, "$peak shift or σ not finite")
+        elseif abs(shift) > max_shift_sigma * σ
+            push!(warnings, "$peak shifted by $(round(u"keV", shift, digits = 2))")
         end
     end
 
-    for peak in sort!(collect(keys(failed)))
-        push!(warnings, "$peak fit failed ($(join(failed[peak], ", ")))")
+    for peak in sort(failed)
+        push!(warnings, "$peak fit failed")
     end
 
-    if !haskey(failed, "FEP")
-        r_legacy = legacy.slow_mean_residual
-        r_new = new.slow_mean_residual
-        if !(isfinite(r_legacy) && isfinite(r_new))
+    if "FEP" ∉ failed
+        r = cc.slow_mean_residual
+        if !isfinite(r)
             push!(warnings, "high-qdrift residual not finite")
-        elseif abs(r_new) > abs(r_legacy) + max_shift_sigma
-            push!(warnings, "high-qdrift residual grew from $(round(r_legacy, digits = 2))σ to $(round(r_new, digits = 2))σ")
+        elseif abs(r) > max_shift_sigma
+            push!(warnings, "high-qdrift residual of $(round(r, digits = 2))σ")
         end
     end
     return join(warnings, "; ")
@@ -369,11 +352,10 @@ end
 Optimize energy filter `flt` of one detector on the prepared peak sets `sets` (see
 `run_filter_optimization_channel`):
 1. A noise sweep gives the rise time `rt_enc` with minimal ENC.
-2. A flat-top scan at `rt_enc` gives `ft0`, the optimum of `opt_config.objective`, and the
-   legacy optimum `(rt_enc, legacy_ft)`.
+2. A flat-top scan at `rt_enc` gives `ft0`, the optimum of `opt_config.objective`.
 3. With `opt_config.joint_search`, a lattice search with `optimize_rtft` from `(rt_enc, ft0)`
    gives the optimum; otherwise it is `(rt_enc, ft0)`.
-4. Crosschecks at the legacy and the new optimum (`crosscheck_optimum`, `crosscheck_warning`).
+4. A crosscheck at the optimum (`crosscheck_optimum`, `crosscheck_warning`).
 5. Figures are saved with `f_save(fig, name)` and titles `f_title(label, flt)`; tables are
    written to `f_tablepath(flt)` with `write_fltopt_tables`.
 
@@ -450,13 +432,12 @@ function optimize_channel_filter(sets::NamedTuple, flt::Symbol, dsp_config::DSPC
         result_ft, report_ft = fit_fwhm_ft(e_grid, e_grid_ft, sets.fep.qdrift, rt_enc, flt_config.min_e_fep,
             flt_config.max_e_fep, flt_config.rel_cut_fit_e_fep, opt_config.apply_ctc;
             n_bins = flt_config.nbins_e_fep, peak = opt_config.peak, window, objective, ctc_rel_uncertainty,
-            containment = opt_config.containment, rel_tol = opt_config.rel_tol, ft_fwhm_tol = opt_config.ft_fwhm_tol)
+            containment = opt_config.containment, rel_tol = opt_config.rel_tol)
         f_save(LegendMakie.lplot(report_ft, title = f_title("FEP FT Scan", flt), figsize = (600, 900)), Symbol("ft_scan_$(flt)"))
         (result_ft, report_ft)
     end
     ft0 = mvalue(result_ft.ft)
-    legacy_ft = ft_written(mvalue(result_ft.legacy_ft))
-    @debug "Filter $flt: seed flat-top time $ft0, legacy flat-top time $legacy_ft"
+    @debug "Filter $flt: seed flat-top time $ft0"
 
     if joint_search
         result_rtft, report_rtft = @process_step "$flt joint search" begin
@@ -478,7 +459,7 @@ function optimize_channel_filter(sets::NamedTuple, flt::Symbol, dsp_config::DSPC
                 rel_cut_fit = flt_config.rel_cut_fit_e_fep, n_bins = flt_config.nbins_e_fep,
                 apply_ctc = opt_config.apply_ctc, containment = opt_config.containment)
             @debug "Filter $flt: optimum rt = $(result_rtft.rt), ft = $(result_rtft.ft) after $(result_rtft.n_evals) evaluations"
-            f_save(LegendMakie.lplot(report_rtft, legacy = (rt_enc, legacy_ft), title = f_title("RT-FT Search", flt),
+            f_save(LegendMakie.lplot(report_rtft, title = f_title("RT-FT Search", flt),
                                      figsize = (700, 550)), Symbol("rtft_landscape_$(flt)"))
             (result_rtft, report_rtft)
         end
@@ -489,49 +470,44 @@ function optimize_channel_filter(sets::NamedTuple, flt::Symbol, dsp_config::DSPC
         @debug "Filter $flt: optimum rt = $rt_enc, ft = $ft0 from the flat-top scan"
         optimum = merge(report_ft.table[i_scan], (rt = rt_enc, ft = ft0, min_objective = result_ft.min_objective))
     end
-    rt_new = uconvert(u"µs", mvalue(optimum.rt))
-    ft_new = ft_written(mvalue(optimum.ft))
+    rt_opt = uconvert(u"µs", mvalue(optimum.rt))
+    ft_opt = ft_written(mvalue(optimum.ft))
 
-    cc_legacy, cc_new, warning = @process_step "$flt crosschecks" begin
-        cc_legacy = crosscheck_optimum(sets, dsp_config, opt_config, flt_config, flt, rt_enc, legacy_ft)
-        cc_new = crosscheck_optimum(sets, dsp_config, opt_config, flt_config, flt, rt_new, ft_new)
-        warning = crosscheck_warning(cc_legacy, cc_new; max_shift_sigma = opt_config.crosscheck.max_shift_sigma)
+    cc, warning = @process_step "$flt crosscheck" begin
+        cc = crosscheck_optimum(sets, dsp_config, opt_config, flt_config, flt, rt_opt, ft_opt)
+        warning = crosscheck_warning(cc; max_shift_sigma = opt_config.crosscheck.max_shift_sigma)
         isempty(warning) || @warn "Detector $detector, filter $flt crosscheck: $warning"
-        (cc_legacy, cc_new, warning)
+        (cc, warning)
     end
 
     # An optimum on the edge of the ft grid may lie beyond it.
-    ft_edge = flat_top_edge(ft_new, ft_written.(extrema(e_grid_ft)), prep.sampling_period)
+    ft_edge = flat_top_edge(ft_opt, ft_written.(extrema(e_grid_ft)), prep.sampling_period)
     if !isnothing(ft_edge)
-        @warn "Detector $detector, filter $flt: optimum flat-top time $ft_new is on the $ft_edge edge of the ft grid $(extrema(e_grid_ft))"
+        @warn "Detector $detector, filter $flt: optimum flat-top time $ft_opt is on the $ft_edge edge of the ft grid $(extrema(e_grid_ft))"
         warning = isempty(warning) ? "" : warning * "; "
         warning *= "flat-top time on the $ft_edge edge of the ft grid"
     end
 
     @process_step "$flt crosscheck plots" begin
         if opt_config.apply_ctc
-            f_save(LegendMakie.lplot(cc_legacy.ctc_report, figsize = (600, 600), title = f_title("CTC Legacy Optimum", flt)),
-                   Symbol("ctc_$(flt)_legacy"))
-            f_save(LegendMakie.lplot(cc_new.ctc_report, figsize = (600, 600), title = f_title("CTC New Optimum", flt)),
-                   Symbol("ctc_$(flt)_new"))
+            f_save(LegendMakie.lplot(cc.ctc_report, figsize = (600, 600), title = f_title("CTC Optimum", flt)),
+                   Symbol("ctc_$(flt)"))
         end
 
-        # Peaks fitted at both optima share one figure; every other peak fit is drawn on its own.
-        peaks = [p for p in keys(cc_new.fits) if haskey(cc_legacy.fits, p)]
+        peaks = collect(keys(cc.fits))
         if !isempty(peaks)
-            fits = (peaks = peaks, legacy = [cc_legacy.fits[p] for p in peaks], new = [cc_new.fits[p] for p in peaks])
+            fits = (; peaks, fits = [cc.fits[p] for p in peaks])
             f_save(LegendMakie.lplot(fits; figsize = (700, 300 * length(peaks)), title = f_title("Crosscheck Peaks", flt)),
                    Symbol("peaks_$(flt)"))
         end
-        for (which, cc) in ((:legacy, cc_legacy), (:new, cc_new)), (c, row) in zip(cc.checks, cc.rows)
+        for (c, row) in zip(cc.checks, cc.rows)
             c.name in peaks && continue
-            title = f_title("Crosscheck $(c.name) $(titlecase(String(which))) Optimum", flt)
-            f_save(crosscheck_peak_figure(c, get(cc.fits, c.name, nothing), row.status; title),
-                   Symbol("crosscheck_$(lowercase(String(c.name)))_$(which)_$(flt)"))
+            f_save(crosscheck_peak_figure(c, nothing, row.status; title = f_title("Crosscheck $(c.name)", flt)),
+                   Symbol("crosscheck_$(lowercase(String(c.name)))_$(flt)"))
         end
-        if !isempty(cc_legacy.residuals.residual) && !isempty(cc_new.residuals.residual)
-            f_save(LegendMakie.lplot((legacy = cc_legacy.residuals, new = cc_new.residuals); figsize = (900, 450),
-                                     title = f_title("FEP Residuals", flt)), Symbol("residuals_$(flt)"))
+        if !isempty(cc.residuals.residual)
+            f_save(LegendMakie.lplot(cc.residuals; figsize = (900, 450), title = f_title("FEP Residuals", flt)),
+                   Symbol("residuals_$(flt)"))
         end
     end
 
@@ -557,11 +533,10 @@ function optimize_channel_filter(sets::NamedTuple, flt::Symbol, dsp_config::DSPC
             return FilterType(convert(T, rt), convert(T, ft), convert(T, 10000000.0u"µs"),
                               flt_length, ustrip(NoUnits, flt_length / prep.sampling_period))
         end
-        flt_legacy = make_filter(rt_enc, legacy_ft).(wvfs)
-        flt_new = make_filter(rt_new, ft_new).(wvfs)
+        flt = make_filter(rt_opt, ft_opt).(wvfs)
 
         classes = repeat([:fast, :slow], inner = n_class)
-        f_save(LegendMakie.lplot((; classes, wvfs, flt_legacy, flt_new); figsize = (1200, 600),
+        f_save(LegendMakie.lplot((; classes, wvfs, flt); figsize = (1200, 600),
                                  title = f_title("Example Waveforms", flt)), Symbol("example_wvfs_$(flt)"))
     end
 
@@ -608,32 +583,27 @@ function optimize_channel_filter(sets::NamedTuple, flt::Symbol, dsp_config::DSPC
         end
         evaluation = vcat(evaluation_tables...)
 
-        crosscheck_rows(optimum, rt, ft, cc) = [
-            merge((; optimum, rt = uconvert(u"µs", rt), ft = uconvert(u"µs", ft), fct = mvalue(cc.fep_row.fct),
+        crosscheck = Table([
+            merge((; rt = uconvert(u"µs", rt_opt), ft = uconvert(u"µs", ft_opt), fct = mvalue(cc.fep_row.fct),
                    ct_spread = uconvert(u"keV", mvalue(cc.fep_row.ct_spread)), slow_mean_residual = cc.slow_mean_residual), row)
             for row in cc.rows
-        ]
-        crosscheck = Table(vcat(crosscheck_rows("legacy", rt_enc, legacy_ft, cc_legacy),
-                                crosscheck_rows("new", rt_new, ft_new, cc_new)))
+        ])
 
         write_fltopt_tables(f_tablepath(flt), (;
             evaluation, crosscheck,
-            residuals_legacy = (; cc_legacy.residuals.residual, cc_legacy.residuals.qdrift),
-            residuals_new = (; cc_new.residuals.residual, cc_new.residuals.qdrift),
+            residuals = (; cc.residuals.residual, cc.residuals.qdrift),
         ))
     end
 
     pars = (
-        rt = rt_new, ft = ft_new,
+        rt = rt_opt, ft = ft_opt,
         min_enc = result_rt.min_enc, rt_enc = result_rt.rt,
         objective = string(objective), ctc_rel_uncertainty, joint_search, containment = opt_config.containment,
         min_objective = optimum.min_objective, fwhm = optimum.fwhm, w90 = optimum.w90,
         asym = optimum.asym, fct = optimum.fct, ct_spread = optimum.ct_spread,
-        legacy = (rt = rt_enc, ft = legacy_ft, fwhm = cc_legacy.fep_row.fwhm),
     )
     joint_search && (pars = merge(pars, (n_evals = result_rtft.n_evals, converged = result_rtft.converged)))
-    log = (objective = pars.objective, legacy_rt = rt_enc, legacy_ft,
-           crosscheck_warning = isempty(warning) ? "-" : warning, ft_edge)
+    log = (objective = pars.objective, crosscheck_warning = isempty(warning) ? "-" : warning, ft_edge)
     return (; pars, log)
 end
 
