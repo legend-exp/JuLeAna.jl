@@ -141,7 +141,8 @@ function p_process_aoe_cut_cal(processing_config, l200::LegendData, period::Data
             if !all([haskey(processed_dict, aoe_classifier) for aoe_classifier in aoe_classifiers])
                 hit_cal = fast_flatten([begin
                                             @debug "Reading from $(pinfo.period)-$(pinfo.run)"
-                                            dsp = read_ldata(l200, :jldsp, :cal, pinfo.period, pinfo.run, det; filterby = :jlqcs => @pf($is_single_pulse && !$is_pulser))
+                                            dsp = read_ldata(l200, :jldsp, :cal, pinfo.period, pinfo.run, det;
+                                                             filterby = :jlqcs => @pf($is_single_pulse && !$is_pulser))
                                             calibrate_ged_detector_data(l200, pinfo.cal.startkey, det, dsp; aoe_cal_pars_type = :rpars,
                                                                         aoe_cal_pars_cat = :aoe, aoe_cut_pars_type = :rpars,
                                                                         aoe_cut_pars_cat = :aoe)

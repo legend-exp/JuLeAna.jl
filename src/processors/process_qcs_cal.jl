@@ -70,7 +70,8 @@ function process_qcs_cal(processing_config, l200::LegendData, period::DataPeriod
                          Symbol("Number Pulser Events"),
                          Symbol("Number Single-pulse Events"), Symbol("Single pulses with invalid energy"), :Error)}
     log_fk_nt = NamedTuple{(:Filekey, :Status, Symbol("Processed Detectors"), Symbol("Failed Detectors"), :Error)}
-    warning_nt = NamedTuple{(:Detector, :Filekey, :Selection, Symbol("Efficiency (%)"), Symbol("Reference (%)"), :Events, Symbol("Reference events"),
+    warning_nt = NamedTuple{(:Detector, :Filekey, :Selection, Symbol("Efficiency (%)"), Symbol("Reference (%)"), :Events,
+                             Symbol("Reference events"),
                              Symbol("Deviation (σ)")),Tuple{DetectorId,FileKey,Symbol,Float64,Float64,Int,Int,Float64}}
 
     # flush stdout
@@ -98,7 +99,8 @@ function process_qcs_cal(processing_config, l200::LegendData, period::DataPeriod
                         continue
                     end
                     try
-                        qc_config_det = merge(qc_config.default, get(qc_config, chinfo_det.usability, PropDict()), get(qc_config, det, PropDict()))
+                        qc_config_det = merge(qc_config.default, get(qc_config, chinfo_det.usability, PropDict()),
+                                              get(qc_config, det, PropDict()))
                         timestamps = read_ldata(:timestamp, l200, DataTier(:jldsp), fk, det).timestamp
                         qc_labels = read_ldata(ljl_propfunc(qc_config_det.labels), l200, DataTier(:jldsp), fk, det)
                         is_single_pulse = ljl_propfunc(qc_config_det.is_single_pulse).(qc_labels)
@@ -170,11 +172,13 @@ function process_qcs_cal(processing_config, l200::LegendData, period::DataPeriod
             warnings = warning_nt[]
             x_fk = collect(eachindex(filekeys))
             fig = Makie.Figure(size = (max(1100, 200 + 14 * length(filekeys)), 500))
-            ax = Makie.Axis(fig[1, 1]; title = get_plottitle(filekey, det, "QC Efficiency per Filekey"), xlabel = "Filekey start (UTC)", ylabel = "Survival fraction (%)",
+            ax = Makie.Axis(fig[1, 1]; title = get_plottitle(filekey, det, "QC Efficiency per Filekey"), xlabel = "Filekey start (UTC)",
+                            ylabel = "Survival fraction (%)",
                             xticks = (x_fk, [string(fk.time) for fk in filekeys]), xticklabelrotation = pi / 3, xticklabelsize = 10)
             plotted_sf = Float64[]
-            for (selection, n_key, k_key, color, label, monitor) in ((:pulser, :n_pulser, :n_pulser_pass, LegendMakie.AchatBlue, "Pulser single pulse", true),
-                                                                     (:nonpulser, :n_nonpulser, :n_nonpulser_pass, LegendMakie.BEGeOrange, "Non-pulser single pulse", false))
+            for (selection, n_key, k_key, color, label, monitor) in
+                ((:pulser, :n_pulser, :n_pulser_pass, LegendMakie.AchatBlue, "Pulser single pulse", true),
+                 (:nonpulser, :n_nonpulser, :n_nonpulser_pass, LegendMakie.BEGeOrange, "Non-pulser single pulse", false))
                 n = [getproperty(summary, n_key) for summary in summaries]
                 k = [getproperty(summary, k_key) for summary in summaries]
                 efficiency = [n[i] == 0 ? NaN : k[i] / n[i] for i in eachindex(n)]
@@ -203,7 +207,8 @@ function process_qcs_cal(processing_config, l200::LegendData, period::DataPeriod
                 # Wilson one-sigma intervals remain meaningful for small samples and survival fractions of 0 and 100 %.
                 center = [(k[i] + 0.5) / (n[i] + 1) for i in eachindex(n)]
                 halfwidth = [n[i] == 0 ? NaN : sqrt(n[i] * efficiency[i] * (1 - efficiency[i]) + 0.25) / (n[i] + 1) for i in eachindex(n)]
-                Makie.errorbars!(ax, x_fk, 100 .* efficiency, 100 .* (efficiency .- center .+ halfwidth), 100 .* (center .+ halfwidth .- efficiency);
+                Makie.errorbars!(ax, x_fk, 100 .* efficiency, 100 .* (efficiency .- center .+ halfwidth),
+                                 100 .* (center .+ halfwidth .- efficiency);
                                  color)
                 Makie.scatterlines!(ax, x_fk, 100 .* efficiency; label, color)
                 total_n > 0 && Makie.hlines!(ax, [100 * total_k / total_n]; color, linestyle = :dash, linewidth = 1)
@@ -228,7 +233,8 @@ function process_qcs_cal(processing_config, l200::LegendData, period::DataPeriod
         status_messages = String[]
         n_invalid_e_single_pulse > 0 && push!(status_messages, "$n_invalid_e_single_pulse single-pulse events fail is_valid_e.")
         isempty(stability_warnings) ||
-            push!(status_messages, "$(length(stability_warnings)) filekey survival fractions deviate by more than $(stability_sigma)σ; see QC stability warnings.")
+            push!(status_messages,
+                  "$(length(stability_warnings)) filekey survival fractions deviate by more than $(stability_sigma)σ; see QC stability warnings.")
 
         # A failed run summary keeps the filekey summary of the detector.
         try
@@ -319,7 +325,8 @@ function process_qcs_cal(processing_config, l200::LegendData, period::DataPeriod
 
             log_det = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability),
                               # Filekey deviations are only reported; they leave the detector and processor status unchanged.
-                              ProcessStatus(n_invalid_e_single_pulse > 0 ? -1 : 1), pulser_sf.is_single_pulse, fep_sf.is_single_pulse, n_pulser, n_single_pulse, n_invalid_e_single_pulse,
+                              ProcessStatus(n_invalid_e_single_pulse > 0 ? -1 : 1), pulser_sf.is_single_pulse, fep_sf.is_single_pulse,
+                              n_pulser, n_single_pulse, n_invalid_e_single_pulse,
                               isempty(status_messages) ? "-" : join(status_messages, " ")))
             return (result = (filekey_summary = filekey_summary, func = qc_propfunc, survival_fractions = survival_fractions,
                               n_pulser = n_pulser, n_single_pulse = n_single_pulse, n_invalid_e_single_pulse = n_invalid_e_single_pulse),
@@ -336,8 +343,10 @@ function process_qcs_cal(processing_config, l200::LegendData, period::DataPeriod
     start_time = now()
 
     # Generate the QC flags per filekey before the run summary of each detector.
-    result_filekeys = parallel(filekey_qcs, filekeys, log_fk_nt; timeout = timeout, retry = false, process_name = "$period-$run-process_qcs_cal")
-    result_qc = parallel(det_qcs_cal, chinfo, log_nt; timeout = timeout, retry = false, process_name = "$period-$run-process_qcs_cal-summary")
+    result_filekeys = parallel(filekey_qcs, filekeys, log_fk_nt; timeout = timeout, retry = false,
+                               process_name = "$period-$run-process_qcs_cal")
+    result_qc = parallel(det_qcs_cal, chinfo, log_nt; timeout = timeout, retry = false,
+                         process_name = "$period-$run-process_qcs_cal-summary")
 
     @info "Finished QC detector processing"
 

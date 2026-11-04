@@ -145,7 +145,8 @@ function p_process_psd_efficiencies_cal(processing_config, l200::LegendData, per
                                                  for col in (Symbol(aoe_classifier), Symbol("$(aoe_classifier)_low_cut"),
                                                              Symbol("$(lq_classifier)_high_cut"))])))
                 hit_cal = fast_flatten([let
-                                            dsp = read_ldata(l200, :jldsp, :cal, pinfo.period, pinfo.run, det; filterby = :jlqcs => @pf($is_single_pulse && !$is_pulser))
+                                            dsp = read_ldata(l200, :jldsp, :cal, pinfo.period, pinfo.run, det;
+                                                             filterby = :jlqcs => @pf($is_single_pulse && !$is_pulser))
                                             @debug "Calibrating $(pinfo.period)-$(pinfo.run)"
                                             hit = calibrate_ged_detector_data(l200, pinfo.cal.startkey, det, dsp; keep_detdata = false,
                                                                               hpge_kwargs...)

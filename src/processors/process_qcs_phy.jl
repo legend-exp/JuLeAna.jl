@@ -73,7 +73,8 @@ function process_qcs_phy(processing_config, l200::LegendData, period::DataPeriod
                          Symbol("Number Pulser Events"), Symbol("Number Forced-trigger Events"), Symbol("Number Physics Events"),
                          Symbol("Single pulses with invalid DSP properties"), :Error)}
     log_fk_nt = NamedTuple{(:Filekey, :Status, Symbol("Processed Detectors"), Symbol("Failed Detectors"), :Error)}
-    warning_nt = NamedTuple{(:Detector, :Filekey, :Selection, Symbol("Efficiency (%)"), Symbol("Reference (%)"), :Events, Symbol("Reference events"),
+    warning_nt = NamedTuple{(:Detector, :Filekey, :Selection, Symbol("Efficiency (%)"), Symbol("Reference (%)"), :Events,
+                             Symbol("Reference events"),
                              Symbol("Deviation (σ)")),Tuple{DetectorId,FileKey,Symbol,Float64,Float64,Int,Int,Float64}}
 
     # flush stdout
@@ -105,14 +106,16 @@ function process_qcs_phy(processing_config, l200::LegendData, period::DataPeriod
                         continue
                     end
                     try
-                        qc_config_det = merge(qc_config.default, get(qc_config, chinfo_det.usability, PropDict()), get(qc_config, det, PropDict()))
+                        qc_config_det = merge(qc_config.default, get(qc_config, chinfo_det.usability, PropDict()),
+                                              get(qc_config, det, PropDict()))
                         timestamps = read_ldata(:timestamp, l200, DataTier(:jldsp), fk, det).timestamp
                         qc_labels = read_ldata(ljl_propfunc(qc_config_det.labels), l200, DataTier(:jldsp), fk, det)
                         is_single_pulse = ljl_propfunc(qc_config_det.is_single_pulse).(qc_labels)
                         is_empty_trace = ljl_propfunc(qc_config_det.is_empty_trace).(qc_labels)
                         "$det" in processed_detectors && delete_entry!(outdata, "jlqcs/$det")
                         outdata[:jlqcs, det] = Table(merge(columns(qc_labels),
-                                                           (; timestamp = timestamps, is_single_pulse, is_empty_trace, is_pulser, is_forced)))
+                                                           (; timestamp = timestamps, is_single_pulse, is_empty_trace, is_pulser,
+                                                            is_forced)))
                         n_processed += 1
                     catch e
                         @error "QC failed for $det in $fk: $(truncate_error(e))"
@@ -129,7 +132,8 @@ function process_qcs_phy(processing_config, l200::LegendData, period::DataPeriod
             for det in evt_dets
                 qc = read_ldata(l200, DataTier(:jlqcs), fk, det)
                 is_crosstalk = get_ged_qc_is_crosstalk_propfunc(l200, filekey, det).(qc)
-                event_data[det] = StructArray(timestamp = qc.timestamp, is_valid_qc = qc.is_single_pulse .| qc.is_empty_trace .| is_crosstalk,
+                event_data[det] = StructArray(timestamp = qc.timestamp,
+                                              is_valid_qc = qc.is_single_pulse .| qc.is_empty_trace .| is_crosstalk,
                                               is_pulser = qc.is_pulser, is_forced = qc.is_forced)
             end
             events = build_global_events(event_data, evt_dets)
@@ -138,7 +142,8 @@ function process_qcs_phy(processing_config, l200::LegendData, period::DataPeriod
             forced = any.(events.is_forced) .& .!pulser
             other = .!pulser .& .!forced
             (n_events = length(events), n_pass = count(passed), n_pulser = count(pulser), n_pulser_pass = count(passed .& pulser),
-             n_forced = count(forced), n_forced_pass = count(passed .& forced), n_other = count(other), n_other_pass = count(passed .& other))
+             n_forced = count(forced), n_forced_pass = count(passed .& forced), n_other = count(other),
+             n_other_pass = count(passed .& other))
         end
         return (result = (event_counts = event_counts,), processed = n_processed > 0,
                 log = log_fk_nt((fk, ProcessStatus(isempty(failed_detectors) ? 1 : 0), n_processed, string.(failed_detectors), "")))
@@ -200,11 +205,13 @@ function process_qcs_phy(processing_config, l200::LegendData, period::DataPeriod
             warnings = warning_nt[]
             x_fk = collect(eachindex(filekeys))
             fig = Makie.Figure(size = (max(1100, 200 + 14 * length(filekeys)), 500))
-            ax = Makie.Axis(fig[1, 1]; title = get_plottitle(filekey, det, "QC Efficiency per Filekey"), xlabel = "Filekey start (UTC)", ylabel = "Survival fraction (%)",
+            ax = Makie.Axis(fig[1, 1]; title = get_plottitle(filekey, det, "QC Efficiency per Filekey"), xlabel = "Filekey start (UTC)",
+                            ylabel = "Survival fraction (%)",
                             xticks = (x_fk, [string(fk.time) for fk in filekeys]), xticklabelrotation = pi / 3, xticklabelsize = 10)
             plotted_sf = Float64[]
-            for (selection, n_key, k_key, color, label) in ((:pulser, :n_pulser, :n_pulser_pass, LegendMakie.AchatBlue, "Pulser single pulse"),
-                                                            (:forced_trigger, :n_forced, :n_forced_pass, :purple, "Forced trigger empty trace"))
+            for (selection, n_key, k_key, color, label) in
+                ((:pulser, :n_pulser, :n_pulser_pass, LegendMakie.AchatBlue, "Pulser single pulse"),
+                 (:forced_trigger, :n_forced, :n_forced_pass, :purple, "Forced trigger empty trace"))
                 n = [getproperty(summary, n_key) for summary in summaries]
                 k = [getproperty(summary, k_key) for summary in summaries]
                 efficiency = [n[i] == 0 ? NaN : k[i] / n[i] for i in eachindex(n)]
@@ -233,7 +240,8 @@ function process_qcs_phy(processing_config, l200::LegendData, period::DataPeriod
                 # Wilson one-sigma intervals remain meaningful for small samples and survival fractions of 0 and 100 %.
                 center = [(k[i] + 0.5) / (n[i] + 1) for i in eachindex(n)]
                 halfwidth = [n[i] == 0 ? NaN : sqrt(n[i] * efficiency[i] * (1 - efficiency[i]) + 0.25) / (n[i] + 1) for i in eachindex(n)]
-                Makie.errorbars!(ax, x_fk, 100 .* efficiency, 100 .* (efficiency .- center .+ halfwidth), 100 .* (center .+ halfwidth .- efficiency);
+                Makie.errorbars!(ax, x_fk, 100 .* efficiency, 100 .* (efficiency .- center .+ halfwidth),
+                                 100 .* (center .+ halfwidth .- efficiency);
                                  color)
                 Makie.scatterlines!(ax, x_fk, 100 .* efficiency; label, color)
                 total_n > 0 && Makie.hlines!(ax, [100 * total_k / total_n]; color, linestyle = :dash, linewidth = 1)
@@ -258,7 +266,8 @@ function process_qcs_phy(processing_config, l200::LegendData, period::DataPeriod
         status_messages = String[]
         n_invalid_dsp_single_pulse > 0 && push!(status_messages, "$n_invalid_dsp_single_pulse single-pulse events fail is_valid_dsp.")
         isempty(stability_warnings) ||
-            push!(status_messages, "$(length(stability_warnings)) filekey survival fractions deviate by more than $(stability_sigma)σ; see QC stability warnings.")
+            push!(status_messages,
+                  "$(length(stability_warnings)) filekey survival fractions deviate by more than $(stability_sigma)σ; see QC stability warnings.")
 
         @process_step "pulser survival fraction plot" begin
             # plot pulser survival fractions for is_single_pulse and its component flags
@@ -297,9 +306,11 @@ function process_qcs_phy(processing_config, l200::LegendData, period::DataPeriod
 
         log_det = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability),
                           # Filekey deviations are only reported; they leave the detector and processor status unchanged.
-                          ProcessStatus(n_invalid_dsp_single_pulse > 0 ? -1 : 1), pulser_sf.is_single_pulse, forced_trigger_sf.is_empty_trace, n_pulser, n_forced, n_physics,
+                          ProcessStatus(n_invalid_dsp_single_pulse > 0 ? -1 : 1), pulser_sf.is_single_pulse,
+                          forced_trigger_sf.is_empty_trace, n_pulser, n_forced, n_physics,
                           n_invalid_dsp_single_pulse, isempty(status_messages) ? "-" : join(status_messages, " ")))
-        return (result = (filekey_summary = filekey_summary, func = qc_propfunc, survival_fractions = survival_fractions, n_pulser = n_pulser,
+        return (result = (filekey_summary = filekey_summary, func = qc_propfunc, survival_fractions = survival_fractions,
+                          n_pulser = n_pulser,
                           n_forced = n_forced, n_single_pulse = n_single_pulse, n_physics = n_physics,
                           n_invalid_dsp_single_pulse = n_invalid_dsp_single_pulse),
                 warnings = stability_warnings, log = log_det, processed = true)
@@ -309,8 +320,10 @@ function process_qcs_phy(processing_config, l200::LegendData, period::DataPeriod
     start_time = now()
 
     # Generate the QC flags per filekey before the run summary of each detector.
-    result_filekeys = parallel(filekey_qcs, filekeys, log_fk_nt; timeout = timeout, retry = false, process_name = "$period-$run-process_qcs_phy")
-    result_qc = parallel(det_qcs_phy, chinfo, log_nt; timeout = timeout, retry = false, process_name = "$period-$run-process_qcs_phy-summary")
+    result_filekeys = parallel(filekey_qcs, filekeys, log_fk_nt; timeout = timeout, retry = false,
+                               process_name = "$period-$run-process_qcs_phy")
+    result_qc = parallel(det_qcs_phy, chinfo, log_nt; timeout = timeout, retry = false,
+                         process_name = "$period-$run-process_qcs_phy-summary")
 
     @info "Finished physics QC detector processing"
 
@@ -328,7 +341,8 @@ function process_qcs_phy(processing_config, l200::LegendData, period::DataPeriod
                               :complete => all(haskey(res, :result) for (_, res) in result_filekeys))
     for (fk, res) in result_filekeys
         haskey(res, :result) &&
-            (event_survival.filekey_summary[Symbol(fk)] = PropDict(pairs(merge(res.result.event_counts, (is_removed = fk in removed_filekeys,)))))
+            (event_survival.filekey_summary[Symbol(fk)] = PropDict(pairs(merge(res.result.event_counts,
+                                                                               (is_removed = fk in removed_filekeys,)))))
     end
     event_row_nt = NamedTuple{(:Selection, :Events, :Accepted, Symbol("Survival (%)")),Tuple{String,Int,Int,Float64}}
     event_rows = event_row_nt[]
@@ -383,7 +397,8 @@ function process_qcs_phy(processing_config, l200::LegendData, period::DataPeriod
              "Each global event is counted once. Removed filekeys are excluded; no trigger multiplicity, energy, or PSD selection is applied. Other triggers exclude pulser and forced-trigger events.")
     lreport!(report, StructArray(event_rows))
     event_survival.complete ||
-        lreport!(report, "Incomplete event summary: one or more filekeys failed. Counts cover only successfully summarized filekeys; see Filekey Results.")
+        lreport!(report,
+                 "Incomplete event summary: one or more filekeys failed. Counts cover only successfully summarized filekeys; see Filekey Results.")
     lreport!(report, "# QC stability warnings")
     lreport!(report,
              "Threshold: $(stability_sigma)σ, two-sided exact count comparison against the other nonremoved filekeys. Red crosses mark unexpected deviations; " *

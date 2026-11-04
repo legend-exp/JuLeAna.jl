@@ -138,10 +138,12 @@ function process_dsp_aux_phy(processing_config, l200::LegendData, period::DataPe
                                       yscale = log10, colorbarlabel = "Counts / bin", juleana_logo = false)
                 # time window bounds of the `cal.aux_trig_intime` condition, e.g. `t_max >= 48u"µs" && t_max <= 55u"µs"`
                 window = [ustrip(u"µs", parse(Float64, m[1]) * uparse(m[2]))
-                          for m in eachmatch(r"t_max\s*[<>]=?\s*([\d.]+)\s*u\"([^\"]+)\"", get(evt_config_pd.aux[det].cal, :aux_trig_intime, ""))]
+                          for m in eachmatch(r"t_max\s*[<>]=?\s*([\d.]+)\s*u\"([^\"]+)\"",
+                                             get(evt_config_pd.aux[det].cal, :aux_trig_intime, ""))]
                 if !isempty(window)
                     ax = Makie.current_axis()
-                    Makie.vlines!(ax, window; color = LegendMakie.BEGeOrange, linestyle = :dash, linewidth = 2, label = "aux_trig_intime window")
+                    Makie.vlines!(ax, window; color = LegendMakie.BEGeOrange, linestyle = :dash, linewidth = 2,
+                                  label = "aux_trig_intime window")
                     Makie.axislegend(ax; position = :rt)
                 end
                 save_plot(p, l200, filekey, det, :dsp_aux_energy_tmax)

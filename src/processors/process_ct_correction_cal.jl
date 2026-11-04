@@ -89,7 +89,8 @@ function process_ct_correction_cal(processing_config, l200::LegendData, period::
         data_det_after_qc = @process_step "data loader" begin
             @debug "Load DSP data after QC"
             if !all([haskey(processed_dict, e_type) for e_type in energy_types])
-                read_ldata((energy_types..., :qdrift), l200, :jldsp, :cal, period, run, det; filterby = :jlqcs => @pf($is_single_pulse && !$is_pulser))
+                read_ldata((energy_types..., :qdrift), l200, :jldsp, :cal, period, run, det;
+                           filterby = :jlqcs => @pf($is_single_pulse && !$is_pulser))
             end
         end
 
