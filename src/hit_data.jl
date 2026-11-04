@@ -27,10 +27,11 @@ function read_hit_cal(l200::LegendData, det, runs, e_types::AbstractVector{Symbo
     columns_out = union([:timestamp], _input_columns(ljl_propfunc.(expressions)))
     detector = DetectorId(det)
     aoe_classifiers, lq_classifiers = Symbol.(string.(aoe_types) .* "_classifier"), Symbol.(string.(lq_types) .* "_classifier")
-    stage_pars(stage, pars_type, pars_cat) = (; pars_type = get(pars, Symbol(stage, :_pars_type), pars_type),
-                                               pars_cat = get(pars, Symbol(stage, :_pars_cat), pars_cat))
-    e_cal, aoe_cal, aoe_cut = stage_pars(:e_cal, :rpars, :ecal), stage_pars(:aoe_cal, :ppars, :aoe), stage_pars(:aoe_cut, :ppars, :aoe)
-    lq_cal, lq_cut = stage_pars(:lq_cal, :ppars, :lq), stage_pars(:lq_cut, :ppars, :lq)
+    e_cal   = (; pars_type = get(pars, :e_cal_pars_type, :rpars), pars_cat = get(pars, :e_cal_pars_cat, :ecal))
+    aoe_cal = (; pars_type = get(pars, :aoe_cal_pars_type, :ppars), pars_cat = get(pars, :aoe_cal_pars_cat, :aoe))
+    aoe_cut = (; pars_type = get(pars, :aoe_cut_pars_type, :ppars), pars_cat = get(pars, :aoe_cut_pars_cat, :aoe))
+    lq_cal  = (; pars_type = get(pars, :lq_cal_pars_type, :ppars), pars_cat = get(pars, :lq_cal_pars_cat, :lq))
+    lq_cut  = (; pars_type = get(pars, :lq_cut_pars_type, :ppars), pars_cat = get(pars, :lq_cut_pars_cat, :lq))
     tables = map(collect(runs)) do (period, run)
         sel = start_filekey(l200, (period, run, :cal))
         # LegendDataManagement keeps the parsed parameters of each run in the process.
