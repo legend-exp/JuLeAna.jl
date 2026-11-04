@@ -138,8 +138,8 @@ function p_process_aoe_cut_cal(processing_config, l200::LegendData, period::Data
 
         e_cal, hit_cal, e_unit = @process_step "E data loader" begin
             if !all([haskey(processed_dict, aoe_classifier) for aoe_classifier in aoe_classifiers])
-                hit_cal = read_hit_cal(l200, det, zip(partinfo_det.period, partinfo_det.run), [e_type];
-                                       aoe_types = Symbol.(keys(aoe_config_det.aoe_funcs)), pars = (; aoe_cal_pars_type = :rpars))
+                hit_cal = read_hit_cal(l200, det, zip(partinfo_det.period, partinfo_det.run), [e_type], String[],
+                                       Symbol.(keys(aoe_config_det.aoe_funcs)); aoe_cal_pars_type = :rpars)
                 e_cal = collect(getproperty(hit_cal, e_type))
                 e_unit = unit(eltype(e_cal))
                 e_cal, hit_cal, e_unit
