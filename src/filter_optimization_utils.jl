@@ -2,54 +2,6 @@
 
 # Per-detector filter optimization shared by the run and partition processors.
 
-# The Tl-208 SEP and DEP lie one and two electron masses below the FEP.
-const ELECTRON_MASS_ENERGY = 510.999u"keV"
-
-# The DEP window excludes the Bi-212 FEP at 1620.7 keV, 28 keV above the DEP.
-const DEP_WINDOW = (15.0u"keV", 12.0u"keV")
-
-const DEP_PEAKNAME = :Tl208DEP_Bi212FEP
-const SEP_PEAKNAME = :Tl208SEP
-
-"""
-    crosscheck_warning(cc::NamedTuple; max_shift_sigma::Real)
-
-Warning text for a `crosscheck_optimum` result `cc`, `""` if nothing is flagged.
-
-Flagged are: a peak whose fit failed, a peak whose shift exceeds `max_shift_sigma * σ`, a
-non-finite shift or σ, and a high-qdrift residual whose magnitude exceeds `max_shift_sigma`.
-Without a FEP fit the shifts and the residual are not checked.
-"""
-function crosscheck_warning(cc::NamedTuple; max_shift_sigma::Real)
-    warnings = String[]
-    failed = [row.peak for row in cc.rows if row.status != "ok"]
-
-    for peak in keys(cc.shifts)
-        String(peak) in failed && continue
-        shift, σ = cc.shifts[peak].shift, cc.shifts[peak].σ
-        if !(isfinite(shift) && isfinite(σ))
-            push!(warnings, "$peak shift or σ not finite")
-        elseif abs(shift) > max_shift_sigma * σ
-            push!(warnings, "$peak shifted by $(round(u"keV", shift, digits = 2))")
-        end
-    end
-
-    for peak in sort(failed)
-        push!(warnings, "$peak fit failed")
-    end
-
-    if "FEP" ∉ failed
-        r = cc.slow_mean_residual
-        if !isfinite(r)
-            push!(warnings, "high-qdrift residual not finite")
-        elseif abs(r) > max_shift_sigma
-            push!(warnings, "high-qdrift residual of $(round(r, digits = 2))σ")
-        end
-    end
-    return join(warnings, "; ")
-end
-
-
 """
     write_fltopt_tables(path::AbstractString, tables::NamedTuple)
 
@@ -143,18 +95,18 @@ end
 
 
 """
-    fit_crosscheck_peak(e_cal::AbstractVector{<:Unitful.Energy}, line::Unitful.Energy, window::Tuple; containment::Real)
+    fit_fep_peak(e_cal::AbstractVector{<:Unitful.Energy}, peak::Unitful.Energy, window::Tuple; containment::Real)
 
-Fit the calibrated energies `e_cal` inside `line - window[1] .. line + window[2]` with
+Fit the calibrated energies `e_cal` inside `peak - window[1] .. peak + window[2]` with
 `fit_single_peak_th228` and compute `peak_width_metrics` of the fitted signal shape.
 
 Returns `(μ, σ, fwhm, w90, asym, tail_fraction, tail_scale, centroid, n_events, h, f_fit, report)`.
 Energies carry keV units; `h` and `f_fit` work on unitless keV. Throws an `ArgumentError` with
 fewer than 100 events in the window.
 """
-function fit_crosscheck_peak(e_cal::AbstractVector{<:Unitful.Energy}, line::Unitful.Energy, window::Tuple; containment::Real)
-    x = ustrip.(u"keV", filter(e -> line - first(window) < e < line + last(window), e_cal))
-    length(x) >= 100 || throw(ArgumentError("Only $(length(x)) events in the fit window around $line"))
+function fit_fep_peak(e_cal::AbstractVector{<:Unitful.Energy}, peak::Unitful.Energy, window::Tuple; containment::Real)
+    x = ustrip.(u"keV", filter(e -> peak - first(window) < e < peak + last(window), e_cal))
+    length(x) >= 100 || throw(ArgumentError("Only $(length(x)) events in the fit window around $peak"))
     bin_width = 2 * StatsBase.iqr(x) / cbrt(length(x))
     h = StatsBase.fit(StatsBase.Histogram, x, minimum(x):bin_width:maximum(x))
     result, report = fit_single_peak_th228(h, estimate_single_peak_stats(h); uncertainty = false)
@@ -168,140 +120,45 @@ end
 
 
 """
-    try_fit_crosscheck_peak(e_cal, line, window; containment, context = "")
+    evaluate_optimum(fep::NamedTuple, dsp_config, opt_config::PropDict, flt_config::PropDict,
+                     flt::Symbol, rt::Unitful.Time, ft::Unitful.Time)
 
-`(fit_crosscheck_peak(e_cal, line, window; containment), "ok")`, or `(nothing, "failed: ...")` if
-the fit throws, with a warning that includes `context`. An `InterruptException` propagates.
+Evaluation of the FEP set `fep` (see `prepare_peak_set`) with filter `flt` at `(rt, ft)`.
+
+The energies are evaluated with `evaluate_energy_point` and the calibrated energies are fitted with
+`fit_fep_peak`, which throws if the fit fails.
+
+Returns `(fep_row, fit, residuals, ctc_report)`:
+- `fep_row`: `evaluate_energy_point` row
+- `fit`: `fit_fep_peak` result
+- `residuals`: `(residual, qdrift, slow_mean)`, the residuals `(e - μ) / σ` of the events in the
+  FEP window with finite qdrift and their mean over the five percent with the highest qdrift
+- `ctc_report`: `ctc_energy` report of the energies if `opt_config.apply_ctc`, else `nothing`
 """
-function try_fit_crosscheck_peak(e_cal, line, window; containment, context::AbstractString = "")
-    try
-        return fit_crosscheck_peak(e_cal, line, window; containment), "ok"
-    catch err
-        err isa InterruptException && rethrow()
-        @warn "Crosscheck fit of the peak at $line failed$context" exception = (err, catch_backtrace())
-        return nothing, "failed: $(truncate_error(err, 200))"
-    end
-end
-
-
-"""
-    crosscheck_peak_figure(check::NamedTuple, fit, status::AbstractString; title::AbstractString)
-
-Figure of one crosscheck peak fit. `check` is an entry of `crosscheck_optimum(...).checks`;
-`fit` and `status` are the results of `try_fit_crosscheck_peak`. A failed fit is shown as the
-histogram of the energies in the fit window with the `status` text.
-"""
-function crosscheck_peak_figure(check::NamedTuple, fit, status::AbstractString; title::AbstractString)
-    isnothing(fit) || return LegendMakie.lplot(fit.report; title, figsize = (700, 450), show_residuals = false)
-    lo, hi = ustrip.(u"keV", (check.line - first(check.window), check.line + last(check.window)))
-    h = StatsBase.fit(StatsBase.Histogram, filter(e -> lo < e < hi, ustrip.(u"keV", check.e_cal)), range(lo, hi, length = 41))
-    fig = LegendMakie.lplot(h; title, figsize = (700, 450), xlabel = "Energy (keV)", ylabel = "Counts",
-        ylims = (0, max(1, 1.2 * maximum(h.weights))))
-    Makie.text!(Makie.current_axis(), 0.03, 0.97; text = join(String.(collect(Iterators.partition(status, 60))), "\n"),
-        space = :relative, align = (:left, :top), fontsize = 11, color = :red)
-    return fig
-end
-
-
-"""
-    crosscheck_optimum(sets::NamedTuple, dsp_config, opt_config::PropDict, flt_config::PropDict,
-                       flt::Symbol, rt::Unitful.Time, ft::Unitful.Time)
-
-Reconstruction crosscheck of filter `flt` at `(rt, ft)`.
-
-The FEP set is evaluated with `evaluate_energy_point`; its qdrift slope `fct` and simple
-calibration `m_cal_simple` are applied to the DEP and SEP sets (if present in `sets`). Every peak
-is fitted with `try_fit_crosscheck_peak`; a failed fit is recorded in the `status` of its row.
-Without a FEP fit `shifts` is empty, `residuals` holds empty vectors and `slow_mean` is `NaN`.
-
-Returns `(fep_row, checks, fits, rows, shifts, slow_mean_residual, residuals, ctc_report)`:
-- `fep_row`: `evaluate_energy_point` row of the FEP
-- `checks`: `(name, e_cal, line, window)` of every attempted peak
-- `fits`: `fit_crosscheck_peak` results by peak (`:FEP`, `:DEP`, `:SEP`)
-- `rows`: one crosscheck table row per attempted peak
-- `shifts`: `(shift, σ)` of `:DEP` and `:SEP`, scaled so that the FEP sits at its line
-- `residuals`: `(residual, qdrift, slow_mean)`, the residuals `(e - μ) / σ` of the FEP events in
-  the FEP window with finite qdrift and their mean over the five percent with the highest qdrift
-- `ctc_report`: `ctc_energy` report of the FEP energies if `opt_config.apply_ctc`, else `nothing`
-"""
-function crosscheck_optimum(sets::NamedTuple, dsp_config, opt_config::PropDict, flt_config::PropDict,
+function evaluate_optimum(fep::NamedTuple, dsp_config, opt_config::PropDict, flt_config::PropDict,
         flt::Symbol, rt::Unitful.Time, ft::Unitful.Time)
     peak = opt_config.peak
     window = (opt_config.left_window_size, opt_config.right_window_size)
-    containment = opt_config.containment
 
-    e_fep = dsp_energy_rtft(sets.fep.prep, dsp_config, rt, ft, flt)
-    fep_row = evaluate_energy_point(e_fep, sets.fep.qdrift, peak, window, flt_config.min_e_fep, flt_config.max_e_fep,
-        flt_config.rel_cut_fit_e_fep; n_bins = flt_config.nbins_e_fep, apply_ctc = opt_config.apply_ctc, containment)
-    calibrate(e, qdrift) = (e .+ fep_row.fct .* qdrift) .* fep_row.m_cal_simple
-    e_cal_fep = calibrate(e_fep, sets.fep.qdrift)
+    e = dsp_energy_rtft(fep.prep, dsp_config, rt, ft, flt)
+    fep_row = evaluate_energy_point(e, fep.qdrift, peak, window, flt_config.min_e_fep, flt_config.max_e_fep,
+        flt_config.rel_cut_fit_e_fep; n_bins = flt_config.nbins_e_fep, apply_ctc = opt_config.apply_ctc,
+        containment = opt_config.containment)
+    e_cal = (e .+ fep_row.fct .* fep.qdrift) .* fep_row.m_cal_simple
+    fit = fit_fep_peak(e_cal, peak, window; containment = opt_config.containment)
 
-    checks = NamedTuple[(name = :FEP, e_cal = e_cal_fep, line = peak, window = window)]
-    if haskey(sets, :dep)
-        e_dep = dsp_energy_rtft(sets.dep.prep, dsp_config, rt, ft, flt)
-        push!(checks, (name = :DEP, e_cal = calibrate(e_dep, sets.dep.qdrift),
-                       line = peak - 2 * ELECTRON_MASS_ENERGY, window = DEP_WINDOW))
-    end
-    if haskey(sets, :sep)
-        e_sep = dsp_energy_rtft(sets.sep.prep, dsp_config, rt, ft, flt)
-        push!(checks, (name = :SEP, e_cal = calibrate(e_sep, sets.sep.qdrift),
-                       line = peak - ELECTRON_MASS_ENERGY, window = window))
-    end
-
-    fit_names, fit_values, statuses = Symbol[], NamedTuple[], String[]
-    for c in checks
-        context = " ($(c.name) of $flt at rt = $rt, ft = $ft)"
-        fit, status = try_fit_crosscheck_peak(c.e_cal, c.line, c.window; containment, context)
-        push!(statuses, status)
-        if !isnothing(fit)
-            push!(fit_names, c.name)
-            push!(fit_values, fit)
-        end
-    end
-    fits = NamedTuple{Tuple(fit_names)}(Tuple(fit_values))
-
-    # DEP and SEP positions are scaled with the FEP fit.
-    k = haskey(fits, :FEP) ? peak / fits.FEP.μ : NaN
-
-    rows = map(checks, statuses) do c, status
-        f = get(fits, c.name, nothing)
-        if isnothing(f)
-            (peak = String(c.name), line = c.line, μ = NaN * u"keV", σ = NaN * u"keV", shift = NaN * u"keV",
-             fwhm = NaN * u"keV", w90 = NaN * u"keV", asym = NaN, tail_fraction = NaN, tail_scale = NaN * u"keV",
-             centroid = NaN * u"keV", n_events = 0, status = status)
-        else
-            (peak = String(c.name), line = c.line, μ = f.μ, σ = f.σ, shift = f.μ * k - c.line,
-             fwhm = f.fwhm, w90 = f.w90, asym = f.asym, tail_fraction = f.tail_fraction, tail_scale = f.tail_scale,
-             centroid = f.centroid, n_events = f.n_events, status = status)
-        end
-    end
-
-    shifts = (;)
-    if haskey(fits, :FEP)
-        shift_pairs = [c.name => (shift = fits[c.name].μ * k - c.line, σ = fits[c.name].σ * k)
-                       for c in checks if c.name != :FEP && haskey(fits, c.name)]
-        shifts = (; shift_pairs...)
-    end
-
-    if haskey(fits, :FEP)
-        sel = [i for i in eachindex(e_cal_fep, sets.fep.qdrift)
-               if peak - first(window) < e_cal_fep[i] < peak + last(window) && isfinite(sets.fep.qdrift[i])]
-        residual = ustrip.(NoUnits, (e_cal_fep[sel] .- fits.FEP.μ) ./ fits.FEP.σ)
-        slow = sets.fep.qdrift[sel] .>= quantile(sets.fep.qdrift[sel], 0.95)
-        residuals = (residual = residual, qdrift = sets.fep.qdrift[sel], slow_mean = mean(residual[slow]))
-    else
-        residuals = (residual = Float64[], qdrift = sets.fep.qdrift[Int[]], slow_mean = NaN)
-    end
+    sel = [i for i in eachindex(e_cal, fep.qdrift) if peak - first(window) < e_cal[i] < peak + last(window) && isfinite(fep.qdrift[i])]
+    residual = ustrip.(NoUnits, (e_cal[sel] .- fit.μ) ./ fit.σ)
+    slow = fep.qdrift[sel] .>= quantile(fep.qdrift[sel], 0.95)
+    residuals = (residual = residual, qdrift = fep.qdrift[sel], slow_mean = mean(residual[slow]))
 
     ctc_report = nothing
     if opt_config.apply_ctc
-        valid = [i for i in eachindex(e_fep, sets.fep.qdrift)
-                 if isfinite(e_fep[i]) && isfinite(sets.fep.qdrift[i]) && e_fep[i] > 0 && sets.fep.qdrift[i] > 0]
-        ctc_report = last(ctc_energy(e_fep[valid] .* fep_row.m_cal_simple, sets.fep.qdrift[valid], peak, window,
-                                     fep_row.m_cal_simple))
+        valid = [i for i in eachindex(e, fep.qdrift) if isfinite(e[i]) && isfinite(fep.qdrift[i]) && e[i] > 0 && fep.qdrift[i] > 0]
+        ctc_report = last(ctc_energy(e[valid] .* fep_row.m_cal_simple, fep.qdrift[valid], peak, window, fep_row.m_cal_simple))
     end
 
-    return (; fep_row, checks, fits, rows, shifts, slow_mean_residual = residuals.slow_mean, residuals, ctc_report)
+    return (; fep_row, fit, residuals, ctc_report)
 end
 
 
@@ -345,32 +202,32 @@ end
 
 
 """
-    optimize_channel_filter(sets::NamedTuple, flt::Symbol, dsp_config::DSPConfig,
+    optimize_channel_filter(fep::NamedTuple, flt::Symbol, dsp_config::DSPConfig,
                             opt_config::PropDict, τ::Unitful.Time;
                             detector, f_title::Function, f_save::Function, f_tablepath::Function)
 
-Optimize energy filter `flt` of one detector on the prepared peak sets `sets` (see
+Optimize energy filter `flt` of one detector on the prepared FEP set `fep` (see
 `run_filter_optimization_channel`):
 1. A noise sweep gives the rise time `rt_enc` with minimal ENC.
 2. A flat-top scan at `rt_enc` gives `ft0`, the optimum of `opt_config.objective`.
 3. With `opt_config.joint_search`, a lattice search with `optimize_rtft` from `(rt_enc, ft0)`
    gives the optimum; otherwise it is `(rt_enc, ft0)`.
-4. A crosscheck at the optimum (`crosscheck_optimum`, `crosscheck_warning`).
+4. An evaluation of the FEP at the optimum (`evaluate_optimum`).
 5. Figures are saved with `f_save(fig, name)` and titles `f_title(label, flt)`; tables are
    written to `f_tablepath(flt)` with `write_fltopt_tables`.
 
-For CUSP and ZAC the flat-top times in the pars, the crosscheck table and the log are those the
+For CUSP and ZAC the flat-top times in the pars and the log are those the
 filter applies (`realized_flattop`), and the lattice search visits only flat tops that are applied
 as requested. The `ft_applied` column of the evaluation table holds the applied flat-top time;
 `ft` is the requested one. The trapezoidal flat-top time is written as requested.
 
 An optimum on the lower or upper end of the flat-top grid (`flat_top_edge`) logs a warning naming
-`detector` and `flt` and is added to the crosscheck warning.
+`detector` and `flt`; the log field `ft_edge` holds `"lower"`, `"upper"` or `"-"`.
 
 Returns `(pars, log)`: the fltopt pars of the filter and the extra log table fields. `pars` holds
 `n_evals` and `converged` only if the joint search ran.
 """
-function optimize_channel_filter(sets::NamedTuple, flt::Symbol, dsp_config::DSPConfig, opt_config::PropDict,
+function optimize_channel_filter(fep::NamedTuple, flt::Symbol, dsp_config::DSPConfig, opt_config::PropDict,
         τ::Unitful.Time; detector, f_title::Function, f_save::Function, f_tablepath::Function)
     flt_config = opt_config.e_filter[flt]
     objective = Symbol(opt_config.objective)
@@ -378,7 +235,7 @@ function optimize_channel_filter(sets::NamedTuple, flt::Symbol, dsp_config::DSPC
     e_grid_rt = getproperty(dsp_config, Symbol("e_grid_rt_$(flt)"))
     e_grid_ft = getproperty(dsp_config, Symbol("e_grid_ft_$(flt)"))
     window = (opt_config.left_window_size, opt_config.right_window_size)
-    prep = sets.fep.prep
+    prep = fep.prep
 
     # Every candidate filter must be readable in every FEP waveform. Trapezoidal output exists
     # from t_first + 2rt + ft on and is read at t50 + rt + ft/2. CUSP and ZAC are read at
@@ -429,7 +286,7 @@ function optimize_channel_filter(sets::NamedTuple, flt::Symbol, dsp_config::DSPC
 
     result_ft, report_ft = @process_step "$flt flat-top scan" begin
         e_grid = permutedims(reduce(hcat, [f_energy(rt_enc, ft) for ft in e_grid_ft]))
-        result_ft, report_ft = fit_fwhm_ft(e_grid, e_grid_ft, sets.fep.qdrift, rt_enc, flt_config.min_e_fep,
+        result_ft, report_ft = fit_fwhm_ft(e_grid, e_grid_ft, fep.qdrift, rt_enc, flt_config.min_e_fep,
             flt_config.max_e_fep, flt_config.rel_cut_fit_e_fep, opt_config.apply_ctc;
             n_bins = flt_config.nbins_e_fep, peak = opt_config.peak, window, objective, ctc_rel_uncertainty,
             containment = opt_config.containment, rel_tol = opt_config.rel_tol)
@@ -451,7 +308,7 @@ function optimize_channel_filter(sets::NamedTuple, flt::Symbol, dsp_config::DSPC
             end
             rt_seed, ft_seed = snap_seed(rt_enc, ft_written(ft0), extrema(e_grid_rt), extrema(e_grid_ft),
                                          prep.sampling_period, feasible, flt)
-            result_rtft, report_rtft = optimize_rtft(f_energy, sets.fep.qdrift, rt_seed, ft_seed;
+            result_rtft, report_rtft = optimize_rtft(f_energy, fep.qdrift, rt_seed, ft_seed;
                 rt_bounds = extrema(e_grid_rt), ft_bounds = extrema(e_grid_ft), feasible,
                 step0 = (step(e_grid_rt), step_ft), lattice = prep.sampling_period,
                 objective, ctc_rel_uncertainty, rel_tol = opt_config.rel_tol, max_evals = opt_config.max_evals,
@@ -473,48 +330,25 @@ function optimize_channel_filter(sets::NamedTuple, flt::Symbol, dsp_config::DSPC
     rt_opt = uconvert(u"µs", mvalue(optimum.rt))
     ft_opt = ft_written(mvalue(optimum.ft))
 
-    cc, warning = @process_step "$flt crosscheck" begin
-        cc = crosscheck_optimum(sets, dsp_config, opt_config, flt_config, flt, rt_opt, ft_opt)
-        warning = crosscheck_warning(cc; max_shift_sigma = opt_config.crosscheck.max_shift_sigma)
-        isempty(warning) || @warn "Detector $detector, filter $flt crosscheck: $warning"
-        (cc, warning)
-    end
+    ev = @process_step "$flt evaluation" evaluate_optimum(fep, dsp_config, opt_config, flt_config, flt, rt_opt, ft_opt)
 
     # An optimum on the edge of the ft grid may lie beyond it.
     ft_edge = flat_top_edge(ft_opt, ft_written.(extrema(e_grid_ft)), prep.sampling_period)
     if !isnothing(ft_edge)
         @warn "Detector $detector, filter $flt: optimum flat-top time $ft_opt is on the $ft_edge edge of the ft grid $(extrema(e_grid_ft))"
-        warning = isempty(warning) ? "" : warning * "; "
-        warning *= "flat-top time on the $ft_edge edge of the ft grid"
     end
 
-    @process_step "$flt crosscheck plots" begin
+    @process_step "$flt evaluation plots" begin
         if opt_config.apply_ctc
-            f_save(LegendMakie.lplot(cc.ctc_report, figsize = (600, 600), title = f_title("CTC Optimum", flt)),
-                   Symbol("ctc_$(flt)"))
+            f_save(LegendMakie.lplot(ev.ctc_report, figsize = (600, 600), title = f_title("CTC Optimum", flt)), Symbol("ctc_$(flt)"))
         end
-
-        peaks = collect(keys(cc.fits))
-        if !isempty(peaks)
-            fits = (; peaks, fits = [cc.fits[p] for p in peaks])
-            f_save(LegendMakie.lplot(fits; figsize = (700, 300 * length(peaks)), title = f_title("Crosscheck Peaks", flt)),
-                   Symbol("peaks_$(flt)"))
-        end
-        for (c, row) in zip(cc.checks, cc.rows)
-            c.name in peaks && continue
-            f_save(crosscheck_peak_figure(c, nothing, row.status; title = f_title("Crosscheck $(c.name)", flt)),
-                   Symbol("crosscheck_$(lowercase(String(c.name)))_$(flt)"))
-        end
-        if !isempty(cc.residuals.residual)
-            f_save(LegendMakie.lplot(cc.residuals; figsize = (900, 450), title = f_title("FEP Residuals", flt)),
-                   Symbol("residuals_$(flt)"))
-        end
+        f_save(LegendMakie.lplot(ev.residuals; figsize = (900, 450), title = f_title("FEP Residuals", flt)), Symbol("residuals_$(flt)"))
     end
 
     # Example waveforms: the events with the lowest and the highest qdrift.
     @process_step "$flt example waveforms" begin
         n_class = opt_config.n_example_wvfs
-        qdrift = sets.fep.qdrift
+        qdrift = fep.qdrift
         valid = [i for i in eachindex(qdrift) if isfinite(qdrift[i])]
         idx = vcat(valid[partialsortperm(qdrift[valid], 1:n_class)],
                    valid[partialsortperm(qdrift[valid], 1:n_class, rev = true)])
@@ -583,15 +417,9 @@ function optimize_channel_filter(sets::NamedTuple, flt::Symbol, dsp_config::DSPC
         end
         evaluation = vcat(evaluation_tables...)
 
-        crosscheck = Table([
-            merge((; rt = uconvert(u"µs", rt_opt), ft = uconvert(u"µs", ft_opt), fct = mvalue(cc.fep_row.fct),
-                   ct_spread = uconvert(u"keV", mvalue(cc.fep_row.ct_spread)), slow_mean_residual = cc.slow_mean_residual), row)
-            for row in cc.rows
-        ])
-
         write_fltopt_tables(f_tablepath(flt), (;
-            evaluation, crosscheck,
-            residuals = (; cc.residuals.residual, cc.residuals.qdrift),
+            evaluation,
+            residuals = (; ev.residuals.residual, ev.residuals.qdrift),
         ))
     end
 
@@ -603,7 +431,7 @@ function optimize_channel_filter(sets::NamedTuple, flt::Symbol, dsp_config::DSPC
         asym = optimum.asym, fct = optimum.fct, ct_spread = optimum.ct_spread,
     )
     joint_search && (pars = merge(pars, (n_evals = result_rtft.n_evals, converged = result_rtft.converged)))
-    log = (objective = pars.objective, crosscheck_warning = isempty(warning) ? "-" : warning, ft_edge)
+    log = (objective = pars.objective, ft_edge = isnothing(ft_edge) ? "-" : string(ft_edge))
     return (; pars, log)
 end
 
@@ -613,14 +441,13 @@ end
                                     opt_config::PropDict, τ::Unitful.Time, f_evaluate_qc;
                                     detector, f_title::Function, f_save::Function, f_tablepath::Function)
 
-Filter optimization of one detector. Loads the FEP waveforms and, if enabled in
-`opt_config.crosscheck`, the DEP and SEP waveforms with `f_load(peakname)` (see
-`load_peak_waveforms`), applies the QC, prepares every set once (`prepare_peak_set`) and runs
+Filter optimization of one detector. Loads the FEP waveforms with `f_load(peakname)` (see
+`load_peak_waveforms`), applies the QC, prepares the set once (`prepare_peak_set`) and runs
 `optimize_channel_filter` for every filter in `filter_types`. Throws an `ArgumentError` if
 `opt_config.joint_search` is not a `Bool` or `opt_config.ctc_rel_uncertainty` is not a `Real`.
 
 Returns a `Dict` from filter to its `(pars, log)`, or to the exception that stopped that
-filter. Errors while loading or preparing a peak set propagate.
+filter. Errors while loading or preparing the FEP set propagate.
 """
 function run_filter_optimization_channel(f_load::Function, filter_types::AbstractVector, dsp_config,
         opt_config::PropDict, τ::Unitful.Time, f_evaluate_qc;
@@ -632,19 +459,15 @@ function run_filter_optimization_channel(f_load::Function, filter_types::Abstrac
         throw(ArgumentError("flt_optimization.ctc_rel_uncertainty must be a Real, got $(typeof(opt_config.ctc_rel_uncertainty))"))
     end
 
-    peaknames = (fep = Symbol(opt_config.peakname),)
-    opt_config.crosscheck.dep && (peaknames = merge(peaknames, (dep = DEP_PEAKNAME,)))
-    opt_config.crosscheck.sep && (peaknames = merge(peaknames, (sep = SEP_PEAKNAME,)))
-    sets = map(peaknames) do peakname
-        wvfs = @process_step "$peakname data loader" f_load(peakname)
-        @process_step "$peakname QC and preparation" prepare_peak_set(wvfs, dsp_config, τ, f_evaluate_qc, opt_config.qc)
-    end
+    peakname = Symbol(opt_config.peakname)
+    wvfs = @process_step "$peakname data loader" f_load(peakname)
+    fep = @process_step "$peakname QC and preparation" prepare_peak_set(wvfs, dsp_config, τ, f_evaluate_qc, opt_config.qc)
     GC.gc()
 
     results = Dict{Symbol, Union{NamedTuple, Exception}}()
     for flt in filter_types
         results[flt] = try
-            optimize_channel_filter(sets, flt, dsp_config, opt_config, τ; detector, f_title, f_save, f_tablepath)
+            optimize_channel_filter(fep, flt, dsp_config, opt_config, τ; detector, f_title, f_save, f_tablepath)
         catch e
             e isa InterruptException && rethrow()
             e isa ProcessStepError || @error "Filter $flt: $(truncate_error(e))"

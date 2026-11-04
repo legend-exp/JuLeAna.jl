@@ -4,7 +4,7 @@
 
 Optimize the energy filter rise time and flat-top time for all processable HPGe detectors (`geds`) of the `cal` run.
 
-For each filter type listed under `e_filter` in the optimization config, `optimize_channel_filter` chooses the rise time from a baseline noise sweep and the flat-top time from a sweep over full-energy-peak events. With `joint_search` enabled, a lattice search over both times gives the optimum of the configured `objective`. The optimum is crosschecked with FEP, DEP and SEP peak fits and the FEP residuals against qdrift. Waveforms come from the `jlpks` tier, are reduced by the `qc` expression of the optimization config and limited to `max_wvfs` events per peak. Filter types that already have results from this method are skipped unless `reprocess` is set; results of an older method are optimized again.
+For each filter type listed under `e_filter` in the optimization config, `optimize_channel_filter` chooses the rise time from a baseline noise sweep and the flat-top time from a sweep over full-energy-peak events. With `joint_search` enabled, a lattice search over both times gives the optimum of the configured `objective`. The FEP is evaluated at the optimum with a peak fit and the residuals against qdrift. Waveforms come from the `jlpks` tier, are reduced by the `qc` expression of the optimization config and limited to `max_wvfs` events per peak. Filter types that already have results from this method are skipped unless `reprocess` is set; results of an older method are optimized again.
 
 # Inputs
 - `jlpks` tier of the start `cal` filekey of the run, for each detector (peak waveforms named by `peakname`).
@@ -16,7 +16,7 @@ For each filter type listed under `e_filter` in the optimization config, `optimi
 # Outputs
 - `l200.par.rpars.fltopt[period, run]`: per detector and filter type the objective, the optimal rise time and flat-top time, FWHM and W90 at the optimum, and the validity entry for the run.
 - Per detector and filter type, the tables `fltopt_tables_<filter_type>.lh5` next to the plots.
-- Per detector and filter type, the plots `noise_sweep_*`, `ft_scan_*`, `rtft_landscape_*`, `ctc_*`, `peaks_*`, `crosscheck_*`, `residuals_*` and `example_wvfs_*`, saved at the debug plot level.
+- Per detector and filter type, the plots `noise_sweep_*`, `ft_scan_*`, `rtft_landscape_*`, `ctc_*`, `residuals_*` and `example_wvfs_*`, saved at the debug plot level.
 - Run report `:filter_optimization` (Main Log, Metadata, Results table with one row per detector and filter type).
 
 # Keywords
@@ -61,7 +61,7 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
 
     log_nt = NamedTuple{(:Detector, :usability, :psd_usability, :Status, Symbol("Filter Type"), :Objective, Symbol("Rise Time"),
                          Symbol("Flat-Top Time"), :FWHM, :W90, :Converged,
-                         Symbol("Crosscheck Warning"), :Error)}
+                         Symbol("FT Edge"), :Error)}
 
     flush(stdout)
 
@@ -137,7 +137,7 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
                                                      detector_status(chinfo_det.psd_usability), ProcessStatus(1), filter_type,
                                                      res.log.objective, res.pars.rt, res.pars.ft, res.pars.fwhm, res.pars.w90,
                                                      get(res.pars, :converged, "-"),
-                                                     res.log.crosscheck_warning, "-"))
+                                                     res.log.ft_edge, "-"))
                 result_rt_ft_dict[filter_type] = res.pars
                 processed_dict[filter_type] = true
             end
