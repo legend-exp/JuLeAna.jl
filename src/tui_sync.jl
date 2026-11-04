@@ -1,9 +1,9 @@
 # This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
 
-# The Sync page of `m`, created on first use from the settings the interface was given, or the user's configuration.
+# The Sync screen of `m`, created on first use from the settings the interface was given, or the user's configuration.
 # Reading the configuration and building the page (which validates the settings and reads the hosts file) happen in one
-# guarded block: a malformed file gives a page with default settings and its error in the page's dialog on the first
-# visit; it never ends the interface.
+# guarded block: a malformed file gives a page with default settings and its error in the page's dialog at the first
+# opening; it never ends the interface.
 function sync_page!(m::JuLeAnaTUI)
     isnothing(m.sync) || return m.sync
     problem = nothing
@@ -22,7 +22,7 @@ function sync_page!(m::JuLeAnaTUI)
     return page
 end
 
-# The production Setup works on, as a candidate name for the Sync page: its folder relative to the local root (a mirror)
+# The production Setup works on, as a candidate name for the Sync screen: its folder relative to the local root (a mirror)
 # or to the remote root of a host.
 function sync_initial_production(settings::SyncSettings)
     current = current_production()
@@ -58,37 +58,61 @@ only draws. The precompile workload and every test that walks over all pages use
 """
 offline_sync_settings() = SyncSettings(; host = "offline", remote_root = "/offline", local_root = "", hosts_file = PACKAGED_HOSTS_FILE)
 
-# Draw the Sync page. A fault in it is drawn as one error line naming the exception, so the interface keeps running; an
-# interrupt is rethrown.
+# Draw the window of the Sync screen. A fault in the screen is drawn as one error line naming the exception, so the interface
+# keeps running; an interrupt is rethrown.
 function draw_sync!(m::JuLeAnaTUI, area::Tachikoma.Rect, buf::Tachikoma.Buffer)
+    inner = Tachikoma.render(pane_block("Data sync", true), area, buf)
     try
-        render_sync(sync_page!(m), area, buf)
+        render_sync(sync_page!(m), inner, buf)
     catch err
         err isa InterruptException && rethrow()
         text = "The Sync page failed to draw: " * first(split(sprint(showerror, err), '\n'))
-        Tachikoma.set_string!(buf, area.x, area.y, text, Tachikoma.tstyle(:error); max_x = Tachikoma.right(area))
+        Tachikoma.set_string!(buf, inner.x, inner.y, text, Tachikoma.tstyle(:error); max_x = Tachikoma.right(inner))
     end
     return nothing
 end
 
-# The hint pairs of the Sync page and whether it takes text; a fault gives no hints.
+# The hint pairs of the Sync window and whether it takes text; a fault gives no hints. While work runs the screen takes no key
+# of its own, so its hints do not apply.
 function sync_bar(m::JuLeAnaTUI)
     try
         page = sync_page!(m)
-        return (sync_hints(page), sync_text_input(page))
+        sync_running(page) && return ((("Esc", sync_stoppable(page) ? "background or stop" : "background"),), false)
+        return ((sync_hints(page)..., (sync_at_rest(page) ? (("Esc", "close"),) : ())...), sync_text_input(page))
     catch err
         err isa InterruptException && rethrow()
         return ((), false)
     end
 end
 
-# Switch to page `n`. The first visit of the Sync tab creates its page and connects.
-function show_page!(m::JuLeAnaTUI, n::Integer)
-    m.page = n
-    if n == SYNC_PAGE
-        created = isnothing(m.sync)
-        page = sync_page!(m)
-        created && shielded(() -> sync_start!(page), page, nothing)
+# Open the Sync window, unless processing runs. The first opening creates the screen and connects.
+function open_sync!(m::JuLeAnaTUI)
+    if processing(m)
+        @warn "The Sync window did not open: processing runs. Stop it first or start another juleana-sync"
+        return nothing
     end
+    created = isnothing(m.sync)
+    page = sync_page!(m)
+    m.sync_open = true
+    created && shielded(() -> sync_start!(page), page, nothing)
     return nothing
+end
+
+# A key in the open Sync window; returns whether it is used. Escape closes the window when the screen has nothing left to close
+# and asks while it runs work; the screen's own uses of Escape come first. `sync_key!` leaves the keys of the interface to it.
+function sync_window_key!(m::JuLeAnaTUI, evt::Tachikoma.KeyEvent)
+    page = sync_page!(m)
+    if evt.key == :escape
+        sync_running(page) && (m.dialog = :sync_leave; return true)
+        sync_at_rest(page) && (m.sync_open = false; return true)
+    end
+    return sync_key!(page, evt)
+end
+
+# The text of the question of Escape while the Sync window runs work: one line per key that applies.
+function sync_leave_message(m::JuLeAnaTUI)
+    lines = ["b: close the window, keep it running in the background"]
+    sync_stoppable(m.sync) && push!(lines, "s: stop it; files already staged are kept and the next run resumes from them")
+    push!(lines, "c: cancel, stay in the window")
+    return join(lines, "\n")
 end

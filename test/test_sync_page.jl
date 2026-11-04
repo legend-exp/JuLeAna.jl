@@ -712,6 +712,93 @@
         @test_throws "no estimated selection" start_transfer!(m)
     end
 
+    @testset "a stop ends a running transfer and its rsync" begin
+        m = fresh(; production = "test")
+        sync_start!(m)
+        settle!(m)
+        sync_key!(m, KeyEvent('t'))
+        settle!(m)
+        @test m.modal_kind == :estimate
+        # A stand-in for rsync that reports progress until it is killed.
+        bin = mktempdir()
+        pidfile = joinpath(bin, "pid")
+        write(joinpath(bin, "rsync"),
+              """
+              #!/bin/sh
+              if [ "\$1" = "--version" ]; then echo "rsync  version 3.4.1  protocol version 32"; exit 0; fi
+              echo \$\$ > $pidfile
+              while :; do printf '  1,000  50%%  1.00MB/s  0:00:01\\r'; sleep 0.05; done
+              """)
+        chmod(joinpath(bin, "rsync"), 0o755)
+        withenv("PATH" => bin * ":" * ENV["PATH"]) do
+            sync_key!(m, KeyEvent(:enter))
+            @test sync_running(m) && sync_stoppable(m)
+            t_end = time() + 30
+            while (m.step === nothing || m.step.total === nothing) && time() < t_end
+                Tachikoma.drain_tasks!(e -> update!(m, e), m.tasks)
+                sleep(0.01)
+            end
+            @test m.step.step == "copying"
+            sync_stop!(m)
+            @test sync_running(m) && !sync_stoppable(m)
+            @test occursin("stopping", row_text(draw(m; height = 30), 30))
+            settle!(m)
+        end
+        @test !sync_running(m) && m.modal === nothing && m.modal_kind == :none && m.step === nothing
+        @test occursin("stopped", m.status) && occursin("resumes", m.status)
+        @test !success(pipeline(`kill -0 $(parse(Int, strip(read(pidfile, String))))`; stderr = devnull))
+        # The stop does not reach the next run.
+        sync_key!(m, KeyEvent('t'))
+        settle!(m)
+        @test m.modal_kind == :estimate
+    end
+
+    @testset "a stop ends a running estimate, even one that finishes before it can act" begin
+        m = fresh(; production = "test")
+        sync_start!(m)
+        settle!(m)
+        sync_key!(m, KeyEvent('e'))
+        @test sync_running(m) && sync_stoppable(m)
+        sync_stop!(m)
+        settle!(m)
+        @test !sync_running(m) && m.modal === nothing && m.modal_kind == :none && m.estimated === nothing
+        @test occursin("estimate stopped", m.status)
+    end
+
+    @testset "a real failure after a stop is still reported" begin
+        m = fresh(; production = "test")
+        sync_start!(m)
+        settle!(m)
+        m.modal_kind = :estimating
+        m.stop[] = true
+        m.running += 1
+        update!(m, TaskEvent(Symbol("sync:estimate"), ErrorException("the host went away")))
+        @test m.modal_kind == :error && occursin("the host went away", m.modal.message)
+    end
+
+    @testset "a transfer that ends before a stop can act reports its result" begin
+        m = fresh(; production = "test")
+        sync_start!(m)
+        settle!(m)
+        m.modal_kind = :transfer
+        sync_stop!(m)
+        m.running += 1
+        update!(m, TaskEvent(Symbol("sync:transfer"), TransferResult(0, 0, 0, 0, String[], "", "")))
+        @test m.modal_kind == :message && m.modal.title == "Transfer complete" && m.status == ""
+    end
+
+    @testset "work without progress readings cannot be stopped" begin
+        m = fresh(; production = "test")
+        for kind in (:busy, :checking)
+            m.modal_kind = kind
+            @test sync_running(m) && !sync_stoppable(m)
+        end
+        for kind in (:none, :estimate, :message, :error, :firstn)
+            m.modal_kind = kind
+            @test !sync_running(m) && !sync_stoppable(m)
+        end
+    end
+
     @testset "busy names the running task and ignores background sizes" begin
         m = fresh(; production = "test")
         sync_start!(m)

@@ -1,14 +1,10 @@
 # This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
 
-const TUI_PAGES = ("Setup", "Graph", "Workers", "Progress", "Log", "Reports", "History", "Sync")
-const SYNC_PAGE = length(TUI_PAGES)
-
-# Colors of the letters of the logo title, in the order of the letters of `JuLeAna`.
-const TITLE_COLORS = (Tachikoma.ColorRGB(0xcb, 0x3c, 0x33), Tachikoma.ColorRGB(0x38, 0x98, 0x26), Tachikoma.ColorRGB(0x95, 0x58, 0xb2))
+const TUI_PAGES = ("Setup", "Graph", "Workers", "Progress", "Log", "Reports", "History")
 
 # Keys shown on the bottom row, as `(key, description)` per page: Setup, Graph, Progress, Log, others.
 const SETUP_HINTS = (("Tab", "pane"), ("Space", "toggle"), ("/", "filter"), ("s", "start"), ("x/X", "stop"), ("W", "workers"),
-                     ("e", "settings"), ("w", "write"))
+                     ("e", "settings"), ("w", "write"), ("S", "sync"))
 const GRAPH_HINTS = (("↑↓", "move"), ("Space", "select"), ("d", "add required"), ("h", "unselected"), ("v", "last run/disk"))
 const PROGRESS_HINTS = (("↑↓ PgUp PgDn", "move"), ("Enter ←→", "fold"), ("Enter on step", "messages"), ("f", "follow"))
 const PROGRESS_OPEN_HINTS = (("↑↓", "move"), ("PgUp PgDn", "scroll messages"), ("End", "newest"), ("Esc", "close"), ("f", "follow"))
@@ -25,6 +21,7 @@ const PRODUCTION_HINTS = (("↑↓ Tab", "field"), ("Space", "toggle"), ("Ctrl-N
                           ("Esc", "close"))
 const PRODUCTION_DONE_HINTS = (("any key", "continue"),)
 const COMMON_HINTS = (("1-$(length(TUI_PAGES))", "page"), ("q", "quit"), ("?", "help"))
+const SYNC_COMMON_HINTS = (("q", "quit"), ("?", "help"))
 
 # Seconds a new warning or error stays in the status panel.
 const ALERT_SECONDS = 10.0
@@ -219,8 +216,8 @@ A left click on a page's tab opens the page; other mouse events go to the visibl
 
 Keys: the visible page gets each key first (see [`JuLeAna.setup_key!`](@ref) for the
 Setup page, [`JuLeAna.graph_key!`](@ref) for the Graph page,
-[`JuLeAna.progress_key!`](@ref) for the Progress page and [`JuLeAna.log_key!`](@ref) for the Log page, [`JuLeAna.reports_key!`](@ref) for the Reports page and [`JuLeAna.history_key!`](@ref) for the History page and [`JuLeAna.workers_key!`](@ref) for the Workers page); otherwise `1` to `8` switch pages and `q`
-or Ctrl-C quits. While processing runs, or the Sync page has unsaved marks or a running transfer or environment creation, quitting asks first: `s` stops processing after
+[`JuLeAna.progress_key!`](@ref) for the Progress page and [`JuLeAna.log_key!`](@ref) for the Log page, [`JuLeAna.reports_key!`](@ref) for the Reports page and [`JuLeAna.history_key!`](@ref) for the History page and [`JuLeAna.workers_key!`](@ref) for the Workers page); otherwise `1` to `$(length(TUI_PAGES))` switch pages and `q`
+or Ctrl-C quits. While processing runs, or the Sync window has unsaved marks or a running transfer or environment creation, quitting asks first: `s` stops processing after
 the running items and quits when the run has ended, `w` saves the sync selection and quits, `q` quits at once, ending the run and the workers connected to this
 process, interrupting the transfer or environment creation and discarding the unsaved selection, and `c` or Escape keeps the interface open. The dialog lists only the keys that apply.
 
@@ -235,7 +232,14 @@ The form replaces the visible page and takes every key (see [`JuLeAna.production
 It is also open when the interface starts without a session: when the parsed
 options have no `config` or `new_production` is set, `start!` does not load a session.
 
-Page 8 shows the `JuLeAna.Sync` screen. It is created when the tab is first shown and starts connecting to the host then.
+`S` on the Setup page opens the window of the `JuLeAna.Sync` screen in place of the visible page. The field `sync_open` says
+whether it is open; the screen stays in the field `sync`, so closing the window keeps its state and any running work. It is
+created at the first opening and starts connecting to the host then. The window takes the keys and the mouse, except that `q`,
+`?` and `T` still reach the interface while no dialog waits for an answer and no field is edited. Escape closes it once the
+screen has nothing left to close. While the screen runs work, Escape asks instead: `b` closes the window and leaves the work
+running, `s` stops work that can be stopped, and `c` or Escape stays. Processing and a sync do not run together: `S` is refused
+while processing runs and [`StartProcessing`](@ref) while the screen runs work. The status panel shows the running work, its
+progress, and the dialog that waits in a closed window.
 
 The field `timing` is the [`JuLeAna.InterfaceTiming`](@ref) that records the times of the
 `view` and `Tachikoma.update!` calls; once a session is loaded it appends a row every 10
@@ -259,7 +263,7 @@ mutable struct JuLeAnaTUI <: Tachikoma.Model
     answered::Int
     page::Int
     quit::Bool
-    # `:quit` while the quit dialog is open
+    # `:quit` while the quit dialog is open, `:sync_leave` while the question of Escape in the Sync window is open
     dialog::Union{Nothing,Symbol}
     quit_after_stop::Bool
     refreshing::Bool
@@ -277,8 +281,10 @@ mutable struct JuLeAnaTUI <: Tachikoma.Model
     help::Bool
     # the open new-production form, which replaces the visible page
     production::Union{Nothing,ProductionForm}
-    # the Sync page, created on the first visit of the Sync tab, the settings it starts from and how it reaches a host
+    # the screen of the Sync window, created at its first opening, whether the window is open, the settings the screen
+    # starts from and how it reaches a host
     sync::Union{Nothing,SyncPage}
+    sync_open::Bool
     const sync_settings::Union{Nothing,SyncSettings}
     const sync_host::Any
     # minimum seconds of the startup screen
@@ -301,7 +307,7 @@ function JuLeAnaTUI(ctrl::DataflowController, messages::MessageBuffer = MessageB
     m = JuLeAnaTUI(ctrl, messages, Tachikoma.TaskQueue(), Channel{ControllerCommand}(Inf), SetupPage(), GraphPage(), ProgressPage(),
                    LogPage(), ReportsPage(), HistoryPage(), WorkersPage(), tab_bar(), 0, 0, 1, false, nothing, false, false, nothing,
                    nothing, nothing, BusyItem[], (; key = nothing, messages = StepMessage[]), nothing, 0, false, 0.0, false, nothing,
-                   nothing, sync_settings, sync_host, splash_seconds, InterfaceTiming())
+                   nothing, false, sync_settings, sync_host, splash_seconds, InterfaceTiming())
     errormonitor(Threads.@spawn run_commands(m))
     return m
 end
@@ -329,6 +335,10 @@ Queue `cmd` for the controller of `m`; the commands are dispatched one after ano
 a background task. A rejected command shows its error in the status panel.
 """
 function send_command!(m::JuLeAnaTUI, cmd::ControllerCommand)
+    if cmd isa StartProcessing && !isnothing(m.sync) && sync_running(m.sync)
+        @warn "Processing did not start: a sync is running; S on Setup shows it"
+        return nothing
+    end
     m.pending += 1
     put!(m.commands, cmd)
     return nothing
@@ -396,6 +406,7 @@ function update_task!(m::JuLeAnaTUI, evt::Tachikoma.TaskEvent)
     if startswith(String(evt.id), "sync:")
         isnothing(m.sync) && error("a sync task event arrived before the Sync page exists: $(evt.id)")
         sync_task!(m.sync, evt)
+        m.dialog === :sync_leave && !sync_running(m.sync) && (m.dialog = nothing)
         return nothing
     end
     if evt.id === :tick
@@ -491,6 +502,17 @@ function update_key!(m::JuLeAnaTUI, evt::Tachikoma.KeyEvent)
         end
         return nothing
     end
+    if m.dialog === :sync_leave
+        if evt.key == :char && evt.char == 'b'
+            m.dialog, m.sync_open = nothing, false
+        elseif evt.key == :char && evt.char == 's' && sync_stoppable(m.sync)
+            m.dialog = nothing
+            sync_stop!(m.sync)
+        elseif evt.key == :escape || (evt.key == :char && evt.char == 'c') || ctrl_c
+            m.dialog = nothing
+        end
+        return nothing
+    end
     if !isnothing(m.production) && !ctrl_c
         result = production_key!(m.production, evt, cmd -> send_command!(m, cmd))
         if m.production.phase === :creating && m.production.answer_at == 0
@@ -504,33 +526,39 @@ function update_key!(m::JuLeAnaTUI, evt::Tachikoma.KeyEvent)
         return nothing
     end
     n = length(TUI_PAGES)
-    if m.page == 1 && !ctrl_c && setup_key!(m.setup, evt, m.snap, cmd -> send_command!(m, cmd))
-        if m.setup.new_production
-            m.setup.new_production = false
-            m.production = ProductionForm()
+    if m.sync_open
+        !ctrl_c && sync_window_key!(m, evt) && return nothing
+    else
+        if m.page == 1 && !ctrl_c && setup_key!(m.setup, evt, m.snap, cmd -> send_command!(m, cmd))
+            if m.setup.new_production
+                m.setup.new_production = false
+                m.production = ProductionForm()
+            elseif m.setup.open_sync
+                m.setup.open_sync = false
+                open_sync!(m)
+            end
+            return nothing
         end
-        return nothing
+        m.page == 2 && !ctrl_c && graph_key!(m.graph_page, evt, m.snap, cmd -> send_command!(m, cmd)) && return nothing
+        m.page == 3 && !ctrl_c && workers_key!(m.workers_page, evt, cmd -> send_command!(m, cmd); m.snap) && return nothing
+        if m.page == 4 && !ctrl_c
+            open = m.progress_page.open
+            used = progress_key!(m.progress_page, evt, m.progress)
+            m.progress_page.open == open || refresh!(m)
+            used && return nothing
+        end
+        m.page == 5 && !ctrl_c && log_key!(m.log_page, evt, message_entries(m.messages)) && return nothing
+        m.page == 6 && !ctrl_c && reports_key!(m.reports_page, evt) && return nothing
+        m.page == 7 && !ctrl_c && history_key!(m.history_page, evt) && return nothing
     end
-    m.page == 2 && !ctrl_c && graph_key!(m.graph_page, evt, m.snap, cmd -> send_command!(m, cmd)) && return nothing
-    m.page == 3 && !ctrl_c && workers_key!(m.workers_page, evt, cmd -> send_command!(m, cmd); m.snap) && return nothing
-    if m.page == 4 && !ctrl_c
-        open = m.progress_page.open
-        used = progress_key!(m.progress_page, evt, m.progress)
-        m.progress_page.open == open || refresh!(m)
-        used && return nothing
-    end
-    m.page == 5 && !ctrl_c && log_key!(m.log_page, evt, message_entries(m.messages)) && return nothing
-    m.page == 6 && !ctrl_c && reports_key!(m.reports_page, evt) && return nothing
-    m.page == 7 && !ctrl_c && history_key!(m.history_page, evt) && return nothing
-    m.page == SYNC_PAGE && !ctrl_c && sync_key!(sync_page!(m), evt) && return nothing
     if ctrl_c || (evt.key == :char && evt.char == 'q')
         processing(m) || sync_pending(m) ? (m.dialog = :quit) : (m.quit = true)
     elseif evt.key == :char && evt.char == '?'
         m.help = true
     elseif evt.key == :char && evt.char == 'T'
         next_theme!()
-    elseif evt.key == :char && '1' <= evt.char <= '0' + n
-        show_page!(m, evt.char - '0')
+    elseif !m.sync_open && evt.key == :char && '1' <= evt.char <= '0' + n
+        m.page = evt.char - '0'
     end
     return nothing
 end
@@ -550,8 +578,12 @@ end
 
 function update_mouse!(m::JuLeAnaTUI, evt::Tachikoma.MouseEvent)
     if isnothing(m.dialog) && !m.help && isnothing(m.production) && !splash_active(m)
+        if m.sync_open
+            sync_mouse!(sync_page!(m), evt)
+            return nothing
+        end
         if Tachikoma.handle_mouse!(m.tabs, evt) === :changed
-            show_page!(m, m.tabs.active)
+            m.page = m.tabs.active
             return nothing
         end
         m.page == 1 && setup_mouse!(m.setup, evt, m.snap, cmd -> send_command!(m, cmd))
@@ -565,7 +597,6 @@ function update_mouse!(m::JuLeAnaTUI, evt::Tachikoma.MouseEvent)
         m.page == 5 && log_mouse!(m.log_page, evt, message_entries(m.messages))
         m.page == 6 && reports_mouse!(m.reports_page, evt)
         m.page == 7 && history_mouse!(m.history_page, evt)
-        m.page == SYNC_PAGE && sync_mouse!(sync_page!(m), evt)
     end
     return nothing
 end
@@ -632,9 +663,10 @@ function format_duration(seconds::Real)
 end
 
 # Spans of the first line of the status panel: spinner while the controller works, the
-# controller state, the last run, the workers and the countdown to the cancel of idle worker
-# allocations on the left, separated by dots; on the right a rejected command, else the latest
-# alert, else the error of the last load or run.
+# controller state, the last run, the workers, the countdown to the cancel of idle worker
+# allocations and the running sync or the dialog that waits in the closed Sync window on the left,
+# separated by dots; on the right a rejected command, else the latest alert, else the error of the
+# last load or run.
 function status_spans(m::JuLeAnaTUI)
     sep = ("  ·  ", Tachikoma.tstyle(:border))
     snap = m.snap
@@ -660,6 +692,15 @@ function status_spans(m::JuLeAnaTUI)
             push!(left, (", idle cancel in $(format_duration(left_s))", Tachikoma.tstyle(left_s < 300 ? :warning : :text_dim)))
         end
     end
+    if !isnothing(m.sync)
+        if sync_running(m.sync)
+            push!(left, sep, ("sync running", Tachikoma.tstyle(:accent, bold = true)))
+        elseif !m.sync_open && !isnothing(m.sync.modal)
+            push!(left, sep,
+                  ("sync: $(m.sync.modal.title), S on Setup shows it",
+                   Tachikoma.tstyle(m.sync.modal_kind === :error ? :error : :warning, bold = true)))
+        end
+    end
     right = Tuple{String,Tachikoma.Style}[]
     if !isnothing(m.command_error)
         push!(right, (first(split(m.command_error, '\n')), Tachikoma.tstyle(:error, bold = true)))
@@ -677,8 +718,9 @@ function status_spans(m::JuLeAnaTUI)
 end
 
 # Draw the status panel into `area`: a box with the spans of `status_spans` on the first line
-# and, once a processing run started, a bar over the second line with the progress and the
-# elapsed time of the run.
+# and, on the second line, the bar of the running step of the Sync window or, once a processing
+# run started, a bar with the progress and the elapsed time of the run. A running step only
+# shows without a run in progress, since a detector listing can outlast the start of one.
 function render_status(m::JuLeAnaTUI, area::Tachikoma.Rect, buf::Tachikoma.Buffer)
     inner = Tachikoma.render(Tachikoma.Block(; border_style = Tachikoma.tstyle(:border)), area, buf)
     (inner.width < 1 || inner.height < 1) && return nothing
@@ -695,7 +737,9 @@ function render_status(m::JuLeAnaTUI, area::Tachikoma.Rect, buf::Tachikoma.Buffe
     inner.height >= 2 || return nothing
     snap = m.snap
     line = Tachikoma.Rect(inner.x + 1, inner.y + 1, max(0, inner.width - 2), 1)
-    if isnothing(snap) || isnothing(snap.started) || isnothing(m.progress)
+    if !processing(m) && !isnothing(m.sync) && !isnothing(m.sync.step)
+        Sync.render_progress(m.sync, line, buf)
+    elseif isnothing(snap) || isnothing(snap.started) || isnothing(m.progress)
         Tachikoma.set_string!(buf, line.x, line.y, "No processing run in this session.", Tachikoma.tstyle(:text_dim); max_x = x_max)
     else
         elapsed = format_duration((something(snap.finished, now(UTC)) - snap.started) / Millisecond(1000))
@@ -746,6 +790,8 @@ function draw_interface!(m::JuLeAnaTUI, f::Tachikoma.Frame)
         render_splash(m, Tachikoma.Rect(body_area.x, status_area.y, body_area.width, body_area.height + status_area.height), f.buffer)
     elseif !isnothing(m.production)
         render_production(m.production, m.snap, body_area, f.buffer; ticks = m.ticks)
+    elseif m.sync_open
+        draw_sync!(m, body_area, f.buffer)
     elseif m.page == 1
         render_setup(m.setup, m.snap, body_area, f.buffer)
     elseif m.page == 2
@@ -761,13 +807,12 @@ function draw_interface!(m::JuLeAnaTUI, f::Tachikoma.Frame)
         render_reports(m.reports_page, body_area, f.buffer)
     elseif m.page == 7
         render_history(m.history_page, body_area, f.buffer)
-    elseif m.page == SYNC_PAGE
-        draw_sync!(m, body_area, f.buffer)
     end
     splash_active(m) || render_status(m, status_area, f.buffer)
-    sync_hint_bar = m.page == SYNC_PAGE ? sync_bar(m) : ((), false)
+    sync_hint_bar = m.sync_open ? sync_bar(m) : ((), false)
     hints = (!isnothing(m.production) ?
              (m.production.phase === :done ? PRODUCTION_DONE_HINTS : m.production.phase === :creating ? () : PRODUCTION_HINTS) :
+             m.sync_open ? first(sync_hint_bar) :
              m.page == 1 ? SETUP_HINTS :
              m.page == 2 ? GRAPH_HINTS :
              m.page == 3 ?
@@ -775,12 +820,12 @@ function draw_interface!(m::JuLeAnaTUI, f::Tachikoma.Frame)
              m.page == 4 ? (isnothing(m.progress_page.open) ? PROGRESS_HINTS : PROGRESS_OPEN_HINTS) :
              m.page == 5 ? LOG_HINTS :
              m.page == 6 ? (isnothing(m.reports_page.viewer_path) ? REPORTS_HINTS : REPORTS_OPEN_HINTS) :
-             m.page == 7 ? (isnothing(m.history_page.viewer_path) ? HISTORY_HINTS : HISTORY_OPEN_HINTS) :
-             m.page == SYNC_PAGE ? first(sync_hint_bar) : ())
+             m.page == 7 ? (isnothing(m.history_page.viewer_path) ? HISTORY_HINTS : HISTORY_OPEN_HINTS) : ())
     spans = Tuple{String,Tachikoma.Style}[]
     # `q` closes an open report instead of quitting and is text in the editor
     for (key, description) in (hints...,
-                               (!isnothing(m.production) || m.page == SYNC_PAGE && last(sync_hint_bar) ||
+                               (m.sync_open ? (last(sync_hint_bar) ? () : SYNC_COMMON_HINTS) :
+                                !isnothing(m.production) ||
                                 m.page == 3 && (!isnothing(m.workers_page.editor) || !isnothing(m.workers_page.form)) ||
                                 m.page == 6 && !isnothing(m.reports_page.viewer_path) ||
                                 m.page == 7 && !isnothing(m.history_page.viewer_path) ? () : COMMON_HINTS)...)
@@ -792,6 +837,9 @@ function draw_interface!(m::JuLeAnaTUI, f::Tachikoma.Frame)
     if m.dialog === :quit
         modal = Tachikoma.Modal(; title = processing(m) ? "Processing runs" : "Quit", message = quit_message(m), confirm_label = "",
                                 cancel_label = "")
+        Tachikoma.render(modal, f.area, f.buffer)
+    elseif m.dialog === :sync_leave
+        modal = Tachikoma.Modal(; title = "A sync is running", message = sync_leave_message(m), confirm_label = "", cancel_label = "")
         Tachikoma.render(modal, f.area, f.buffer)
     end
     return nothing

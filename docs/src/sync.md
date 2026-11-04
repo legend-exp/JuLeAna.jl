@@ -8,7 +8,7 @@ without an open session on the cluster. The mirror keeps the remote layout, so
 The tool has one screen and two ways to open it:
 
 - `juleana-sync` opens the screen alone.
-- Tab 8 "Sync" of `juleana` shows the same screen next to the dataflow pages.
+- `S` on the Setup page of `juleana` opens the same screen in a window inside the interface.
 
 ``` bash
 juleana-sync --host viper --production juleana/tmp/jl-v0.7.0dev1 --local-root ~/data
@@ -39,7 +39,7 @@ Connect, Estimate and Transfer refuse with "Local root must be set". A selection
 giving its path in the Selection field and pressing Load selection, or applied headless with `--from`. A selection
 records the host its tree was built from; Load and `--from` refuse a file saved for another host and name both hosts.
 A malformed file stops `juleana-sync` with a message that names the file; `juleana` shows the message in the
-dialog of the Sync tab and keeps running. A `hosts.yaml` entry without `remote_root` is reported the same way when the Sync tab opens with an empty
+dialog of the Sync window and keeps running. A `hosts.yaml` entry without `remote_root` is reported the same way when the Sync window first opens with an empty
 Production field (the remote roots are read for the preselection), and otherwise at Connect if that host is used.
 
 ## The screen
@@ -107,13 +107,14 @@ asks before it discards them (Discard or Keep).
 | `e` | Ask rsync exactly what the selection would move |
 | `t` | Estimate, confirm, and transfer |
 | `p` | Collapse or expand the settings panel |
-| `q` | Leave, offering to save first when the selection has unsaved marks; does nothing while a transfer runs |
-| `ctrl+c` | Same as `q` outside a dialog; during a transfer it opens the quit dialog |
+| `T` | Next color theme of `juleana`, kept for the next start of both apps |
+| `q` | Leave, offering to save first when the selection has unsaved marks and asking first while a transfer runs |
+| `ctrl+c` | Same as `q`, also while a dialog waits for an answer |
 
 A `[-]` marker means the row itself is not selected but something below it is.
-While a transfer runs, the helper environment is checked or created, or the estimate waits for rsync, only `ctrl+c`
-reacts to the keyboard. Every other dialog answers the arrow keys, `Tab`, `Enter` and `Esc`. The mouse is ignored
-while a dialog is open.
+While a transfer runs, the helper environment is checked or created, or an estimate runs, the screen takes no key of
+its own; `q`, `T` and `ctrl+c` still work. Every other dialog answers the arrow keys, `Tab`, `Enter` and `Esc`. The
+mouse is ignored while a dialog is open.
 A successful transfer's summary ends with any warnings rsync printed.
 
 ### Progress line
@@ -132,15 +133,40 @@ runs, the line shows the running estimate and the selection file.
 
 ### In `juleana`
 
-Tab 8 is created when it is first shown, so starting `juleana` costs nothing when the tab is not
-used. If the production of the Setup tab lies below the local root, or below the remote root of a host
+`S` on the Setup page opens the screen in a window that replaces the visible page; the tabs and the status panel
+stay. The screen is created at the first opening and connects then, so starting `juleana` costs nothing when the
+window is not used. If the production of the Setup page lies below the local root, or below the remote root of a host
 in `hosts.yaml`, its path relative to that root is offered as the production; Connect then checks the
 name against the productions of the chosen host and either opens it or reports that it is not a production on
-that host and opens the list. Changing the production on the Sync tab does not change the Setup tab.
+that host and opens the list. Changing the production in the window does not change the Setup page.
 
-The keys of `juleana` (`1` to `8`, `?`, `T`, `q`) keep their meaning on this tab unless a field is being
-edited or a dialog is open. `q` or `ctrl+c` asks before leaving when the selection has unsaved marks or a
-transfer or an environment creation runs; while one runs the page takes `q`, so use `ctrl+c` then. The dialog lists one line per key that applies:
+The window takes the keys and the mouse. `?`, `T` and `q` keep their meaning unless a field is being edited or a
+dialog waits for an answer; the digits and the tabs do nothing until the window is closed. `Esc` cancels an edit,
+closes a list or a dialog and goes back to the tree; at the tree it closes the window. Closing keeps the selection
+and the settings, and `S` shows them again.
+
+While a sync runs, `Esc` asks what to do with it:
+
+| Key | Action |
+|-----|--------|
+| `b` | Close the window; the sync goes on in the background |
+| `s` | Stop an estimate or a transfer; not offered while the helper environment is checked or created, which report no progress |
+| `c`, `Esc` | Stay in the window |
+
+A stop acts at the next progress reading and ends the `rsync` or `ssh` command of the step. A step without readings,
+such as the dry run of an estimate, runs to its end first. Files already staged are kept and the next run resumes
+from them. Stopping an extraction ends the `ssh` command; the helper on the host can run on for a while.
+
+The status panel shows `sync running` and the bar of the current step on its second line. With the window closed, it
+also names a dialog that waits in the window, such as `sync: Error, S on Setup shows it`, until the window is opened.
+
+Processing and a sync do not run together in one `juleana`, since a sync writes into the production that processing
+reads. `S` does not open the window while processing runs or stops, and `s` does not start processing while a sync
+runs; a warning in the status panel says why. To do both, start a second `juleana` or a `juleana-sync` in another
+terminal. Separate processes do not know of each other, so keep them on different productions.
+
+`q` or `ctrl+c` asks before leaving when the selection has unsaved marks or a transfer or an environment creation
+runs. The dialog lists one line per key that applies:
 
 | Key | Shown when | Action |
 |-----|------------|--------|
@@ -149,7 +175,7 @@ transfer or an environment creation runs; while one runs the page takes `q`, so 
 | `q` | always | Quit now, ending the processing run and its workers, interrupting the transfer or environment creation and discarding the unsaved selection, as far as each applies |
 | `c` | always | Cancel |
 
-`juleana-sync` shows one quit dialog: the "Transfer running" dialog (Quit now or Keep running) when a transfer or an
+`juleana-sync` shows the name and the version in a row above the screen, and one quit dialog: the "Transfer running" dialog (Quit now or Keep running) when a transfer or an
 environment creation runs, otherwise the "Unsaved selection" dialog (Save and quit or Quit without saving), which names
 the file the selection would be saved to. Quit now on the transfer dialog does not ask about the marks. `Esc` closes
 either dialog without quitting and without saving.

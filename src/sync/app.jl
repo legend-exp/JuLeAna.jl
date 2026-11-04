@@ -3,9 +3,10 @@
 """
     SyncApp(page::SyncPage)
 
-The model of `juleana-sync`: one [`SyncPage`](@ref) on the whole screen, its task queue, and the quit
+The model of `juleana-sync`: one [`SyncPage`](@ref) below a row with the name and the version, its task queue, and the quit
 dialog. The page returns `false` for `q` and Ctrl-C; the app asks about a running transfer or environment
 creation first, then about unsaved marks, and otherwise quits. Escape closes either question without quitting.
+`T` switches to the next color theme of `juleana` and keeps it for the next start of both.
 """
 mutable struct SyncApp <: Model
     const page::SyncPage
@@ -22,7 +23,11 @@ should_quit(app::SyncApp) = app.quit
 task_queue(app::SyncApp) = app.queue
 
 function view(app::SyncApp, f::Frame)
-    render_sync(app.page, f.area, f.buffer)
+    rows = split_layout(Layout(Vertical, Constraint[Fixed(1), Fill(1)]), f.area)
+    title = name_version_spans()
+    width = sum(s -> textwidth(s[1]), title)
+    width <= rows[1].width && put_spans!(f.buffer, Tachikoma.right(rows[1]) - width + 1, rows[1].y, Tachikoma.right(rows[1]), title)
+    render_sync(app.page, rows[2], f.buffer)
     app.dialog === nothing || render(app.dialog, f.area, f.buffer)
     return nothing
 end
@@ -66,7 +71,12 @@ function update!(app::SyncApp, e::KeyEvent)
         return app
     end
     sync_key!(app.page, e) && return app
-    (ctrl_c(e) || (e.key == :char && e.char == 'q')) && request_quit!(app)
+    if ctrl_c(e) || (e.key == :char && e.char == 'q')
+        request_quit!(app)
+    elseif e.key == :char && e.char == 'T'
+        # `next_theme!` only logs a failed save, and this screen shows no log.
+        next_theme!().name == load_theme_name() || (app.page.status = "could not save the theme; it applies until juleana-sync quits")
+    end
     return app
 end
 

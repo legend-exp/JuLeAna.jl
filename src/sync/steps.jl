@@ -18,6 +18,16 @@ struct StepProgress
 end
 
 """
+    SyncStopped()
+
+Thrown by the step report of an operation that was asked to stop. It stops the child process a reading came from like
+any failing callback does, and reaches the caller as it is.
+"""
+struct SyncStopped <: Exception end
+
+Base.showerror(io::IO, ::SyncStopped) = print(io, "stopped on request")
+
+"""
     Steps(names, report)
 
 The steps of one operation, in execution order, and the callback that receives a

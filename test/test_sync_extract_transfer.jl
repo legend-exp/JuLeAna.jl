@@ -15,6 +15,12 @@
                                      [ExtractEntry(relative(p, dsp), groups)])
     groups_of(path) = h5open(f -> collect(keys(f)), path, "r")
 
+    @testset "a stop from the step report reaches the caller as a stop" begin
+        p, helper, _ = setup()
+        report = s -> s.step == "extracting on the host" && throw(SyncStopped())
+        @test_throws SyncStopped apply!(h, p, selection(p, ["B00000C"]); helper, report)
+    end
+
     @testset "extracts, pulls, and cleans the staging directory" begin
         p, helper, stage = setup()
         seen = ExtractProgress[]

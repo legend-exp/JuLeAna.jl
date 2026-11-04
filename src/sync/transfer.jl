@@ -674,7 +674,7 @@ function apply!(h::RemoteHost, p::Production, sel::Selection;
                                 length(plan), sum(j -> length(j.groups), plan; init = 0),
                                 pulled.bytes, conflicts, not_in_run)
     catch err
-        (isempty(plan) || err isa InterruptException) && rethrow()
+        (isempty(plan) || err isa InterruptException || err isa SyncStopped) && rethrow()
         throw(ErrorException(sprint(showerror, err) * (in_mirror ?
                                                        "\nthe reduced files are already in the local mirror; the staged copies were kept in $staging" :
                                                        "\nreduced files already staged were kept in $staging; running the same selection again resumes from them")))

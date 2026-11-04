@@ -33,7 +33,7 @@ using Tachikoma: Tachikoma, Model, Frame, Buffer, Rect, Span, KeyEvent, MouseEve
                  TextInput, Gauge, SelectableList, Layout, Constraint, Vertical, Horizontal, Fill, Fixed, Percent, split_layout, render,
                  tstyle, center, word_wrap, BOX_HEAVY, app, set_string!, mouse_left, mouse_press
 import Tachikoma: view, update!, should_quit, task_queue, init!, cleanup!
-using ..JuLeAna: tui_theme, load_theme_name, complete_path
+using ..JuLeAna: tui_theme, load_theme_name, next_theme!, name_version_spans, put_spans!, complete_path
 
 include("remote.jl")
 include("steps.jl")

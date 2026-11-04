@@ -18,12 +18,19 @@
         for key in (KeyEvent('q'), KeyEvent(:ctrl_c), KeyEvent('?'), KeyEvent('T'), KeyEvent('3'))
             @test !sync_key!(page, key)
         end
-        # While a dialog is open the page takes every key but Ctrl-C.
-        page.modal_kind = :estimating
+        # While a dialog waits for an answer the page takes every key but Ctrl-C.
+        page.modal = Tachikoma.Modal(title = "Estimate", message = "", confirm_label = "Sync", cancel_label = "Close")
+        page.modal_kind = :estimate
         for key in (KeyEvent('q'), KeyEvent('?'), KeyEvent('T'), KeyEvent('3'))
             @test sync_key!(page, key)
         end
         @test !sync_key!(page, KeyEvent(:ctrl_c))
+        page.modal, page.modal_kind = nothing, :none
+        # While work runs nothing waits for an answer, so the host keys still reach the host.
+        for kind in (:checking, :estimating, :transfer, :busy), key in (KeyEvent('q'), KeyEvent('?'), KeyEvent('T'), KeyEvent('3'))
+            page.modal_kind = kind
+            @test !sync_key!(page, key)
+        end
         page.modal_kind = :none
         @test sync_key!(page, KeyEvent(:down))
         @test sync_key!(page, KeyEvent(' '))
@@ -31,6 +38,39 @@
         page.modal_kind = :firstn      # the prompt owns the keyboard
         page.input = Tachikoma.TextInput(label = "N: ", text = "")
         @test sync_text_input(page) && sync_key!(page, KeyEvent('3')) && sync_key!(page, KeyEvent('q'))
+    end
+
+    @testset "T switches the theme, keeps it and says when it cannot be kept" begin
+        previous = Tachikoma.theme()
+        depot = mktempdir()
+        pushfirst!(DEPOT_PATH, depot)
+        try
+            app = app_for()
+            Tachikoma.set_theme!(Sync.tui_theme("night-owl"))
+            @test_logs (:info, "Theme: juleana") update!(app, KeyEvent('T'))
+            @test Tachikoma.theme().name == "juleana"
+            @test read(joinpath(depot, "prefs", "JuLeAna", "theme"), String) == "juleana"
+            @test app.page.status == ""
+            # `prefs` is a file, so nothing can be saved below it: the theme still switches.
+            rm(joinpath(depot, "prefs"); recursive = true)
+            write(joinpath(depot, "prefs"), "")
+            @test_logs (:warn, r"Could not save the theme") (:info, r"Theme: ") update!(app, KeyEvent('T'))
+            @test Tachikoma.theme().name != "juleana"
+            @test occursin("could not save the theme", app.page.status)
+        finally
+            popfirst!(DEPOT_PATH)
+            Tachikoma.set_theme!(previous)
+        end
+    end
+
+    @testset "the top row shows the name and the version on the right" begin
+        app = app_for()
+        app.page.panel_open = true
+        tb = draw(app; width = 100, height = 30)
+        row = rstrip(row_text(tb, 1))
+        @test endswith(row, "JuLeAna v$(pkgversion(parentmodule(Sync)))") && textwidth(row) == 100
+        @test occursin("Settings", row_text(tb, 2))         # the page starts below the row
+        @test find_text(draw(app; width = 10, height = 30), "JuLeAna") === nothing
     end
 
     @testset "q quits a clean app and asks about unsaved marks" begin
@@ -72,8 +112,9 @@
     @testset "a running transfer asks before quitting" begin
         app = app_for()
         app.page.modal_kind = :transfer
-        update!(app, KeyEvent('q'))                      # the page takes every key but Ctrl-C while the transfer dialog is up
-        @test !should_quit(app) && app.dialog === nothing
+        update!(app, KeyEvent('q'))
+        @test !should_quit(app) && app.dialog_kind == :busy
+        update!(app, KeyEvent(:escape))
         update!(app, KeyEvent(:ctrl_c))
         @test !should_quit(app) && app.dialog_kind == :busy
         update!(app, KeyEvent(:escape))                  # "Keep running" is the default

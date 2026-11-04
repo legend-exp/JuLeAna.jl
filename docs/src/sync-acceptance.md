@@ -40,8 +40,8 @@ Do not paste per-detector numbers or plots: sizes, file counts and timings only.
       sizes them (about 27 GB each) with one `du -sb` call in the background; record
       how long the sizes take to appear.
 - [ ] Outside a dialog, `ctrl+c` quits like `q` (offering to save first when
-      the selection changed). During a transfer `q` does nothing and `ctrl+c`
-      opens the "Transfer running" dialog: record that Keep running continues the
+      the selection changed). During a transfer `q` and `ctrl+c` open the
+      "Transfer running" dialog: record that Keep running continues the
       transfer, and that Quit now ends the process and what state the mirror is
       left in (partial files under `--partial` are expected).
 - [ ] Walking down `tier/jldsp` → `cal` → `p18` → `r000` shows one row per
@@ -250,16 +250,26 @@ top-level directory recursively.
 - [ ] `Tab` moves between the panel and the tree, `p` collapses the panel, and `c`, `o`, `s`, `e` and `t`
       work from the panel as well as from the tree.
 
-## The Sync tab of `juleana`
+## The Sync window of `juleana`
 
-- [ ] The tab does no work until it is shown; opening it starts the connection.
-- [ ] With a production in the Setup tab below the local root, the Production field starts with its name.
+- [ ] The window does no work until `S` on the Setup page opens it; the first opening starts the connection.
+- [ ] With a production in the Setup page below the local root, the Production field starts with its name.
       With a production that the host does not have, the field is cleared, the progress line says so and the
       list opens.
-- [ ] Choosing another production on the Sync tab leaves the Setup tab on its production.
-- [ ] The digits, `?`, `T` and `q` work on the tab; typing digits into the Jobs field does not switch tabs.
+- [ ] Choosing another production in the window leaves the Setup page on its production.
+- [ ] `?`, `T` and `q` work in the window; the digits and clicks on the tabs do nothing; digits typed into the Jobs field are text.
+- [ ] `Esc` steps back through an edit, a list and the panel, then closes the window; `S` shows the same selection again.
 - [ ] `q` with unsaved marks lists `w` (save) in the dialog; `w` saves and quits.
-- [ ] While a transfer runs, `q` does nothing and `ctrl+c` opens the dialog; its `q` line names the interrupted transfer.
+- [ ] While a transfer runs, `q` and `ctrl+c` open the dialog; its `q` line names the interrupted transfer.
+- [ ] While a transfer runs, `Esc` asks: `c` stays, `b` closes the window and the status panel shows `sync running` and the
+      bar of the step, and `S` shows the transfer again.
+- [ ] With a transfer in the background, `s` on the Setup page does not start processing and the status panel says why.
+- [ ] `s` in the question of `Esc` stops the transfer within seconds: no `rsync` of it remains, the status line says
+      it stopped, and the same selection then runs to its end.
+- [ ] A transfer that ends or fails with the window closed is named in the status panel until `S` shows its dialog.
+- [ ] While processing runs, `S` does not open the window and the status panel says why.
+- [ ] `T` in `juleana-sync` switches the theme and the next start of either app keeps it; the top row of `juleana-sync` shows
+      the name and the version on the right.
 
 ## cslg4 to viper
 

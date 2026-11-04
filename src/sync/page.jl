@@ -96,6 +96,8 @@ mutable struct SyncPage
     suggested::Bool
     active::Vector{String}
     estimated::Union{Nothing,Selection}
+    # asks the running estimate or transfer to stop, see `sync_stop!`
+    stop::Threads.Atomic{Bool}
 end
 
 # Every constructor starts from the same blank state; `root` and `panel_open` are what they differ in.
@@ -104,7 +106,7 @@ function blank_page(host, production, options, settings, root, queue, host_facto
                     # Replaced by rebuild_tree! when there is a production: that needs the page to exist.
                     TreeView(TreeNode("")), queue, false, "", nothing, nothing, :none, nothing, nothing, nothing, nothing, nothing,
                     nothing, :tree, 1, nothing, panel_open, true, Dict{Symbol,String}(), "", Pair{Symbol,Rect}[], Rect(1, 1, 0, 0), false,
-                    nothing, host_factory, nothing, 0.0, false, false, String[], nothing)
+                    nothing, host_factory, nothing, 0.0, false, false, String[], nothing, Threads.Atomic{Bool}(false))
 end
 
 function SyncPage(host::RemoteHost, production::Production, options::Options; queue::TaskQueue = TaskQueue())
@@ -225,6 +227,14 @@ The step callback of an operation started on the page: it queues each [`StepProg
 event, so the page's own state is only touched on its thread.
 """
 report_to(m::SyncPage) = (queue = m.tasks; p -> put!(queue.channel, TaskEvent(Symbol("sync:step"), p)))
+
+# The step callback of an estimate or transfer: `report_to`, and it throws `SyncStopped` at the first reading after `sync_stop!`.
+# Each operation has its own flag, so a stop cannot reach a later operation; the task reads the flag on another thread.
+function stoppable_report!(m::SyncPage)
+    stop = m.stop = Threads.Atomic{Bool}(false)
+    report = report_to(m)
+    return p -> (stop[] && throw(SyncStopped()); report(p))
+end
 
 """
     request_productions!(m::SyncPage)::SyncPage
@@ -490,7 +500,7 @@ function run_estimate!(m::SyncPage, selection::Selection, confirm::Bool)
     production = m.production
     helper = m.options.helper
     jobs = m.options.jobs
-    report = report_to(m)
+    report = stoppable_report!(m)
     m.modal_kind = :estimating
     m.status = "estimating…"
     spawn!(m, :estimate) do
@@ -514,7 +524,7 @@ function start_transfer!(m::SyncPage)
     selection = m.estimated
     selection === nothing && error("start_transfer!: no estimated selection; open the estimate first")
     m.estimated = nothing
-    report = report_to(m)
+    report = stoppable_report!(m)
     m.modal = Modal(title = "Transferring", message = "starting…",
                     confirm_label = "", cancel_label = "")
     m.modal_kind = :transfer
@@ -924,6 +934,8 @@ function render_progress(m::SyncPage, area::Rect, buf::Buffer)
                     max_x = Tachikoma.right(area))
     elseif p === nothing
         render(status_bar(m), area, buf)
+    elseif m.stop[] && sync_running(m)
+        set_string!(buf, area.x, area.y, string("stopping…  ", format_step(p)), tstyle(:warning); max_x = Tachikoma.right(area))
     elseif p.total === nothing
         elapsed = round(Int, time() - m.step_started)
         glyph = Tachikoma.SPINNER_BRAILLE[mod1(floor(Int, 8 * time()), length(Tachikoma.SPINNER_BRAILLE))]
@@ -1388,6 +1400,9 @@ host_key(e::KeyEvent) = ctrl_c(e) || (e.key == :char && (e.char in ('q', '?', 'T
 
 sync_modal_open(m::SyncPage) = m.modal !== nothing || m.modal_kind != :none
 
+# Whether Escape has nothing to close on the page: no dialog, no edit, no list, and the tree has the focus.
+sync_at_rest(m::SyncPage) = !sync_modal_open(m) && m.edit === nothing && !m.picking && m.focus == :tree
+
 """
     shielded(f, page, fallback)
 
@@ -1410,15 +1425,15 @@ end
     sync_key!(page::SyncPage, evt::KeyEvent)::Bool
 
 Handle a key. Returns `false` without acting for Ctrl-C, and for the other keys the host owns (`q`, `?`, `T` and
-digits) unless a text prompt or a dialog is open (a dialog takes every key but Ctrl-C), and `true` for every
-other key it handles; a key it does not know also returns `true`, so no other component reacts to it. An
+digits) unless a text prompt is open or a dialog waits for an answer (it takes every key but Ctrl-C), and `true` for
+every other key it handles; a key it does not know also returns `true`, so no other component reacts to it. An
 exception is shown in the error dialog and the key counts as handled.
 """
 function sync_key!(m::SyncPage, e::KeyEvent)
     ctrl_c(e) && return false
     return shielded(m, true) do
-        # Only while nothing modal is open do the host's keys reach the host; a dialog takes everything but Ctrl-C.
-        (host_key(e) && !sync_text_input(m) && !sync_modal_open(m)) && return false
+        # A dialog that waits for an answer takes everything but Ctrl-C; running work waits for nothing.
+        (host_key(e) && !sync_text_input(m) && (!sync_modal_open(m) || sync_running(m))) && return false
         key!(m, e)
         return true
     end
@@ -1476,6 +1491,36 @@ end
 sync_dirty(m::SyncPage) = m.dirty
 sync_busy(m::SyncPage) = m.modal_kind in (:transfer, :busy)
 
+"""
+    sync_running(page::SyncPage)::Bool
+
+Whether the page runs work that holds it until it ends: the check of the helper environment, an estimate, a transfer or
+the creation of the environment.
+"""
+sync_running(m::SyncPage) = m.modal_kind in (:checking, :estimating, :transfer, :busy)
+
+"""
+    sync_stoppable(page::SyncPage)::Bool
+
+Whether [`sync_stop!`](@ref) can stop the running work: an estimate or a transfer, not yet asked to stop. The other work
+reports no progress, which is when a stop acts.
+"""
+sync_stoppable(m::SyncPage) = m.modal_kind in (:estimating, :transfer) && !m.stop[]
+
+"""
+    sync_stop!(page::SyncPage)::SyncPage
+
+Ask the running estimate or transfer to stop. It stops at its next progress reading: the running child process is ended and
+the page returns to rest when the result of the task arrives, with the outcome in the status line. Files already staged are
+kept, as after a failure. A step without readings, such as the dry run of an estimate, runs to its end first.
+"""
+function sync_stop!(m::SyncPage)
+    m.stop[] = true
+    m.status = "stopping…"
+    m.modal === nothing || (m.modal = Modal(title = m.modal.title, message = "stopping…", confirm_label = "", cancel_label = ""))
+    return m
+end
+
 function task!(m::SyncPage, id::AbstractString, e::TaskEvent)
     if startswith(id, "listing:")
         path = chopprefix(id, "listing:")
@@ -1527,6 +1572,22 @@ function task!(m::SyncPage, id::AbstractString, e::TaskEvent)
             m.status = "the files of $(node.parent.label) have no per-detector groups"
         end
         return rebuild_tree!(m)
+    end
+
+    # An estimate that ends before a stop can act is stopped as well: the question it would open was declined.
+    if e.value isa SyncStopped || (id == "estimate" && m.stop[] && !(e.value isa Exception))
+        m.step = nothing
+        m.modal, m.modal_kind = nothing, :none
+        m.continuation = nothing
+        m.estimated = nothing
+        if id == "transfer"
+            refresh_local_state!(m)
+            rebuild_tree!(m)
+            m.status = "transfer stopped; the next run resumes from the staged files"
+        else
+            m.status = "estimate stopped"
+        end
+        return m
     end
 
     if e.value isa Exception
