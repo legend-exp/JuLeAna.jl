@@ -4,7 +4,7 @@
 
 Optimize the energy filter rise time and flat-top time per detector and `cal` partition for all partitions that contain `period`, using all analysis runs of the partition (HPGe detectors `geds`).
 
-The method is the same as in `process_filter_optimization_cal`. The waveforms of the peaks are read from the `jlpks` tier of all runs of the partition (`n_evts` events per run, drawn randomly if `select_random` is set) and at most `max_wvfs` of them are used, drawn with an RNG seeded from the detector and the runs of the partition.
+The method is the same as in `process_filter_optimization_cal`. The waveforms are read from the `jlpks` tier of all runs of the partition (`n_evts` events per run, random ones if `select_random` is set) and limited to `max_wvfs` events per peak.
 
 # Inputs
 - `jlpks` tier of the `cal` runs of each partition, for each detector.
@@ -14,9 +14,9 @@ The method is the same as in `process_filter_optimization_cal`. The waveforms of
 - `l200.par.ppars.fltopt[det, part]` (existing results, if present).
 
 # Outputs
-- `l200.par.ppars.fltopt[det, part]`: per filter type the objective, the optimal rise time and flat-top time, FWHM and W90 at the optimum and the legacy optimum, with validity entries for the partition; the validity of all partitions of the period is written to `l200.par.ppars.fltopt`.
-- Per detector and filter type, the tables `fltopt_tables_<filter_type>.lh5` next to the plots, always written.
-- Per detector and filter type, the plots `noise_sweep_<filter_type>`, `ft_scan_<filter_type>`, `rtft_landscape_<filter_type>`, the crosscheck figures (`ctc_*`, `peaks_*`, `crosscheck_*`, `residuals_*`) and `example_wvfs_<filter_type>`, saved only at the debug plot level.
+- `l200.par.ppars.fltopt[det, part]`: per filter type the objective, the optimal rise time and flat-top time, FWHM and W90 at the optimum and the legacy optimum, and validity entries for the partition. The validity of all partitions of the period is written to `l200.par.ppars.fltopt`.
+- Per detector and filter type, the tables `fltopt_tables_<filter_type>.lh5` next to the plots.
+- Per detector and filter type, the plots `noise_sweep_*`, `ft_scan_*`, `rtft_landscape_*`, `ctc_*`, `peaks_*`, `crosscheck_*`, `residuals_*` and `example_wvfs_*`, saved at the debug plot level.
 - Partition report `:filter_optimization` (Main Log, Metadata, Results table with one row per detector, partition and filter type).
 
 # Keywords
@@ -49,14 +49,10 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
         @info "Only process detectors not in pars_db"
     end
 
-    # create log line Tuple
     log_nt = NamedTuple{(:Detector, :usability, :psd_usability, :Partition, :Status, Symbol("Filter Type"), :Objective,
                          Symbol("Rise Time"), Symbol("Flat-Top Time"), :FWHM, :W90, Symbol("Legacy RT"), Symbol("Legacy FT"),
                          :Converged, Symbol("Crosscheck Warning"), :Error)}
 
-    # get worker pool
-
-    # flush stdout
     flush(stdout)
 
     function det_filter_optimization(chinfo_det::NamedTuple)
@@ -93,7 +89,6 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
         optimization_config_det = merge(optimization_config.p_default, get(optimization_config.p, det, PropDict()))
         @debug "Loaded optimization config: $(lstring(optimization_config_det))"
 
-        # extract config
         n_evts = optimization_config_det.n_evts
         max_wvfs = optimization_config_det.max_wvfs
         select_random = optimization_config_det.select_random
@@ -108,7 +103,6 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
             for filter_type in e_filter
                 log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
                                    process_skipped, filter_type, fill("-", 9)..., "Only first periods --> skipped."))
-                # add results to dict
                 log_info_dict[filter_type] = log_info
                 processed_dict[filter_type] = false
             end
@@ -118,11 +112,14 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
         if !reprocess && !redo_detector(det) && haskey(pars_db_det, det)
             @debug "Detector $(det) already processed, check missing filters"
             for filter_type in e_filter
-                if haskey(pars_db_det[det], filter_type) && !(all(k -> haskey(pars_db_det[det][filter_type], k), (:objective, :w90, :ct_spread, :joint_search, :legacy)) && haskey(pars_db_det[det][filter_type].legacy, :rt) && haskey(pars_db_det[det][filter_type].legacy, :ft))
+                haskey(pars_db_det[det], filter_type) || continue
+                pars_flt = pars_db_det[det][filter_type]
+                is_current = all(k -> haskey(pars_flt, k), (:objective, :w90, :ct_spread, :joint_search, :legacy)) &&
+                             haskey(pars_flt.legacy, :rt) && haskey(pars_flt.legacy, :ft)
+                if !is_current
                     @info "Detector $det, filter $filter_type: pars from the previous method, re-optimizing"
-                elseif haskey(pars_db_det[det], filter_type)
+                else
                     @debug "Filter $filter_type already processed, skip"
-                    pars_flt = pars_db_det[det][filter_type]
                     log_info_dict[filter_type] = log_nt((det, detector_status(chinfo_det.usability),
                                                          detector_status(chinfo_det.psd_usability), part, ProcessStatus(1), filter_type,
                                                          pars_flt.objective, pars_flt.rt, pars_flt.ft, pars_flt.fwhm, pars_flt.w90,
@@ -133,7 +130,6 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
             end
         end
 
-        # check if all filters are already processed
         if length(keys(processed_dict)) == length(e_filter)
             @debug "All filters already processed, skip detector"
             return (processed = processed_dict, log = log_info_dict, validity = validity_det)
@@ -142,7 +138,6 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
         haskey(pars_tau, det) && haskey(pars_tau[det], :τ) || throw(ErrorException("Detector $det has no decay time τ in the pz pars of partition $part"))
 
         @debug "Loading peak data from $(part), select $(ifelse(select_random, "randomly ", ""))$n_evts events from each run"
-        # the steps of loading, preparation and each filter are named in run_filter_optimization_channel
         results = run_filter_optimization_channel(peakname -> load_peak_waveforms(l200, partinfo_det, det, peakname, max_wvfs; n_evts,
                                                                                          select_random),
                                                   filter(!in(keys(processed_dict)), e_filter), dsp_config_det, optimization_config_det,
@@ -173,11 +168,10 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
             end
         end
 
-        # generate detector result
         result_det = (result = result_rt_ft_dict, processed = processed_dict, log = log_info_dict, validity = validity_det)
         result_flt_det = Dict{NamedTuple,NamedTuple}(chinfo_det => result_det)
 
-        # a re-optimized filter replaces its previous entry, so fields of an earlier method do not survive the merge
+        # A re-optimized filter replaces its previous entry so that no fields of an earlier method survive the merge.
         for filter_type in keys(result_rt_ft_dict)
             if haskey(pars_db_det, det) && haskey(pars_db_det[det], filter_type)
                 @info "Detector $det, filter $filter_type: replacing the previous pars entry"
@@ -190,14 +184,11 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
             write_validity(l200.par.ppars.fltopt[det], filekey_det, part)
         end
 
-        # return results
         return result_det
     end
 
-    # get start time
     start_time = now()
 
-    # execute in parallel
     result_flt = parallel(det_filter_optimization, chinfo_unfolded, log_nt; timeout = timeout, retry = false,
                           process_name = "$period-p_process_filter_optimization_cal")
     @info "Finished filter optimization"
@@ -222,7 +213,6 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
     write_report(get_preportfilename(l200, filekey, :filter_optimization), report)
     @info report
 
-    # flush stdout
     flush(stdout)
 
     return any(x -> get(last(x), :skipped, false), values(result_flt))

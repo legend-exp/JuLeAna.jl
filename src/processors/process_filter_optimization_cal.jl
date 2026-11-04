@@ -4,7 +4,7 @@
 
 Optimize the energy filter rise time and flat-top time for all processable HPGe detectors (`geds`) of the `cal` run.
 
-For each filter type listed under `e_filter` in the optimization config, `optimize_channel_filter` chooses the rise time from a baseline noise sweep (minimal ENC at a fixed flat-top time) and the flat-top time from a sweep over full-energy-peak events. With `joint_search` enabled, a search over rise time and flat-top time on the sampling lattice, starting from that point, gives the optimum of the configured `objective`. The optimum is cross-checked against the legacy optimum (minimal FWHM at the ENC rise time) by the FEP, DEP and SEP peak fits and the residuals of the FEP events against qdrift. Waveforms of the peaks named by `peakname` (and the DEP and SEP for the crosscheck) are taken from the `jlpks` tier. Quality cuts (`qc` expression of the optimization config) are applied to the waveforms before the sweeps, and at most `max_wvfs` waveforms of each peak are used, drawn with an RNG seeded from the detector and the filekey. Filter types that already have results from this method are skipped unless `reprocess` is set; results of an older method are optimized again.
+For each filter type listed under `e_filter` in the optimization config, `optimize_channel_filter` chooses the rise time from a baseline noise sweep and the flat-top time from a sweep over full-energy-peak events. With `joint_search` enabled, a lattice search over both times gives the optimum of the configured `objective`. The optimum is crosschecked against the legacy optimum (minimal FWHM at the ENC rise time) with FEP, DEP and SEP peak fits and the FEP residuals against qdrift. Waveforms come from the `jlpks` tier, are reduced by the `qc` expression of the optimization config and limited to `max_wvfs` events per peak. Filter types that already have results from this method are skipped unless `reprocess` is set; results of an older method are optimized again.
 
 # Inputs
 - `jlpks` tier of the start `cal` filekey of the run, for each detector (peak waveforms named by `peakname`).
@@ -14,9 +14,9 @@ For each filter type listed under `e_filter` in the optimization config, `optimi
 - `l200.par.rpars.fltopt[period, run]` (existing results, unless `reprocess` is set).
 
 # Outputs
-- `l200.par.rpars.fltopt[period, run]`: per detector and filter type the objective, the optimal rise time and flat-top time, FWHM and W90 at the optimum and the legacy optimum, together with the validity entry for the run.
-- Per detector and filter type, the tables `fltopt_tables_<filter_type>.lh5` next to the plots, always written.
-- Per detector and filter type, the plots `noise_sweep_<filter_type>`, `ft_scan_<filter_type>`, `rtft_landscape_<filter_type>`, the crosscheck figures (`ctc_*`, `peaks_*`, `crosscheck_*`, `residuals_*`) and `example_wvfs_<filter_type>`, saved only at the debug plot level.
+- `l200.par.rpars.fltopt[period, run]`: per detector and filter type the objective, the optimal rise time and flat-top time, FWHM and W90 at the optimum and the legacy optimum, and the validity entry for the run.
+- Per detector and filter type, the tables `fltopt_tables_<filter_type>.lh5` next to the plots.
+- Per detector and filter type, the plots `noise_sweep_*`, `ft_scan_*`, `rtft_landscape_*`, `ctc_*`, `peaks_*`, `crosscheck_*`, `residuals_*` and `example_wvfs_*`, saved at the debug plot level.
 - Run report `:filter_optimization` (Main Log, Metadata, Results table with one row per detector and filter type).
 
 # Keywords
@@ -59,14 +59,10 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
 
     f_evaluate_qc = load_qc_evaluator(l200, filekey)
 
-    # create log line Tuple
     log_nt = NamedTuple{(:Detector, :usability, :psd_usability, :Status, Symbol("Filter Type"), :Objective, Symbol("Rise Time"),
                          Symbol("Flat-Top Time"), :FWHM, :W90, Symbol("Legacy RT"), Symbol("Legacy FT"), :Converged,
                          Symbol("Crosscheck Warning"), :Error)}
 
-    # get worker pool
-
-    # flush stdout
     flush(stdout)
 
     function det_filter_optimization(chinfo_det::NamedTuple)
@@ -88,11 +84,14 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
         if !reprocess && !redo_detector(det) && haskey(pars_db, det)
             @debug "Detector $(det) already processed, check missing filters"
             for filter_type in e_filter
-                if haskey(pars_db[det], filter_type) && !(all(k -> haskey(pars_db[det][filter_type], k), (:objective, :w90, :ct_spread, :joint_search, :legacy)) && haskey(pars_db[det][filter_type].legacy, :rt) && haskey(pars_db[det][filter_type].legacy, :ft))
+                haskey(pars_db[det], filter_type) || continue
+                pars_flt = pars_db[det][filter_type]
+                is_current = all(k -> haskey(pars_flt, k), (:objective, :w90, :ct_spread, :joint_search, :legacy)) &&
+                             haskey(pars_flt.legacy, :rt) && haskey(pars_flt.legacy, :ft)
+                if !is_current
                     @info "Detector $det, filter $filter_type: pars from the previous method, re-optimizing"
-                elseif haskey(pars_db[det], filter_type)
+                else
                     @debug "Filter $filter_type already processed, skip"
-                    pars_flt = pars_db[det][filter_type]
                     log_info_dict[filter_type] = log_nt((det, detector_status(chinfo_det.usability),
                                                          detector_status(chinfo_det.psd_usability), ProcessStatus(1), filter_type,
                                                          pars_flt.objective, pars_flt.rt, pars_flt.ft, pars_flt.fwhm, pars_flt.w90,
@@ -103,7 +102,6 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
             end
         end
 
-        # check if all filters are already processed
         if length(keys(processed_dict)) == length(e_filter)
             @debug "All filters already processed, skip detector"
             return (processed = processed_dict, log = log_info_dict)
@@ -118,7 +116,6 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
 
         haskey(pars_tau, det) && haskey(pars_tau[det], :τ) || throw(ErrorException("Detector $det has no decay time τ in the pz pars of $period-$run"))
 
-        # the steps of loading, preparation and each filter are named in run_filter_optimization_channel
         results = run_filter_optimization_channel(peakname -> load_peak_waveforms(l200, filekey, det, peakname,
                                                                                   optimization_config_det.max_wvfs),
                                                   filter(!in(keys(processed_dict)), e_filter), dsp_config_det, optimization_config_det,
@@ -147,20 +144,17 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
             end
         end
 
-        # return results
         return (result = result_rt_ft_dict, log = log_info_dict, processed = processed_dict)
     end
 
-    # get start time
     start_time = now()
 
-    # execute in parallel
     result_flt = parallel(det_filter_optimization, chinfo, log_nt; timeout = timeout, retry = false,
                           process_name = "$period-$run-process_filter_optimization_cal")
 
     @info "Finished filter optimization"
 
-    # a re-optimized filter replaces its previous entry, so fields of an earlier method do not survive the merge
+    # A re-optimized filter replaces its previous entry so that no fields of an earlier method survive the merge.
     for (chinfo_det, res_det) in result_flt
         haskey(res_det, :result) || continue
         for filter_type in keys(res_det.result)
@@ -193,7 +187,6 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
     write_report(get_rreportfilename(l200, filekey, :filter_optimization), report)
     @info report
 
-    # flush stdout
     return flush(stdout)
 end
 
