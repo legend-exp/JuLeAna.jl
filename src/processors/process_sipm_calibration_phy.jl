@@ -11,9 +11,9 @@ polynomial calibration curve is fitted to the peak positions. Control plots are 
 step.
 
 # Inputs
-- `dsp` tier (`DataTier(:jldsp)`) of the `phy` data of the run, per SiPM.
-- `jlaux` tier fields `timestamp` and `aux_trig` of the pulser channel named by `dataprod_config(l200).qc(filekey).pulser.puls_detector`;
-  events within `puls_ts_window` of a pulser trigger are excluded.
+- `jldsp` tier of the `phy` data of the run, per SiPM and energy type its column, for the events that pass its `qc` expression.
+- `jlaux` tier field `aux_trig_intime` of the pulser channel named by `dataprod_config(l200).qc(filekey).pulser.puls_detector`;
+  the in-time pulser events are excluded row by row (the `phy` tiers are event aligned).
 - `dataprod_config(l200).sipm(filekey).calibration`: the `default` section merged with the
   per-detector section. It sets `energy_types` (each with `qc`, `simple.kwargs`, `fit.min_pe`,
   `fit.max_pe`, `fit.kwargs`) and `pol_order`.
@@ -92,8 +92,6 @@ function process_sipm_calibration_phy(processing_config, l200::LegendData, perio
 
         calibration_config_det = merge(calibration_config.default, get(calibration_config, det, PropDict()))
 
-        pulser_config_det = merge(qc_config.pulser.default, get(qc_config.pulser, det, PropDict()))
-
         energy_types = Symbol.(collect(keys(calibration_config_det.energy_types)))
 
         if !reprocess && !redo_detector(det) && haskey(pars_db, det)
@@ -113,17 +111,10 @@ function process_sipm_calibration_phy(processing_config, l200::LegendData, perio
         # get data
         data_dsp = @process_step "data loader" begin
             @debug "Load DSP data"
-            # load DSP data and apply QC cut
-            read_ldata(l200, DataTier(:jldsp), :phy, period, run, det)
-        end
-
-        is_pulser = @process_step "pulser tag" begin
-            @debug "Get Pulser tags"
-            data_pulser = read_ldata((:timestamp, :aux_trig), l200, DataTier(:jlaux), :phy, period, run, det_puls)
-            is_pulser = flag_coincidences(data_dsp.timestamp, data_pulser.timestamp[data_pulser.aux_trig],
-                                          ts_window = pulser_config_det.puls_ts_window)
-            @debug "Found $(count(is_pulser)) pulser events"
-            is_pulser
+            # the energy types and the columns of their QC expressions, without in-time pulser events (phy tiers are event aligned)
+            qc_funcs = [ljl_propfunc(calibration_config_det.energy_types[e_type].qc) for e_type in energy_types]
+            read_ldata(Tuple(union(energy_types, _input_columns(qc_funcs))), l200, DataTier(:jldsp), :phy, period, run, det;
+                       filterby = :jlaux => ljl_propfunc("!$det_puls.aux_trig_intime"))
         end
 
         @debug_progress "Detector: $det" for e_type in energy_types
@@ -133,21 +124,13 @@ function process_sipm_calibration_phy(processing_config, l200::LegendData, perio
 
             e_type_config = calibration_config_det.energy_types[e_type]
 
-            # get data after per-energy-type QC
-            data_det_after_qc = @process_step "$e_type data loader" begin
-                @debug "Load DSP data for $e_type"
-                data_dsp[findall(ljl_propfunc(e_type_config.qc).(data_dsp) .&& .!is_pulser)]
+            # the amplitudes of the events that pass the QC of the energy type
+            amplitudes = @process_step "$e_type data selection" begin
+                getproperty(data_dsp, e_type)[findall(ljl_propfunc(e_type_config.qc).(data_dsp))]
             end
 
             try
                 @debug "Calibrate $e_type"
-
-                # get data
-                e_uncal = @process_step "$e_type data extraction" begin
-                    @debug "Get $e_type data"
-                    # open hit data file
-                    filter(isfinite, reduce(vcat, getproperty(data_det_after_qc, e_type)))
-                end
 
                 # get uncalibrated energy function
                 plot_one_pe_search_range() = begin
@@ -156,12 +139,12 @@ function process_sipm_calibration_phy(processing_config, l200::LegendData, perio
                     fig = Makie.Figure()
                     ax = Makie.Axis(fig[1, 1]; title = get_plottitle(filekey, det, "Uncalibrated PE"; additional_type = string(e_type)),
                                     xlabel = "Peak Amplitudes (ADC)", ylabel = "Counts")
-                    Makie.stephist!(ax, filter(x -> lo <= x <= hi, e_uncal); bins = range(lo, hi; length = 201))
+                    Makie.stephist!(ax, filter(x -> lo <= x <= hi, flatview(amplitudes)); bins = range(lo, hi; length = 201))
                     save_plot(fig, l200, filekey, det, Symbol("error_simple_calibration_$(e_type)"))
                 end
                 result_simple, report_simple = @process_step "$e_type simple calibration" on_error = plot_one_pe_search_range begin
                     @debug "Get $e_type simple calibration"
-                    sipm_simple_calibration(getproperty(data_det_after_qc, e_type); NamedTuple(e_type_config.simple.kwargs)...)
+                    sipm_simple_calibration(amplitudes; NamedTuple(e_type_config.simple.kwargs)...)
                 end
 
                 # save plots for simple calibration for control
@@ -173,7 +156,7 @@ function process_sipm_calibration_phy(processing_config, l200::LegendData, perio
                 @debug_plot @process_step "$e_type PE uncalibrated plot" begin
                     # all trigger amplitudes, with the noise and trigger cuts of the simple calibration
                     p = LegendMakie.lplot(report_simple, cal = false,
-                                          h = fit(Histogram, e_uncal,
+                                          h = fit(Histogram, filter(isfinite, flatview(amplitudes)),
                                                   e_type_config.simple.kwargs.initial_min_amp:0.1:e_type_config.simple.kwargs.initial_max_amp),
                                           title = get_plottitle(filekey, det, "All Triggers"; additional_type = string(e_type)))
                     save_plot(p, l200, filekey, det, Symbol("pe_uncalibrated_$(e_type)"))

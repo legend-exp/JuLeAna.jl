@@ -19,6 +19,7 @@ logger installed on the head and all workers.
 module JuLeAna
 
 using ArgParse: @add_arg_table!, ArgParseSettings, parse_args
+using ArraysOfArrays: flatview
 using Base64: base64encode
 import CairoMakie
 # Loading CommonMark activates Tachikoma's Markdown extension, which the report viewer renders with.
@@ -31,16 +32,15 @@ using LaTeXStrings: LaTeXStrings, @L_str
 using LegendDataManagement: LegendDataManagement, DataCategory, DataPeriod, DataRun, DataTier, DetectorId, FileKey, LegendData,
                             ProcessStatus, bad_filekeys, channelinfo, data_path, dataprod_config, get_aux_cal_propfunc,
                             get_aux_evt_detsel_propfunc, get_dsp_pars, get_exposure, get_ged_evt_kwargs, get_values, is_analysis_run,
-                            is_lrun,
-                            ljl_propfunc, lreport, lreport!, lstring, partitioninfo, process_failed, process_succeeded, process_warning,
-                            read_ldata, readlprops, runinfo, start_filekey, writelprops, writelreport
+                            is_lrun, ljl_propfunc, lreport, lreport!, lstring, partitioninfo, process_failed, process_succeeded,
+                            process_warning, read_ldata, readlprops, runinfo, start_filekey, writelprops, writelreport
 using LegendDataManagement.LDMUtils: LDMUtils, create_logtbl, create_metadatatbl, create_pars, create_validity, get_partitionvalidity,
                                      get_plottitle, get_preportfilename, get_rreportfilename, savelfig, writevalidity
 using LegendDataTypes: LegendDataTypes, decode_data, fast_flatten
 using LegendDSP: LegendDSP, DSPConfig, dsp_decay_times, dsp_icpc_compressed, dsp_pmts, dsp_qc_flt_optimization_compressed,
                  dsp_qdrift_flt_optimization, dsp_sipm_compressed
-using LegendEventAnalysis: LegendEventAnalysis, TimeEvolution, calibrate_all, calibrate_ged_detector_data, flag_coincidences, rate,
-                           relative, smooth
+using LegendEventAnalysis: LegendEventAnalysis, TimeEvolution, calibrate_all, flag_coincidences, rate, relative,
+                           smooth
 using LegendHDF5IO: LegendHDF5IO, delete_entry!, lh5open
 import LegendMakie
 using LegendSpecFits: LegendSpecFits, autocal_energy, ctc_energy, cut_single_peak, fit_aoe_compton, fit_aoe_compton_combined,
@@ -50,6 +50,7 @@ using LegendSpecFits: LegendSpecFits, autocal_energy, ctc_energy, cut_single_pea
                       lq_ctc_correction, lq_norm, peakhists_gamma, set_timelimit, simple_calibration, sipm_simple_calibration
 using Base.ScopedValues: ScopedValue, with
 using Distributed: Distributed, AbstractWorkerPool, RemoteException, myid, nprocs, nworkers, procs, remotecall_fetch, workers
+using Distributions: Distributions, Hypergeometric, Normal, ccdf, cdf
 using Logging: Logging, AbstractLogger, LogLevel, global_logger
 using Serialization: serialize
 using LoggingExtras: ActiveFilteredLogger, FormatLogger, TeeLogger
@@ -73,7 +74,7 @@ import ThreadPinning
 import TOML
 using TimerOutputs: TimerOutputs, @timeit, TimerOutput
 using TypedTables: TypedTables, Table, columnnames, columns
-using Unitful: Unitful, @u_str, uconvert, unit, ustrip
+using Unitful: Unitful, @u_str, uconvert, unit, uparse, ustrip
 import UnitfulAtomic
 using UUIDs: UUID, uuid4
 
