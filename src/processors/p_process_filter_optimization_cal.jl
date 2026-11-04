@@ -6,7 +6,7 @@ Optimize the energy filter rise time and flat-top time per detector and `cal` pa
 
 The method is the same as in `process_filter_optimization_cal`: for each filter type listed under `e_filter`, the rise time is chosen from a baseline noise sweep and the flat-top time from a sweep over full-energy-peak events. The waveforms of the peak named by `peakname` are read from the `jlpks` tier of all runs of the partition (`n_evts` events per run, drawn randomly if `select_random` is set) and at most `max_wvfs` of them are used after the quality cuts (`qc_mad` and `qc` expression, as in `process_filter_optimization_cal`).
 
-If `e_filter` lists `dplms`, a DPLMS filter is synthesized on the same waveforms for every point of LegendDSP's `dplms_default_grid`, with the flat-top widenings `ff` of the config range `e_filter.dplms.ff` (start, stop, step; whole multiples of the sample time) if given and multiples of the rise time otherwise. The grid points that share all weights (`nm`, `za`, `ft`, `ct`, `zo`) form a family; for each family the flat-top widening `ff` with the smallest FEP FWHM is selected with the same fit as the flat-top time of the other filters, and the family with the smallest FWHM is kept. The result stores the FWHM and `ff` of every family and its FEP FWHM against `ff` (`scan`) under `families`.
+If `e_filter` lists `dplms`, a DPLMS filter is synthesized on the same waveforms for every point of LegendDSP's `dplms_default_grid`, with the flat-top widenings `ff` of the config range `e_filter.dplms.ff` (start, stop, step; whole multiples of the sample time) if given and multiples of the rise time otherwise. The grid points that share all weights (`nm`, `za`, `ft`, `ct`, `zo`) form a family; for each family the FEP FWHM is fitted at every `ff` with the same fit as for the flat-top time of the other filters, and the `ff` with the smallest FWHM is selected (`ft_fwhm_tol` does not apply: the DPLMS filter length does not depend on `ff`); the family with the smallest FWHM is kept. The result stores the FWHM and `ff` of every family and its FEP FWHM against `ff` (`scan`) under `families`.
 
 # Inputs
 - `jlpks` tier of the `cal` runs of each partition, for each detector.
@@ -306,10 +306,15 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
                                     optimization_config_flt.max_e_fep, optimization_config_flt.rel_cut_fit_e_fep,
                                     optimization_config_det.apply_ctc; n_bins = optimization_config_flt.nbins_e_fep,
                                     peak = optimization_config_det.peak,
-                                    window = (optimization_config_det.left_window_size, optimization_config_det.right_window_size),
-                                    ft_fwhm_tol = optimization_config_det.ft_fwhm_tol)
+                                    window = (optimization_config_det.left_window_size, optimization_config_det.right_window_size))
                     end
-                    (i = idxs[only(findall(≈(mvalue(result_ft.ft)), e_grid_ff))], result_ft, report_ft)
+                    # the ff of the smallest FWHM in the scan, the shortest on a tie: the filter length does not
+                    # depend on ff, so the preference of `ft_fwhm_tol` for shorter flat tops does not apply
+                    all(isfinite ∘ mvalue, report_ft.fwhm) || throw(ErrorException("non-finite FWHM in the DPLMS flat-top widening scan"))
+                    k = argmin(mvalue.(report_ft.fwhm))
+                    result_ft = (ft = Measurements.measurement(report_ft.e_grid_ft[k], step(e_grid_ff)), min_fwhm = report_ft.fwhm[k])
+                    report_ft = merge(report_ft, result_ft)
+                    (i = idxs[only(findall(≈(report_ft.e_grid_ft[k]), e_grid_ff))], result_ft, report_ft)
                 end
                 (; i, result_ft, report_ft) = argmin(f -> mvalue(f.result_ft.min_fwhm), fits)
                 w = res.grid[i]
