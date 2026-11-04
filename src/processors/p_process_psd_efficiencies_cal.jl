@@ -139,10 +139,9 @@ function p_process_psd_efficiencies_cal(processing_config, l200::LegendData, per
             if !all([haskey(processed_dict, psd_classifier) for psd_classifier in psd_classifiers])
                 aoe_types = unique([Symbol(chopsuffix(string(c[1]), "_classifier")) for c in values(psd_classifiers_dict)])
                 lq_types = unique([Symbol(chopsuffix(string(c[3]), "_classifier")) for c in values(psd_classifiers_dict)])
-                # The calibration and cut parameters of the event tier, without its settings that `read_hit_cal` does not take.
-                evt_kwargs = Base.structdiff(get_ged_evt_kwargs(l200, filekey_det), NamedTuple{(:psd_pars_type, :keep_detdata)})
+                # The calibration and cut parameters of the event tier.
                 hit_cal = read_hit_cal(l200, det, zip(partinfo_det.period, partinfo_det.run), [e_type], String[], aoe_types, lq_types;
-                                       cuts = true, evt_kwargs...)
+                                       cuts = true, get_ged_evt_kwargs(l200, filekey_det)...)
                 collect(getproperty(hit_cal, e_type)), hit_cal
             else
                 nothing, nothing

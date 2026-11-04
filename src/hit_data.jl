@@ -2,7 +2,7 @@
 
 """
     read_hit_cal(l200::LegendData, det, runs, e_types::AbstractVector{Symbol}, expressions = String[], aoe_types = Symbol[],
-                 lq_types = Symbol[]; cuts::Bool = false, <stage>_pars_type::Symbol, <stage>_pars_cat::Symbol)
+                 lq_types = Symbol[]; cuts::Bool = false, <stage>_pars_type::Symbol, <stage>_pars_cat::Symbol, kwargs...)
 
 Read the single-pulse, non-pulser events (`jlqcs` tier) of the `cal` data of detector `det`
 for each `(period, run)` in `runs` and return them as one `Table`.
@@ -18,13 +18,15 @@ and with `cuts` its cut flag (`<classifier>_low_cut` for A/E, `<classifier>_high
 The calibration functions and cut flags are those of `calibrate_ged_detector_data`, from the
 parameters of each run that its keywords `<stage>_pars_type` and `<stage>_pars_cat` select for the
 stages `e_cal` (default `rpars.ecal`), `aoe_cal`, `aoe_cut` (`ppars.aoe`), `lq_cal` and `lq_cut`
-(`ppars.lq`). Only the `jldsp` columns the functions need are read.
+(`ppars.lq`). Only the `jldsp` columns the functions need are read. Other keywords of
+`calibrate_ged_detector_data` (e.g. from `get_ged_evt_kwargs`) are ignored, so a misspelled
+parameter keyword falls back to its default.
 """
 function read_hit_cal(l200::LegendData, det, runs, e_types::AbstractVector{Symbol}, expressions = String[], aoe_types = Symbol[],
                       lq_types = Symbol[]; cuts::Bool = false, e_cal_pars_type::Symbol = :rpars, e_cal_pars_cat::Symbol = :ecal,
                       aoe_cal_pars_type::Symbol = :ppars, aoe_cal_pars_cat::Symbol = :aoe, aoe_cut_pars_type::Symbol = :ppars,
                       aoe_cut_pars_cat::Symbol = :aoe, lq_cal_pars_type::Symbol = :ppars, lq_cal_pars_cat::Symbol = :lq,
-                      lq_cut_pars_type::Symbol = :ppars, lq_cut_pars_cat::Symbol = :lq)
+                      lq_cut_pars_type::Symbol = :ppars, lq_cut_pars_cat::Symbol = :lq, kwargs...)
     columns_out = union([:timestamp], _input_columns(ljl_propfunc.(expressions)))
     detector = DetectorId(det)
     aoe_classifiers, lq_classifiers = Symbol.(string.(aoe_types) .* "_classifier"), Symbol.(string.(lq_types) .* "_classifier")
