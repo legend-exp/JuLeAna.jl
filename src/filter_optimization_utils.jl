@@ -18,15 +18,15 @@ const SEP_PEAKNAME = :Tl208SEP
 Warning text for a new optimum that degrades the reconstruction relative to the legacy optimum,
 `""` if nothing is flagged. Both arguments carry `shifts`, a NamedTuple of `(shift, σ)` per
 crosscheck peak (the fitted position relative to its FEP-calibrated expectation, and the peak
-width), and `slow_mean_residual`, the mean FEP residual in units of σ of the slowest five
-percent of events by `t90 - t10`. Both also carry `rows`, the crosscheck table rows with `peak` and
+width), and `slow_mean_residual`, the mean FEP residual in units of σ of the five
+percent of events with the highest qdrift. Both also carry `rows`, the crosscheck table rows with `peak` and
 `status`; every peak whose status is not `"ok"` is reported with the optima at which its fit failed.
-Without a FEP fit the other shifts and the slow-pulse residual are scaled with nothing and are
+Without a FEP fit the other shifts and the high-qdrift residual are scaled with nothing and are
 not compared.
 
 Only degradations are flagged: a peak when `abs(new shift) > abs(legacy shift) +
 max_shift_sigma * σ` with σ at the new optimum, or when it is missing at one of the two optima;
-the slow-pulse class when `abs(new residual) > abs(legacy residual) + max_shift_sigma` (in units
+the high-qdrift class when `abs(new residual) > abs(legacy residual) + max_shift_sigma` (in units
 of σ). A non-finite shift, σ or residual is always flagged as "not finite".
 """
 function crosscheck_warning(legacy::NamedTuple, new::NamedTuple; max_shift_sigma::Real)
@@ -59,9 +59,9 @@ function crosscheck_warning(legacy::NamedTuple, new::NamedTuple; max_shift_sigma
     r_legacy, r_new = legacy.slow_mean_residual, new.slow_mean_residual
     if !haskey(failed, "FEP")
         if !(isfinite(r_legacy) && isfinite(r_new))
-            push!(warnings, "slow-pulse residual not finite")
+            push!(warnings, "high-qdrift residual not finite")
         elseif abs(r_new) > abs(r_legacy) + max_shift_sigma
-            push!(warnings, "slow-pulse residual grew from $(round(r_legacy, digits = 2))σ to $(round(r_new, digits = 2))σ")
+            push!(warnings, "high-qdrift residual grew from $(round(r_legacy, digits = 2))σ to $(round(r_new, digits = 2))σ")
         end
     end
     return join(warnings, "; ")
@@ -139,18 +139,15 @@ end
 
 
 """
-    prepare_peak_set(wvfs::NamedTuple, dsp_config::DSPConfig, τ::Unitful.Time, f_evaluate_qc, qc_string::AbstractString;
-                     pulse_wvfs::Bool)
+    prepare_peak_set(wvfs::NamedTuple, dsp_config::DSPConfig, τ::Unitful.Time, f_evaluate_qc, qc_string::AbstractString)
 
 Apply the QC selection `qc_string` to the waveforms of one peak as returned by
 `load_peak_waveforms`, compute qdrift from the windowed waveforms and prepare the presummed
 waveforms once with `dsp_flt_optimization_prepare`.
 
-Returns `(wvfs_pre, prep, qdrift, wvfs_wdw_pz)` of the events passing the QC, where
-`wvfs_wdw_pz` are the windowed waveforms, baseline-subtracted with the presummed baseline mean
-divided by the presum rate and deconvolved with `InvCRFilter(τ)` if `pulse_wvfs`, else `nothing`.
+Returns `(wvfs_pre, prep, qdrift)` of the events passing the QC.
 """
-function prepare_peak_set(wvfs::NamedTuple, dsp_config::DSPConfig, τ::Unitful.Time, f_evaluate_qc, qc_string::AbstractString; pulse_wvfs::Bool)
+function prepare_peak_set(wvfs::NamedTuple, dsp_config::DSPConfig, τ::Unitful.Time, f_evaluate_qc, qc_string::AbstractString)
     dsp_qc = dsp_qc_flt_optimization_compressed(wvfs.wvfs_pre, dsp_config, τ, f_evaluate_qc)
     qc = findall(ljl_propfunc(qc_string).(dsp_qc))
     isempty(qc) && throw(ErrorException("No event passes the QC selection $qc_string"))
@@ -158,9 +155,7 @@ function prepare_peak_set(wvfs::NamedTuple, dsp_config::DSPConfig, τ::Unitful.T
     wvfs_pre, wvfs_wdw = wvfs.wvfs_pre[qc], wvfs.wvfs_wdw[qc]
     blmean_wdw = (dsp_qc.blmean ./ wvfs.presum_rate)[qc]
     qdrift = dsp_qdrift_flt_optimization(wvfs_wdw, blmean_wdw, dsp_config, τ)
-    # Pulse shapes need the full sampling of the windowed waveforms. Baseline and deconvolution as in the dsp tier.
-    wvfs_wdw_pz = pulse_wvfs ? InvCRFilter(τ).(shift_waveform.(wvfs_wdw, -blmean_wdw)) : nothing
-    return (; wvfs_pre, prep = dsp_flt_optimization_prepare(wvfs_pre, dsp_config, τ), qdrift, wvfs_wdw_pz)
+    return (; wvfs_pre, prep = dsp_flt_optimization_prepare(wvfs_pre, dsp_config, τ), qdrift)
 end
 
 
@@ -230,7 +225,7 @@ end
 
 
 """
-    crosscheck_optimum(sets::NamedTuple, pulse::NamedTuple, dsp_config, opt_config::PropDict, flt_config::PropDict,
+    crosscheck_optimum(sets::NamedTuple, dsp_config, opt_config::PropDict, flt_config::PropDict,
                        flt::Symbol, rt::Unitful.Time, ft::Unitful.Time)
 
 Reconstruction crosscheck of filter `flt` at `(rt, ft)`.
@@ -242,7 +237,7 @@ the `status` of its row and left out of `fits` and `shifts`. Without a FEP fit t
 cannot be scaled, so `shifts` is empty, `residuals` holds empty vectors and `slow_mean` is `NaN`.
 
 Per-event FEP residuals `(e - μ) / σ` cover the events inside the FEP window with finite
-`t10` and `t90`; `slow_mean` is their mean over the slowest five percent by `t90 - t10`.
+qdrift; `slow_mean` is their mean over the five percent of these events with the highest qdrift.
 
 Returns `(fep_row, checks, fits, rows, shifts, slow_mean_residual, residuals, ctc_report)`:
 - `fep_row`: `evaluate_energy_point` row of the FEP
@@ -250,10 +245,10 @@ Returns `(fep_row, checks, fits, rows, shifts, slow_mean_residual, residuals, ct
 - `fits`: `fit_crosscheck_peak` results by peak (`:FEP`, `:DEP`, `:SEP`)
 - `rows`: one crosscheck table row per attempted peak
 - `shifts`: `(shift, σ)` of `:DEP` and `:SEP`, scaled so that the FEP sits at its line
-- `residuals`: `(residual, qdrift, rise_time, slow_mean)`
+- `residuals`: `(residual, qdrift, slow_mean)`
 - `ctc_report`: `ctc_energy` report of the FEP energies if `opt_config.apply_ctc`, else `nothing`
 """
-function crosscheck_optimum(sets::NamedTuple, pulse::NamedTuple,
+function crosscheck_optimum(sets::NamedTuple,
         dsp_config, opt_config::PropDict, flt_config::PropDict, flt::Symbol, rt::Unitful.Time, ft::Unitful.Time)
     peak = opt_config.peak
     window = (opt_config.left_window_size, opt_config.right_window_size)
@@ -301,15 +296,14 @@ function crosscheck_optimum(sets::NamedTuple, pulse::NamedTuple,
     line_of = Dict(c.name => c.line for c in checks)
     shifts = NamedTuple{shift_peaks}(map(p -> (shift = fits[p].μ * k - line_of[p], σ = fits[p].σ * k), shift_peaks))
 
-    rise_time = pulse.t90 .- pulse.t10
     residuals = if haskey(fits, :FEP)
-        sel = [i for i in eachindex(e_cal_fep, rise_time, sets.fep.qdrift)
-               if peak - first(window) < e_cal_fep[i] < peak + last(window) && isfinite(rise_time[i])]
+        sel = [i for i in eachindex(e_cal_fep, sets.fep.qdrift)
+               if peak - first(window) < e_cal_fep[i] < peak + last(window) && isfinite(sets.fep.qdrift[i])]
         residual = ustrip.(NoUnits, (e_cal_fep[sel] .- fits.FEP.μ) ./ fits.FEP.σ)
-        slow = rise_time[sel] .>= quantile(rise_time[sel], 0.95)
-        (residual = residual, qdrift = sets.fep.qdrift[sel], rise_time = rise_time[sel], slow_mean = mean(residual[slow]))
+        slow = sets.fep.qdrift[sel] .>= quantile(sets.fep.qdrift[sel], 0.95)
+        (residual = residual, qdrift = sets.fep.qdrift[sel], slow_mean = mean(residual[slow]))
     else
-        (residual = Float64[], qdrift = sets.fep.qdrift[Int[]], rise_time = rise_time[Int[]], slow_mean = NaN)
+        (residual = Float64[], qdrift = sets.fep.qdrift[Int[]], slow_mean = NaN)
     end
 
     ctc_report = if opt_config.apply_ctc
@@ -362,12 +356,12 @@ function flat_top_edge(ft, ft_range, lattice)
 end
 
 """
-    optimize_channel_filter(sets::NamedTuple, pulse::NamedTuple, flt::Symbol, dsp_config::DSPConfig,
+    optimize_channel_filter(sets::NamedTuple, flt::Symbol, dsp_config::DSPConfig,
                             opt_config::PropDict, τ::Unitful.Time;
                             detector, f_title::Function, f_save::Function, f_tablepath::Function)
 
 Optimization of energy filter `flt` of one detector on the prepared peak sets `sets` (see
-`run_filter_optimization_channel`) and the FEP pulse shapes `pulse`:
+`run_filter_optimization_channel`):
 1. noise scan with `dsp_<flt>_rt_optimization` and `fit_enc_sigmas`, giving `rt_enc`;
 2. flat-top scan at `rt_enc` with `fit_fwhm_ft`, giving `ft0`, the optimum of the configured
    objective, and the legacy optimum `(rt_enc, legacy_ft)`;
@@ -403,7 +397,7 @@ The stages run as `@process_step`s named "<flt> noise sweep", "<flt> flat-top sc
 "<flt> joint search" (or the flat-top scan optimum is used), "<flt> crosschecks",
 "<flt> crosscheck plots", "<flt> example waveforms" and "<flt> tables".
 """
-function optimize_channel_filter(sets::NamedTuple, pulse::NamedTuple, flt::Symbol, dsp_config::DSPConfig, opt_config::PropDict,
+function optimize_channel_filter(sets::NamedTuple, flt::Symbol, dsp_config::DSPConfig, opt_config::PropDict,
         τ::Unitful.Time; detector, f_title::Function, f_save::Function, f_tablepath::Function)
     flt_config = opt_config.e_filter[flt]
     objective = Symbol(opt_config.objective)
@@ -498,8 +492,8 @@ function optimize_channel_filter(sets::NamedTuple, pulse::NamedTuple, flt::Symbo
 
     # crosschecks at both optima
     cc_legacy, cc_new, warning = @process_step "$flt crosschecks" begin
-        cc_legacy = crosscheck_optimum(sets, pulse, dsp_config, opt_config, flt_config, flt, rt_enc, legacy_ft)
-        cc_new = crosscheck_optimum(sets, pulse, dsp_config, opt_config, flt_config, flt, rt_new, ft_new)
+        cc_legacy = crosscheck_optimum(sets, dsp_config, opt_config, flt_config, flt, rt_enc, legacy_ft)
+        cc_new = crosscheck_optimum(sets, dsp_config, opt_config, flt_config, flt, rt_new, ft_new)
         warning = crosscheck_warning(cc_legacy, cc_new; max_shift_sigma = opt_config.crosscheck.max_shift_sigma)
         isempty(warning) || @warn "Detector $detector, filter $flt crosscheck: $warning"
         (cc_legacy, cc_new, warning)
@@ -525,17 +519,17 @@ function optimize_channel_filter(sets::NamedTuple, pulse::NamedTuple, flt::Symbo
                 Symbol("crosscheck_$(lowercase(String(c.name)))_$(which)_$(flt)"))
         end
         isempty(cc_legacy.residuals.residual) || isempty(cc_new.residuals.residual) ||
-            f_save(LegendMakie.lplot((legacy = cc_legacy.residuals, new = cc_new.residuals); figsize = (900, 900),
+            f_save(LegendMakie.lplot((legacy = cc_legacy.residuals, new = cc_new.residuals); figsize = (900, 450),
                 title = f_title("FEP Residuals", flt)), Symbol("residuals_$(flt)"))
     end
 
-    # example waveforms: fastest and slowest events
+    # example waveforms: events with the lowest and the highest qdrift
     @process_step "$flt example waveforms" begin
         n_class = opt_config.n_example_wvfs
-        rise_time = pulse.t90 .- pulse.t10
-        valid = [i for i in eachindex(rise_time) if isfinite(rise_time[i])]
-        idx = vcat(valid[partialsortperm(rise_time[valid], 1:n_class)],
-                   valid[partialsortperm(rise_time[valid], 1:n_class, rev = true)])
+        qdrift = sets.fep.qdrift
+        valid = [i for i in eachindex(qdrift) if isfinite(qdrift[i])]
+        idx = vcat(valid[partialsortperm(qdrift[valid], 1:n_class)],
+                   valid[partialsortperm(qdrift[valid], 1:n_class, rev = true)])
         wvfs = prep.wvfs_pz[idx]
         flt_legacy, flt_new = map(((rt_enc, legacy_ft), (rt_new, ft_new))) do (rt, ft)
             # the filters take all times in one floating-point type
@@ -586,8 +580,8 @@ function optimize_channel_filter(sets::NamedTuple, pulse::NamedTuple, flt::Symbo
              for row in cc.rows]
         end...))
         write_fltopt_tables(f_tablepath(flt), (evaluation = evaluation, crosscheck = crosscheck,
-            residuals_legacy = (; cc_legacy.residuals.residual, cc_legacy.residuals.qdrift, cc_legacy.residuals.rise_time),
-            residuals_new = (; cc_new.residuals.residual, cc_new.residuals.qdrift, cc_new.residuals.rise_time)))
+            residuals_legacy = (; cc_legacy.residuals.residual, cc_legacy.residuals.qdrift),
+            residuals_new = (; cc_new.residuals.residual, cc_new.residuals.qdrift)))
     end
 
     pars = (
@@ -610,7 +604,7 @@ end
 Filter optimization of one detector. Loads the FEP waveforms and, if enabled in
 `opt_config.crosscheck`, the DEP and SEP waveforms with `f_load(peakname)` (as returned by
 `load_peak_waveforms`), applies the QC, computes qdrift and prepares every set once
-(`prepare_peak_set`), computes the FEP pulse shapes on the windowed waveforms, and runs `optimize_channel_filter` for every filter in `filter_types`, a vector of
+(`prepare_peak_set`), and runs `optimize_channel_filter` for every filter in `filter_types`, a vector of
 filter `Symbol`s (the keys of a `PropDict`, whose eltype is wider than `Symbol`). Throws an
 `ArgumentError` if `opt_config.joint_search` is not a `Bool` or `opt_config.ctc_rel_uncertainty`
 is not a `Real` (including a missing key).
@@ -629,27 +623,18 @@ function run_filter_optimization_channel(f_load::Function, filter_types::Abstrac
     opt_config.crosscheck.dep && (peaknames = merge(peaknames, (dep = DEP_PEAKNAME,)))
     opt_config.crosscheck.sep && (peaknames = merge(peaknames, (sep = SEP_PEAKNAME,)))
     sets = NamedTuple{keys(peaknames)}(map(keys(peaknames)) do key
-        pulse_wvfs = key == :fep
         peakname = peaknames[key]
         wvfs = @process_step "$peakname data loader" f_load(peakname)
-        set = @process_step "$peakname QC and preparation" prepare_peak_set(wvfs, dsp_config, τ, f_evaluate_qc, opt_config.qc; pulse_wvfs)
-        # the raw presummed waveforms serve only the FEP noise scan, the windowed ones only the
-        # FEP pulse shapes
-        pulse_wvfs && isnothing(set.wvfs_wdw_pz) && throw(ErrorException("$peakname: the windowed waveforms for the pulse shapes were not prepared"))
-        if pulse_wvfs
-            set
-        else
-            (prep = set.prep, qdrift = set.qdrift)
-        end
+        set = @process_step "$peakname QC and preparation" prepare_peak_set(wvfs, dsp_config, τ, f_evaluate_qc, opt_config.qc)
+        # the raw presummed waveforms serve only the FEP noise scan
+        key == :fep ? set : (prep = set.prep, qdrift = set.qdrift)
     end)
-    pulse = @process_step "FEP pulse shapes" dsp_pulse_shape_flt_optimization(sets.fep.wvfs_wdw_pz, dsp_config)
-    sets = merge(sets, (fep = (; sets.fep.wvfs_pre, sets.fep.prep, sets.fep.qdrift),))
     GC.gc()
 
     results = Dict{Symbol, Union{NamedTuple, Exception}}()
     for flt in filter_types
         results[flt] = try
-            optimize_channel_filter(sets, pulse, flt, dsp_config, opt_config, τ; detector, f_title, f_save, f_tablepath)
+            optimize_channel_filter(sets, flt, dsp_config, opt_config, τ; detector, f_title, f_save, f_tablepath)
         catch e
             e isa InterruptException && rethrow()
             e isa ProcessStepError || @error "Filter $flt: $(truncate_error(e))"
