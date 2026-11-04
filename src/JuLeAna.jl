@@ -38,7 +38,7 @@ using LegendDataManagement.LDMUtils: LDMUtils, create_logtbl, create_metadatatbl
                                      get_plottitle, get_pltfilename, get_preportfilename, get_rreportfilename, savelfig, writevalidity
 using LegendDataTypes: LegendDataTypes, decode_data, fast_flatten
 using LegendDSP: LegendDSP, DSPConfig, dsp_decay_times, dsp_energy_rtft, dsp_flt_optimization_prepare, dsp_icpc_compressed, dsp_pmts,
-                 dsp_pulse_shape_flt_optimization, dsp_qc_flt_optimization_compressed, dsp_qdrift_flt_optimization, dsp_sipm_compressed,
+                 dsp_qc_flt_optimization_compressed, dsp_qdrift_flt_optimization, dsp_sipm_compressed,
                  realized_flattop
 using LegendEventAnalysis: LegendEventAnalysis, TimeEvolution, calibrate_all, calibrate_ged_detector_data, flag_coincidences, rate,
                            relative, smooth
@@ -70,7 +70,7 @@ using ProgressMeter: ProgressMeter, Progress, next!, update!
 using PropDicts: PropDicts, PropDict
 using PropertyFunctions: PropertyFunctions, @pf, filterby
 using Random: Random, AbstractRNG, MersenneTwister, shuffle
-using RadiationDetectorDSP: RadiationDetectorDSP, CUSPChargeFilter, InvCRFilter, TrapezoidalChargeFilter, ZACChargeFilter, shift_waveform
+using RadiationDetectorDSP: RadiationDetectorDSP, CUSPChargeFilter, TrapezoidalChargeFilter, ZACChargeFilter
 using StatsBase: StatsBase, Histogram, fit, mean, median, quantile, sample, std
 using StructArrays: StructArray
 using Tachikoma: Tachikoma

@@ -35,7 +35,7 @@ using JuLeAna: DEP_WINDOW, ELECTRON_MASS_ENERGY, crosscheck_optimum, crosscheck_
         flipped = merge(base, (shifts = merge(base.shifts, (DEP = (shift = -0.55u"keV", σ = 1.0u"keV"),)),))
         @test crosscheck_warning(base, flipped; max_shift_sigma = 0.5) == ""
         slow = merge(base, (slow_mean_residual = -0.90,))
-        @test occursin("slow-pulse residual grew", crosscheck_warning(base, slow; max_shift_sigma = 0.5))
+        @test occursin("high-qdrift residual grew", crosscheck_warning(base, slow; max_shift_sigma = 0.5))
         @test crosscheck_warning(slow, base; max_shift_sigma = 0.5) == ""
         slow_flip = merge(base, (slow_mean_residual = 0.40,))
         @test crosscheck_warning(base, slow_flip; max_shift_sigma = 0.5) == ""
@@ -48,8 +48,8 @@ using JuLeAna: DEP_WINDOW, ELECTRON_MASS_ENERGY, crosscheck_optimum, crosscheck_
         nan_sigma = merge(base, (shifts = merge(base.shifts, (DEP = (shift = 0.10u"keV", σ = NaN * u"keV"),)),))
         @test occursin("DEP new σ not finite", crosscheck_warning(base, nan_sigma; max_shift_sigma = 0.5))
         nan_slow = merge(base, (slow_mean_residual = NaN,))
-        @test occursin("slow-pulse residual not finite", crosscheck_warning(base, nan_slow; max_shift_sigma = 0.5))
-        @test occursin("slow-pulse residual not finite", crosscheck_warning(nan_slow, base; max_shift_sigma = 0.5))
+        @test occursin("high-qdrift residual not finite", crosscheck_warning(base, nan_slow; max_shift_sigma = 0.5))
+        @test occursin("high-qdrift residual not finite", crosscheck_warning(nan_slow, base; max_shift_sigma = 0.5))
         nothing_checked = (shifts = NamedTuple(), rows = ((peak = "FEP", status = "ok"),), slow_mean_residual = -0.30)
         @test crosscheck_warning(nothing_checked, nothing_checked; max_shift_sigma = 0.5) == ""
         # failed fits are reported from the table rows, also when the peak has no shift at either optimum
@@ -63,7 +63,7 @@ using JuLeAna: DEP_WINDOW, ELECTRON_MASS_ENERGY, crosscheck_optimum, crosscheck_
         @test crosscheck_warning(base, failed_sep; max_shift_sigma = 0.5) == "SEP fit failed (new)"
         both = crosscheck_warning(failed_dep, failed_sep; max_shift_sigma = 0.5)
         @test occursin("DEP fit failed (legacy)", both) && occursin("SEP fit failed (new)", both)
-        # without a FEP fit the other peaks and the slow-pulse residual have no scale and are not compared
+        # without a FEP fit the other peaks and the high-qdrift residual have no scale and are not compared
         failed_fep = (shifts = NamedTuple(), slow_mean_residual = NaN,
                       rows = ((peak = "FEP", status = "failed: BoundsError"), (peak = "DEP", status = "ok"), (peak = "SEP", status = "ok")))
         @test crosscheck_warning(failed_fep, base; max_shift_sigma = 0.5) == "FEP fit failed (legacy)"
@@ -76,7 +76,7 @@ using JuLeAna: DEP_WINDOW, ELECTRON_MASS_ENERGY, crosscheck_optimum, crosscheck_
         evaluation = Table(scan = [:noise, :ft_scan, :lattice], rt = [5.0, 5.0, 5.5] .* u"µs",
             fwhm = [Measurements.measurement(NaN, NaN), Measurements.measurement(2.5, 0.1), Measurements.measurement(2.4, 0.1)] .* u"keV",
             status = ["ok", "ok", "fit failed"], converged = [true, true, false], n_events = [0, 5000, 4900])
-        residuals = (residual = [0.1, -0.2], rise_time = [0.5, 0.7] .* u"µs")
+        residuals = (residual = [0.1, -0.2], qdrift = [0.5, 0.7])
         @test write_fltopt_tables(path, (; evaluation, residuals)) == path
         lh5open(path) do h
             ev = h["evaluation"]
@@ -87,13 +87,13 @@ using JuLeAna: DEP_WINDOW, ELECTRON_MASS_ENERGY, crosscheck_optimum, crosscheck_
             @test ev.status[:] == ["ok", "ok", "fit failed"]
             @test collect(ev.converged) == [true, true, false]
             @test collect(ev.n_events) == [0, 5000, 4900]
-            @test collect(h["residuals"].rise_time) == [0.5, 0.7] .* u"µs"
+            @test collect(h["residuals"].qdrift) == [0.5, 0.7]
         end
     end
 
     @testset "write_fltopt_tables with empty columns" begin
         path = joinpath(mktempdir(), "empty.lh5")
-        write_fltopt_tables(path, (residuals = (residual = Float64[], rise_time = typeof(1.0u"µs")[]),))
+        write_fltopt_tables(path, (residuals = (residual = Float64[], qdrift = Float64[]),))
         lh5open(path) do h
             @test length(h["residuals"].residual) == 0
         end
@@ -191,12 +191,11 @@ using JuLeAna: DEP_WINDOW, ELECTRON_MASS_ENERGY, crosscheck_optimum, crosscheck_
         sets = (fep = (prep = (energies = 200000.0 .+ 80.0 .* randn(rng, n),), qdrift = qdrift),
                 dep = (prep = (energies = adc(1592.51) .+ 80.0 .* randn(rng, 600),), qdrift = qdrift[1:600]),
                 sep = (prep = (energies = adc(2103.51) .+ adc(3.0) .* vcat(zeros(150), ones(150)) .+ 1e-3 .* randn(rng, 300),), qdrift = qdrift[1:300]))
-        pulse = (t10 = fill(1.0u"µs", n), t90 = 1.0u"µs" .+ rand(rng, n) .* u"µs")
         opt_config = PropDict(:peak => 2614.51u"keV", :left_window_size => 35.0u"keV", :right_window_size => 30.0u"keV",
             :containment => 0.9, :apply_ctc => false)
         flt_config = PropDict(:min_e_fep => 80000.0, :max_e_fep => 480000.0, :rel_cut_fit_e_fep => 0.5, :nbins_e_fep => 200)
         cc = @test_logs (:warn, r"Crosscheck fit of the peak at 2103.51\d* keV failed \(SEP of trap at rt = 4.0 .s, ft = 2.0 .s\)") match_mode = :any crosscheck_optimum(
-            sets, pulse, nothing, opt_config, flt_config, :trap, 4.0u"µs", 2.0u"µs")
+            sets, nothing, opt_config, flt_config, :trap, 4.0u"µs", 2.0u"µs")
         @test map(r -> r.peak, cc.rows) == ["FEP", "DEP", "SEP"]
         @test map(r -> r.status == "ok", cc.rows) == [true, true, false]
         @test startswith(cc.rows[3].status, "failed: ")
@@ -205,6 +204,11 @@ using JuLeAna: DEP_WINDOW, ELECTRON_MASS_ENERGY, crosscheck_optimum, crosscheck_
         @test keys(cc.shifts) == (:DEP,)
         @test map(c -> c.name, cc.checks) == [:FEP, :DEP, :SEP]
         @test isfinite(cc.slow_mean_residual)
+        @test keys(cc.residuals) == (:residual, :qdrift, :slow_mean)
+        # slow_mean is the mean residual of the 5% of events with the highest qdrift
+        top = cc.residuals.qdrift .>= quantile(cc.residuals.qdrift, 0.95)
+        @test cc.residuals.slow_mean == mean(cc.residuals.residual[top])
+        @test cc.slow_mean_residual == cc.residuals.slow_mean
         @test occursin("SEP fit failed (legacy, new)", crosscheck_warning(cc, cc; max_shift_sigma = 0.5))
     end
 
@@ -302,7 +306,7 @@ using JuLeAna: DEP_WINDOW, ELECTRON_MASS_ENERGY, crosscheck_optimum, crosscheck_
     end
 
     @testset "driver entry points" begin
-        @test hasmethod(optimize_channel_filter, Tuple{NamedTuple, NamedTuple, Symbol, DSPConfig, PropDict, typeof(1.0u"µs")}, (:detector, :f_title, :f_save, :f_tablepath))
+        @test hasmethod(optimize_channel_filter, Tuple{NamedTuple, Symbol, DSPConfig, PropDict, typeof(1.0u"µs")}, (:detector, :f_title, :f_save, :f_tablepath))
         @test hasmethod(run_filter_optimization_channel, Tuple{Function, Vector{Union{Int, Symbol}}, DSPConfig, PropDict, typeof(1.0u"µs"), Function}, (:detector, :f_title, :f_save, :f_tablepath))
     end
 end
