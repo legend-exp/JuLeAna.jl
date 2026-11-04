@@ -16,7 +16,7 @@ The method is the same as in `process_filter_optimization_cal`. The waveforms ar
 # Outputs
 - `l200.par.ppars.fltopt[det, part]`: per filter type the objective, the optimal rise time and flat-top time, FWHM and W90 at the optimum, and validity entries for the partition. The validity of all partitions of the period is written to `l200.par.ppars.fltopt`.
 - Per detector and filter type, the tables `fltopt_tables_<filter_type>.lh5` next to the plots.
-- Per detector and filter type, the plots `noise_sweep_*`, `ft_scan_*`, `rtft_landscape_*`, `ctc_*`, `peaks_*`, `crosscheck_*`, `residuals_*` and `example_wvfs_*`, saved at the debug plot level.
+- Per detector and filter type, the plots `noise_sweep_*`, `ft_scan_*`, `rtft_landscape_*`, `ctc_*`, `residuals_*` and `example_wvfs_*`, saved at the debug plot level.
 - Partition report `:filter_optimization` (Main Log, Metadata, Results table with one row per detector, partition and filter type).
 
 # Keywords
@@ -51,7 +51,7 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
 
     log_nt = NamedTuple{(:Detector, :usability, :psd_usability, :Partition, :Status, Symbol("Filter Type"), :Objective,
                          Symbol("Rise Time"), Symbol("Flat-Top Time"), :FWHM, :W90,
-                         :Converged, Symbol("Crosscheck Warning"), :Error)}
+                         :Converged, Symbol("FT Edge"), :Error)}
 
     flush(stdout)
 
@@ -161,7 +161,7 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
                                                      detector_status(chinfo_det.psd_usability), part, ProcessStatus(1), filter_type,
                                                      res.log.objective, res.pars.rt, res.pars.ft, res.pars.fwhm, res.pars.w90,
                                                      get(res.pars, :converged, "-"),
-                                                     res.log.crosscheck_warning, "-"))
+                                                     res.log.ft_edge, "-"))
                 result_rt_ft_dict[filter_type] = res.pars
                 processed_dict[filter_type] = true
             end

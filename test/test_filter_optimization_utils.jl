@@ -10,52 +10,10 @@ import LegendMakie, Makie
 using Measurements: value as mvalue
 
 using JuLeAna
-using JuLeAna: DEP_WINDOW, ELECTRON_MASS_ENERGY, crosscheck_optimum, crosscheck_peak_figure, crosscheck_warning, fit_crosscheck_peak, flat_top_edge,
-               limit_peak_waveforms, optimize_channel_filter, run_filter_optimization_channel, snap_seed, try_fit_crosscheck_peak,
-               write_fltopt_tables
+using JuLeAna: evaluate_optimum, fit_fep_peak, flat_top_edge, limit_peak_waveforms, optimize_channel_filter,
+               run_filter_optimization_channel, snap_seed, write_fltopt_tables
 
 @testset "filter optimization utils" begin
-    @testset "constants" begin
-        @test 2614.51u"keV" - 2 * ELECTRON_MASS_ENERGY ≈ 1592.51u"keV" atol = 0.01u"keV"
-        @test 1592.51u"keV" + last(DEP_WINDOW) < 1620.74u"keV" - 5u"keV"
-    end
-
-    @testset "crosscheck_warning" begin
-        base = (shifts = (DEP = (shift = 0.10u"keV", σ = 1.0u"keV"), SEP = (shift = -0.20u"keV", σ = 1.2u"keV")),
-                rows = ((peak = "FEP", status = "ok"), (peak = "DEP", status = "ok"), (peak = "SEP", status = "ok")),
-                slow_mean_residual = -0.30)
-        @test crosscheck_warning(base; max_shift_sigma = 0.5) == ""
-        # |0.70| > 0.5 * 1.0, the sign does not matter
-        for shift in (0.70u"keV", -0.70u"keV")
-            shifted = merge(base, (shifts = merge(base.shifts, (DEP = (shift, σ = 1.0u"keV"),)),))
-            @test occursin("DEP shifted by", crosscheck_warning(shifted; max_shift_sigma = 0.5))
-            @test !occursin("SEP", crosscheck_warning(shifted; max_shift_sigma = 0.5))
-        end
-        slow = merge(base, (slow_mean_residual = -0.90,))
-        @test occursin("high-qdrift residual of -0.9σ", crosscheck_warning(slow; max_shift_sigma = 0.5))
-        @test crosscheck_warning(merge(base, (slow_mean_residual = 0.40,)); max_shift_sigma = 0.5) == ""
-        nan_shift = merge(base, (shifts = merge(base.shifts, (DEP = (shift = NaN * u"keV", σ = 1.0u"keV"),)),))
-        @test occursin("DEP shift or σ not finite", crosscheck_warning(nan_shift; max_shift_sigma = 0.5))
-        nan_sigma = merge(base, (shifts = merge(base.shifts, (DEP = (shift = 0.10u"keV", σ = NaN * u"keV"),)),))
-        @test occursin("DEP shift or σ not finite", crosscheck_warning(nan_sigma; max_shift_sigma = 0.5))
-        nan_slow = merge(base, (slow_mean_residual = NaN,))
-        @test occursin("high-qdrift residual not finite", crosscheck_warning(nan_slow; max_shift_sigma = 0.5))
-        nothing_checked = (shifts = NamedTuple(), rows = ((peak = "FEP", status = "ok"),), slow_mean_residual = -0.30)
-        @test crosscheck_warning(nothing_checked; max_shift_sigma = 0.5) == ""
-        # failed fits are reported from the table rows, also when the peak has no shift
-        failed_dep = (shifts = (SEP = base.shifts.SEP,), slow_mean_residual = -0.30,
-                      rows = ((peak = "FEP", status = "ok"), (peak = "DEP", status = "failed: too few events"), (peak = "SEP", status = "ok")))
-        @test crosscheck_warning(failed_dep; max_shift_sigma = 0.5) == "DEP fit failed"
-        # a failed fit is not also reported as a non-finite shift
-        failed_shift = merge(base, (rows = ((peak = "FEP", status = "ok"), (peak = "DEP", status = "failed: x"), (peak = "SEP", status = "ok")),
-                                    shifts = merge(base.shifts, (DEP = (shift = NaN * u"keV", σ = NaN * u"keV"),))))
-        @test crosscheck_warning(failed_shift; max_shift_sigma = 0.5) == "DEP fit failed"
-        # without a FEP fit the high-qdrift residual has no scale and is not checked
-        failed_fep = (shifts = NamedTuple(), slow_mean_residual = NaN,
-                      rows = ((peak = "FEP", status = "failed: BoundsError"), (peak = "DEP", status = "ok"), (peak = "SEP", status = "ok")))
-        @test crosscheck_warning(failed_fep; max_shift_sigma = 0.5) == "FEP fit failed"
-    end
-
     @testset "write_fltopt_tables" begin
         path = joinpath(mktempdir(), "fltopt_tables.lh5")
         evaluation = Table(scan = [:noise, :ft_scan, :lattice], rt = [5.0, 5.0, 5.5] .* u"µs",
@@ -108,93 +66,43 @@ using JuLeAna: DEP_WINDOW, ELECTRON_MASS_ENERGY, crosscheck_optimum, crosscheck_
         @test allunique(osel.wvfs_pre) && all(in(1:10), osel.wvfs_pre)
     end
 
-    @testset "fit_crosscheck_peak" begin
+    @testset "fit_fep_peak" begin
         rng = MersenneTwister(1)
         σ = 1.0
-        line = 1592.51u"keV"
-        e_cal = vcat(ustrip(u"keV", line) .+ σ .* randn(rng, 20000), 1570.0 .+ 45.0 .* rand(rng, 4000)) .* u"keV"
-        fit = fit_crosscheck_peak(e_cal, line, DEP_WINDOW; containment = 0.9)
-        @test fit.μ ≈ line atol = 0.05u"keV"
+        peak = 2614.51u"keV"
+        window = (35.0u"keV", 30.0u"keV")
+        e_cal = vcat(ustrip(u"keV", peak) .+ σ .* randn(rng, 20000), 2580.0 .+ 65.0 .* rand(rng, 4000)) .* u"keV"
+        fit = fit_fep_peak(e_cal, peak, window; containment = 0.9)
+        @test fit.μ ≈ peak atol = 0.05u"keV"
         @test fit.σ ≈ σ * u"keV" rtol = 0.05
         @test fit.fwhm ≈ 2.355 * σ * u"keV" rtol = 0.05
         @test fit.w90 ≈ 3.29 * σ * u"keV" rtol = 0.1
-        @test fit.n_events == count(e -> line - first(DEP_WINDOW) < e < line + last(DEP_WINDOW), e_cal)
-        @test fit.f_fit(ustrip(u"keV", line)) > 0
+        @test fit.n_events == count(e -> peak - first(window) < e < peak + last(window), e_cal)
+        @test fit.f_fit(ustrip(u"keV", peak)) > 0
         @test fit.report.h === fit.h
-        @test fit.report.f_fit(ustrip(u"keV", line)) == fit.f_fit(ustrip(u"keV", line))
-        @test_throws ArgumentError fit_crosscheck_peak(e_cal[begin:begin+49], line, DEP_WINDOW; containment = 0.9)
+        @test fit.report.f_fit(ustrip(u"keV", peak)) == fit.f_fit(ustrip(u"keV", peak))
+        @test_throws "Only 50 events" fit_fep_peak(e_cal[begin:begin+49], peak, window; containment = 0.9)
     end
 
-    @testset "try_fit_crosscheck_peak" begin
-        rng = MersenneTwister(1)
-        line = 1592.51u"keV"
-        e_cal = (ustrip(u"keV", line) .+ randn(rng, 5000)) .* u"keV"
-        fit, status = try_fit_crosscheck_peak(e_cal, line, DEP_WINDOW; containment = 0.9)
-        @test status == "ok"
-        @test fit.μ ≈ line atol = 0.1u"keV"
-        # an ArgumentError is recorded and logged with the exception and the context
-        fit, status = @test_logs (:warn, r"Crosscheck fit of the peak at 1592.51 keV failed \(DEP\)") try_fit_crosscheck_peak(
-            e_cal[begin:begin+49], line, DEP_WINDOW; containment = 0.9, context = " (DEP)")
-        @test isnothing(fit) && startswith(status, "failed: ArgumentError")
-        # so is every other exception: two narrow lines make the fit throw a BoundsError
-        spikes = (ustrip(u"keV", line) .+ vcat(zeros(100), ones(100)) .+ 1e-3 .* randn(MersenneTwister(3), 200)) .* u"keV"
-        fit, status = @test_logs (:warn, r"Crosscheck fit of the peak at 1592.51 keV failed") try_fit_crosscheck_peak(spikes, line, DEP_WINDOW; containment = 0.9)
-        @test isnothing(fit) && startswith(status, "failed: BoundsError")
-        # a MethodError of the call itself is recorded too
-        fit, status = @test_logs (:warn, r"failed") try_fit_crosscheck_peak(ustrip.(u"keV", e_cal), line, DEP_WINDOW; containment = 0.9)
-        @test isnothing(fit) && startswith(status, "failed: MethodError")
-    end
-
-    @testset "crosscheck_peak_figure" begin
-        rng = MersenneTwister(1)
-        line = 1592.51u"keV"
-        e_cal = (ustrip(u"keV", line) .+ randn(rng, 5000)) .* u"keV"
-        check = (name = :DEP, e_cal = e_cal, line = line, window = DEP_WINDOW)
-        fit, status = try_fit_crosscheck_peak(e_cal, line, DEP_WINDOW; containment = 0.9)
-        @test crosscheck_peak_figure(check, fit, status; title = "fit") isa Makie.Figure
-        # failed fits show the window histogram and the error text, also without any event in the window
-        for e in (e_cal[begin:begin+49], typeof(line)[])
-            failed = merge(check, (e_cal = e,))
-            fit, status = with_logger(NullLogger()) do
-                try_fit_crosscheck_peak(e, line, DEP_WINDOW; containment = 0.9)
-            end
-            fig = crosscheck_peak_figure(failed, fit, status; title = "failed")
-            @test fig isa Makie.Figure
-            ax = only(filter(x -> x isa Makie.Axis, fig.content))
-            @test any(p -> p isa Makie.Text && occursin(r"failed: ArgumentError.*Only", only(p.text[])), ax.scene.plots)
-        end
-    end
-
-    @testset "crosscheck_optimum records failed fits" begin
+    @testset "evaluate_optimum" begin
         # stand-in energies: the stub returns them regardless of the filter times
         LegendDSP.dsp_energy_rtft(prep::NamedTuple{(:energies,)}, config::Nothing, rt::Unitful.Time, ft::Unitful.Time, flt::Symbol) = prep.energies
         rng = MersenneTwister(5)
-        keV_per_adc = 2614.51 / 200000
-        adc(e_keV) = e_keV / keV_per_adc
         n = 4000
-        qdrift = 1.0 .+ rand(rng, n)
-        sets = (fep = (prep = (energies = 200000.0 .+ 80.0 .* randn(rng, n),), qdrift = qdrift),
-                dep = (prep = (energies = adc(1592.51) .+ 80.0 .* randn(rng, 600),), qdrift = qdrift[1:600]),
-                sep = (prep = (energies = adc(2103.51) .+ adc(3.0) .* vcat(zeros(150), ones(150)) .+ 1e-3 .* randn(rng, 300),), qdrift = qdrift[1:300]))
+        fep = (prep = (energies = 200000.0 .+ 80.0 .* randn(rng, n),), qdrift = 1.0 .+ rand(rng, n))
         opt_config = PropDict(:peak => 2614.51u"keV", :left_window_size => 35.0u"keV", :right_window_size => 30.0u"keV",
             :containment => 0.9, :apply_ctc => false)
         flt_config = PropDict(:min_e_fep => 80000.0, :max_e_fep => 480000.0, :rel_cut_fit_e_fep => 0.5, :nbins_e_fep => 200)
-        cc = @test_logs (:warn, r"Crosscheck fit of the peak at 2103.51\d* keV failed \(SEP of trap at rt = 4.0 .s, ft = 2.0 .s\)") match_mode = :any crosscheck_optimum(
-            sets, nothing, opt_config, flt_config, :trap, 4.0u"µs", 2.0u"µs")
-        @test map(r -> r.peak, cc.rows) == ["FEP", "DEP", "SEP"]
-        @test map(r -> r.status == "ok", cc.rows) == [true, true, false]
-        @test startswith(cc.rows[3].status, "failed: ")
-        @test isnan(cc.rows[3].μ) && cc.rows[3].n_events == 0
-        @test keys(cc.fits) == (:FEP, :DEP)
-        @test keys(cc.shifts) == (:DEP,)
-        @test map(c -> c.name, cc.checks) == [:FEP, :DEP, :SEP]
-        @test isfinite(cc.slow_mean_residual)
-        @test keys(cc.residuals) == (:residual, :qdrift, :slow_mean)
+        ev = evaluate_optimum(fep, nothing, opt_config, flt_config, :trap, 4.0u"µs", 2.0u"µs")
+        @test keys(ev) == (:fep_row, :fit, :residuals, :ctc_report)
+        @test isnothing(ev.ctc_report)
+        @test ev.fit.μ ≈ 2614.51u"keV" atol = 0.5u"keV"
+        @test keys(ev.residuals) == (:residual, :qdrift, :slow_mean)
         # slow_mean is the mean residual of the 5% of events with the highest qdrift
-        top = cc.residuals.qdrift .>= quantile(cc.residuals.qdrift, 0.95)
-        @test cc.residuals.slow_mean == mean(cc.residuals.residual[top])
-        @test cc.slow_mean_residual == cc.residuals.slow_mean
-        @test occursin("SEP fit failed", crosscheck_warning(cc; max_shift_sigma = 0.5))
+        top = ev.residuals.qdrift .>= quantile(ev.residuals.qdrift, 0.95)
+        @test ev.residuals.slow_mean == mean(ev.residuals.residual[top])
+        few = (prep = (energies = fep.prep.energies[1:50],), qdrift = fep.qdrift[1:50])
+        @test_throws "at least 100 required" evaluate_optimum(few, nothing, opt_config, flt_config, :trap, 4.0u"µs", 2.0u"µs")
     end
 
     @testset "snap_seed" begin
@@ -264,7 +172,7 @@ using JuLeAna: DEP_WINDOW, ELECTRON_MASS_ENERGY, crosscheck_optimum, crosscheck_
 
     @testset "failing steps are named" begin
         run_channel(f_load) = run_filter_optimization_channel(f_load, [:trap], nothing, PropDict(:joint_search => true, :ctc_rel_uncertainty => 0.1,
-            :peakname => "Tl208FEP", :crosscheck => PropDict(:dep => false, :sep => false)), 500.0u"µs",
+            :peakname => "Tl208FEP"), 500.0u"µs",
             nothing; detector = "V00000A", f_title = (label, flt) -> label, f_save = (fig, name) -> nothing, f_tablepath = flt -> "")
         err = try
             with_logger(NullLogger()) do
