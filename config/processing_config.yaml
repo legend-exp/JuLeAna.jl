@@ -353,6 +353,7 @@ processors:
       timeout: 0
     dependencies:
       - process_dsp_phy
+      - process_dsp_aux_phy
 
   process_evt_phy:
     report_status:
@@ -571,6 +572,7 @@ p_processors:
       timeout: 0
     dependencies:
       - process_dsp_phy
+      - process_dsp_aux_phy
 
   p_process_skm_phy:
     detectors: "true"
