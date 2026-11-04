@@ -26,6 +26,7 @@ config:
   worker_restart_delay_seconds: 30
   worker_heartbeat_timeout_minutes: 5
   item_time_estimate: median
+  item_time_minimum_items: 100
   item_timeout_factor: 2
   item_timeout_minimum_minutes: 5
 

@@ -365,11 +365,11 @@ const REPORT = """
         @test JuLeAna.measured_item_seconds(store; min_items = 1) == Dict(:odd => 2.0, :even => 2.0)
         @test JuLeAna.measured_item_seconds(store, :max; min_items = 1) == Dict(:odd => 4.0, :even => 3.0)
         @test JuLeAna.measured_item_seconds(store, :p95; min_items = 1)[:even] ≈ 2.9
-        # by default only the processors with 100 done items count
+        # only the processors with at least `min_items` done items count
         store.durations[:many] = collect(1.0:100.0)
-        @test JuLeAna.measured_item_seconds(store) == Dict(:many => 50.5)
-        @test JuLeAna.measured_item_seconds(store, :p99)[:many] ≈ 99.01
-        @test_throws "unknown statistic :p50" JuLeAna.measured_item_seconds(store, :p50)
+        @test JuLeAna.measured_item_seconds(store; min_items = 100) == Dict(:many => 50.5)
+        @test JuLeAna.measured_item_seconds(store, :p99; min_items = 100)[:many] ≈ 99.01
+        @test_throws "unknown statistic :p50" JuLeAna.measured_item_seconds(store, :p50; min_items = 1)
         # the latest recorded statistic of every processor in a history; a missing 99th percentile is skipped
         history = [(; timings = [(; process = :a, median = 1.0, p95 = 1.5, p99 = 1.9, max = 2.0)]),
                    (;
@@ -397,11 +397,15 @@ const REPORT = """
                 end
                 return nothing
             end
-            config(timeout) = ProcessingConfig(;
-                                               processors = Dict(:t => ProcessorSpec(; name = :t, level = :run, category = :cal, rank = 1,
-                                                                                     kwargs = Dict{Symbol,Any}(:timeout => timeout))),
-                                               p_processors = Dict{Symbol,ProcessorSpec}(), item_timeout_factor = 3,
-                                               item_timeout_minimum_minutes = 1)
+            config(timeout; item_time_minimum_items = 100) = ProcessingConfig(;
+                                                                              processors = Dict(:t =>
+                                                                                                    ProcessorSpec(; name = :t, level = :run,
+                                                                                                                  category = :cal, rank = 1,
+                                                                                                                  kwargs = Dict{Symbol,Any}(:timeout =>
+                                                                                                                                                timeout))),
+                                                                              p_processors = Dict{Symbol,ProcessorSpec}(),
+                                                                              item_time_minimum_items,
+                                                                              item_timeout_factor = 3, item_timeout_minimum_minutes = 1)
             # the steps of runs 1 and 2 one after the other
             run_t(cfg; kwargs...) = run_processing(cfg, FakeData(), [DataPeriod(3)], [:t], Symbol[],
                                                    stub_status([DataPeriod(3)], runs, [:t], Symbol[])...;
@@ -419,6 +423,10 @@ const REPORT = """
             # once 100 items of this run have finished, their 99th percentile replaces the recorded one
             run_t(config("auto"); recorded_item_p99 = Dict(:t => 100.0), progress_store = JuLeAna.ProgressStore())
             @test timeouts == Dict(runs[1] => 300, runs[2] => 60)
+            # with `item_time_minimum_items` above them, the recorded one stays
+            run_t(config("auto"; item_time_minimum_items = 101); recorded_item_p99 = Dict(:t => 100.0),
+                  progress_store = JuLeAna.ProgressStore())
+            @test timeouts == Dict(runs[1] => 300, runs[2] => 300)
             # a number is passed as it is
             run_t(config(5); recorded_item_p99 = Dict(:t => 100.0))
             @test timeouts == Dict(runs[1] => 5, runs[2] => 5)

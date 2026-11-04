@@ -525,7 +525,8 @@ function effective_config(ctrl::DataflowController)
                             cfg.periods, cfg.runs, something(ctrl.analysis_runs_only, cfg.analysis_runs_only), cfg.only_partitions,
                             cfg.only_runs, cfg.max_parallel_steps, cfg.log_path, cfg.log_level, cfg.processor_log_level,
                             cfg.processor_plot_level, cfg.plot_formats, cfg.idle_timeout_minutes, cfg.worker_restart_delay_seconds,
-                            cfg.worker_heartbeat_timeout_minutes, cfg.item_time_estimate, cfg.item_timeout_factor,
+                            cfg.worker_heartbeat_timeout_minutes, cfg.item_time_estimate, cfg.item_time_minimum_items,
+                            cfg.item_timeout_factor,
                             cfg.item_timeout_minimum_minutes, with_overrides(cfg.processors, ctrl.kwarg_overrides, ctrl.level_overrides),
                             with_overrides(cfg.p_processors, ctrl.kwarg_overrides, ctrl.level_overrides))
 end

@@ -158,7 +158,11 @@ const STUB_PROCESSORS = Dict{Symbol,Any}(:process_a => process_a, :p_process_b =
         @test ProcessingConfig(edited(d -> delete!(d["config"], "item_time_estimate"))).item_time_estimate === :median
         @test ProcessingConfig(edited(d -> d["config"]["item_time_estimate"] = "max")).item_time_estimate === :max
         @test_throws "`config.item_time_estimate` must be \"median\", \"p95\" or \"max\", got :p50" ProcessingConfig(edited(d -> d["config"]["item_time_estimate"] = "p50"))
-        @test (shipped.item_timeout_factor, shipped.item_timeout_minimum_minutes) == (2, 5)
+        @test (shipped.item_time_minimum_items, shipped.item_timeout_factor, shipped.item_timeout_minimum_minutes) == (100, 2, 5)
+        @test ProcessingConfig(edited(d -> delete!(d["config"], "item_time_minimum_items"))).item_time_minimum_items == 100
+        @test ProcessingConfig(edited(d -> d["config"]["item_time_minimum_items"] = 20)).item_time_minimum_items == 20
+        @test_throws "`config.item_time_minimum_items` must be at least 1, got 0" ProcessingConfig(edited(d -> d["config"]["item_time_minimum_items"] = 0))
+        @test_throws "`config.item_time_minimum_items` must be a Int64" ProcessingConfig(edited(d -> d["config"]["item_time_minimum_items"] = 2.5))
         defaults = ProcessingConfig(edited(d -> foreach(k -> delete!(d["config"], k),
                                                         ("item_timeout_factor", "item_timeout_minimum_minutes"))))
         @test (defaults.item_timeout_factor, defaults.item_timeout_minimum_minutes) == (2, 5)

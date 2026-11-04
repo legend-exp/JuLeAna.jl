@@ -92,8 +92,8 @@ every step runs with `reprocess = true` and an item time is known, the estimated
 that chain comes first: a step takes the item time of its processor times
 `max(1, items / workers)`, with the number of workers in the worker pool and, for a step
 without counted items, one item. The item time of a processor is the `cfg.item_time_estimate`
-(median, 95th percentile or maximum) of the durations of its items of this run once 100 of them
-have finished, else `recorded_item_seconds[processor]` (such as the same statistic from the history
+(median, 95th percentile or maximum) of the durations of its items of this run once
+`cfg.item_time_minimum_items` of them have finished, else `recorded_item_seconds[processor]` (such as the same statistic from the history
 of the production), else the median of the known ones. The order is updated after
 every finished step and before a worker is handed out when the number of workers changed. With
 `max_parallel_steps > 0` at most that many steps run at the same time. At the start, the
@@ -106,8 +106,8 @@ the run info counts as finished. `run_status[period][step][run]` and
 
 A processor whose keyword argument `timeout` is `"auto"` gets, when each of its steps starts,
 the item timeout `cfg.item_timeout_factor` times the 99th percentile of the durations of its
-items, at least `cfg.item_timeout_minimum_minutes`: of its items of this run once 100 of them
-have finished, else `recorded_item_p99[processor]` (such as the latest one in the history of
+items, at least `cfg.item_timeout_minimum_minutes`: of its items of this run once
+`cfg.item_time_minimum_items` of them have finished, else `recorded_item_p99[processor]` (such as the latest one in the history of
 the production). Without either it gets `timeout = 0`, no timeout. The timeout of a step does
 not change while it runs.
 
@@ -207,7 +207,8 @@ function run_processing(cfg::ProcessingConfig, l200, periods::AbstractVector{Dat
     function update_estimates!()
         isempty(untimed) || return false
         known = Dict{Symbol,Float64}(recorded_item_seconds)
-        isnothing(progress_store) || merge!(known, measured_item_seconds(progress_store, cfg.item_time_estimate))
+        isnothing(progress_store) ||
+            merge!(known, measured_item_seconds(progress_store, cfg.item_time_estimate; min_items = cfg.item_time_minimum_items))
         isempty(known) && return false
         fallback = median(collect(values(known)))
         workers = max(1, nworkers(ppt_worker_pool()))
@@ -235,7 +236,8 @@ function run_processing(cfg::ProcessingConfig, l200, periods::AbstractVector{Dat
     # `kwargs` of `step` with a `timeout` of "auto" replaced by the item timeout of its processor
     function with_item_timeout(kwargs, step)
         get(kwargs, :timeout, 0) == "auto" || return kwargs
-        measured = isnothing(progress_store) ? Dict{Symbol,Float64}() : measured_item_seconds(progress_store, :p99)
+        measured = isnothing(progress_store) ? Dict{Symbol,Float64}() :
+                   measured_item_seconds(progress_store, :p99; min_items = cfg.item_time_minimum_items)
         return merge(kwargs, (; timeout = item_timeout(cfg, step, get(measured, step, get(recorded_item_p99, step, nothing)))))
     end
     # Run the step `node` and return whether it was skipped and, for a partition step,

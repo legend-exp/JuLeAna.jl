@@ -13,7 +13,8 @@ current settings to that file and keeps the previous file as `processing_config.
 See [Running the dataflow](running.md). The
 file is loaded into a [`ProcessingConfig`](@ref); all keys of the `config` and
 `processing` sections are required except `idle_timeout_minutes`, `worker_restart_delay_seconds`,
-`worker_heartbeat_timeout_minutes`, `item_time_estimate`, `item_timeout_factor`, `item_timeout_minimum_minutes`,
+`worker_heartbeat_timeout_minutes`, `item_time_estimate`, `item_time_minimum_items`, `item_timeout_factor`,
+`item_timeout_minimum_minutes`,
 `processor_log_level`, `processor_plot_level`, `plot_formats` and
 `runmode_settings.slurm.worker_memory`, and a missing or
 unknown key stops the dataflow with an error that names the key.
@@ -84,12 +85,16 @@ The run mode, the worker settings, environment variables and logging:
     processing run estimates how long its steps take. When every selected step runs with
     `reprocess = true`, the steps whose chain of waiting steps is expected to take longest
     start first, and their items get free workers first. The item times of a processor come
-    from its items of the current run once 100 of them have finished, before that from the
-    latest run in the history of the production that recorded them.
-13. **`item_timeout_factor`** (optional, default `2`): a processor with `timeout: auto` in
+    from its items of the current run once `item_time_minimum_items` of them have finished,
+    before that from the latest run in the history of the production that recorded them.
+13. **`item_time_minimum_items`** (optional, default `100`, at least `1`): the number of
+    finished items of a processor in the current run from which their times replace the
+    recorded ones, for the estimates above and for `timeout: auto`. Fewer items give an
+    unreliable statistic, and the first items of a run include the compilation.
+14. **`item_timeout_factor`** (optional, default `2`): a processor with `timeout: auto` in
     its `kwargs` (see below) gets this factor times the 99th percentile of its item times as
     timeout per item.
-14. **`item_timeout_minimum_minutes`** (optional, default `5`): such a timeout is at least
+15. **`item_timeout_minimum_minutes`** (optional, default `5`): such a timeout is at least
     this many minutes.
 
 ## `processing`
@@ -161,8 +166,9 @@ All fields are required:
    seconds an item may run before its worker is ended, `0` for no limit, or `auto`. With
    `auto`, each step of the processor gets `item_timeout_factor` times the 99th percentile
    of the item times of the processor, at least `item_timeout_minimum_minutes`. The 99th
-   percentile comes from the current run once 100 items of the processor have finished,
-   before that from the latest run in the history of the production that recorded it.
+   percentile comes from the current run once `item_time_minimum_items` items of the
+   processor have finished, before that from the latest run in the history of the
+   production that recorded it.
    While neither is known, the step runs without a timeout. The timeout of a step is set
    when it starts and is written to the log.
 5. **`dependencies`**: processors of either level that must finish first. A run

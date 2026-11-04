@@ -267,15 +267,10 @@ function item_timings(store::ProgressStore)
     end
 end
 
-# Number of done items of a processor in the current processing run from which its item times
-# replace the recorded ones: fewer items give an unreliable statistic, and the first items of a
-# run include the compilation.
-const MEASURED_ITEMS = 100
-
 # The `statistic` (`:median`, `:p95`, `:p99` or `:max`, as in `item_timings`) of the durations in
 # seconds of the done items per processor of the current processing run, for the processors
 # with at least `min_items` of them.
-function measured_item_seconds(store::ProgressStore, statistic::Symbol = :median; min_items::Integer = MEASURED_ITEMS)
+function measured_item_seconds(store::ProgressStore, statistic::Symbol = :median; min_items::Integer)
     statistic in (:median, :p95, :p99, :max) || throw(ArgumentError("measured_item_seconds: unknown statistic $(repr(statistic))"))
     # the durations are sorted
     value(d) = statistic === :max ? last(d) :
