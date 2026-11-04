@@ -12,7 +12,8 @@ exist, JuLeAna first copies the config shipped with JuLeAna there; a `processing
 current settings to that file and keeps the previous file as `processing_config.yaml.bak`.
 See [Running the dataflow](running.md). The
 file is loaded into a [`ProcessingConfig`](@ref); all keys of the `config` and
-`processing` sections are required except `idle_timeout_minutes`, `processor_log_level`, `processor_plot_level`, `plot_formats` and
+`processing` sections are required except `idle_timeout_minutes`, `worker_restart_delay_seconds`,
+`worker_heartbeat_timeout_minutes`, `processor_log_level`, `processor_plot_level`, `plot_formats` and
 `runmode_settings.slurm.worker_memory`, and a missing or
 unknown key stops the dataflow with an error that names the key.
 
@@ -69,6 +70,14 @@ The run mode, the worker settings, environment variables and logging:
    are cancelled, so that idle workers do not hold a machine or a SLURM allocation. The
    time counts from the end of the last processing run, the start of the newest
    allocation or the last postponement, whichever is latest. `0` never cancels them.
+10. **`worker_restart_delay_seconds`** (optional, default `30`): the worker start script
+    starts a new worker whenever a worker ends, for example after a timeout or after
+    running out of memory, and waits this many seconds before it does. The pause keeps a
+    worker that cannot start from being started again and again in quick succession.
+11. **`worker_heartbeat_timeout_minutes`** (optional, default `5`, at least `2`): while it
+    has worker allocations, `juleana` touches a heartbeat file every minute. When a worker
+    ends and the file has not been touched for this many minutes, for example because
+    `juleana` crashed, the allocation ends itself instead of starting a new worker.
 
 ## `processing`
 

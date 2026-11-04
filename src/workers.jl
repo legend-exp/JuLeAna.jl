@@ -52,8 +52,9 @@ The attributes a worker process reports once (see [`JuLeAna.worker_attributes`](
 - `host::String`: the host name;
 - `os_pid::Int`: the process ID on the host;
 - `threads::Int`: the number of Julia threads;
-- `memory::Int`: the bytes of memory the process may use, `Sys.total_memory()`: the limit of
-  its control group, such as the memory of its SLURM job or step, else the memory of the host;
+- `memory::Int`: the bytes of memory the process may use: the smallest memory limit of its
+  control group and the groups above it (such as its SLURM job step and job), else
+  `Sys.total_memory()`;
 - `job`, `step`: the SLURM job and step ID, `""` outside SLURM;
 - `tasks`: the number of tasks of the SLURM step (`SLURM_STEP_NUM_TASKS`), `""` outside SLURM;
 - `cpus`: the CPUs per task of the SLURM step (`SLURM_CPUS_PER_TASK`), `""` if not set;
@@ -63,11 +64,28 @@ const WorkerAttributes = @NamedTuple{host::String, os_pid::Int, threads::Int, me
                                      cpus::String, gpus::String}
 
 # Run on a worker with `include_string`: it needs nothing but Base, so it also works before
-# the worker has loaded JuLeAna.
+# the worker has loaded JuLeAna. `Sys.total_memory()` reads only the control group of the
+# process, but a SLURM job step without memory of its own (`--mem=0`) is limited by the group
+# of its job, so the memory limit is the smallest one of the group and the groups above it,
+# with cgroup v2 (`memory.max`) or the memory controller of cgroup v1 (`memory.limit_in_bytes`).
 const WORKER_ATTRIBUTES_CODE = """
-    (; host = gethostname(), os_pid = getpid(), threads = Threads.nthreads(), memory = Int(Sys.total_memory()),
-     job = get(ENV, "SLURM_JOB_ID", ""), step = get(ENV, "SLURM_STEP_ID", ""), tasks = get(ENV, "SLURM_STEP_NUM_TASKS", ""),
-     cpus = get(ENV, "SLURM_CPUS_PER_TASK", ""), gpus = get(ENV, "SLURM_STEP_GPUS", ""))
+    let memory = Int(Sys.total_memory())
+        for line in (isfile("/proc/self/cgroup") ? eachline("/proc/self/cgroup") : String[])
+            _, controllers, group = split(line, ':'; limit = 3)
+            root, name = isempty(controllers) ? ("/sys/fs/cgroup", "memory.max") :
+                         "memory" in split(controllers, ',') ? ("/sys/fs/cgroup/memory", "memory.limit_in_bytes") : continue
+            while true
+                file = joinpath(root, lstrip(group, '/'), name)
+                limit = isfile(file) ? tryparse(Int, strip(read(file, String))) : nothing
+                isnothing(limit) || (memory = min(memory, limit))
+                group == "/" && break
+                group = dirname(group)
+            end
+        end
+        (; host = gethostname(), os_pid = getpid(), threads = Threads.nthreads(), memory,
+         job = get(ENV, "SLURM_JOB_ID", ""), step = get(ENV, "SLURM_STEP_ID", ""), tasks = get(ENV, "SLURM_STEP_NUM_TASKS", ""),
+         cpus = get(ENV, "SLURM_CPUS_PER_TASK", ""), gpus = get(ENV, "SLURM_STEP_GPUS", ""))
+    end
     """
 
 # Attributes of the worker processes by process ID; Distributed never reuses a process ID.
@@ -201,10 +219,6 @@ function set_worker_config!(mgr::WorkerManager, config::ProcessingConfig)
     return mgr
 end
 
-# Minutes after which the start scripts take this process as gone if it has not touched its
-# heartbeat file, which it does every minute (see `start_heartbeat`).
-const HEARTBEAT_MINUTES = 5
-
 # File that this process touches every minute while it has worker allocations, in the folder of
 # the start script, which the workers can read.
 heartbeat_file() = joinpath(production_config_dir(), "juleana-$(gethostname())-$(getpid()).alive")
@@ -228,20 +242,21 @@ function start_heartbeat(path::AbstractString)
 end
 
 # Bash lines that run `cmd` in `n` slots at the same time and start it again in its slot
-# whenever it ends, as long as `heartbeat` was touched in the last `HEARTBEAT_MINUTES` minutes;
-# otherwise they run `stop`, which ends the allocation.
-function restart_loop(n::Integer, cmd::AbstractString, heartbeat::AbstractString, stop::AbstractString)
+# `delay` seconds after it ended, as long as `heartbeat` was touched in the last `minutes`
+# minutes; otherwise they run `stop`, which ends the allocation.
+function restart_loop(n::Integer, cmd::AbstractString, heartbeat::AbstractString, stop::AbstractString, delay::Integer, minutes::Integer)
     return """
         for slot in \$(seq $n); do
           while true; do
             start=\$SECONDS
             $cmd
             echo "Worker slot \$slot: the worker ended after \$((SECONDS - start)) s"
-            if [ -z "\$(find $(Base.shell_escape_posixly(heartbeat)) -mmin -$HEARTBEAT_MINUTES 2>/dev/null)" ]; then
-              echo "JuLeAna has not touched $(Base.shell_escape_posixly(heartbeat)) for $HEARTBEAT_MINUTES minutes: ending the allocation"
+            if [ -z "\$(find $(Base.shell_escape_posixly(heartbeat)) -mmin -$minutes 2>/dev/null)" ]; then
+              echo "JuLeAna has not touched $(Base.shell_escape_posixly(heartbeat)) for $minutes minutes: ending the allocation"
               $stop
               exit
             fi
+            sleep $delay
           done &
         done
         wait
@@ -252,9 +267,11 @@ end
     JuLeAna.worker_start_script(cfg::ProcessingConfig)
 
 Return the text of the bash script that starts the workers of the run mode of `cfg` and
-connects them to this process. A worker that ends is started again in its slot, so the script
+connects them to this process. A worker that ends is started again in its slot after
+`cfg.worker_restart_delay_seconds`, so the script
 runs until it is ended, as long as this process runs: when a worker ends and this process has
-not touched its heartbeat file for 5 minutes (see [`JuLeAna.add_workers!`](@ref)), the script
+not touched its heartbeat file for `cfg.worker_heartbeat_timeout_minutes` (see
+[`JuLeAna.add_workers!`](@ref)), the script
 ends the allocation, the local workers with SIGTERM to its process group, the SLURM job with
 `scancel`.
 
@@ -278,7 +295,8 @@ function worker_start_script(cfg::ProcessingConfig)
         return """
             #!/bin/bash
             # Starts $n Julia workers on this host. A worker that ends is started again.
-            """ * restart_loop(n, Base.shell_escape_posixly(cmd), heartbeat_file(), "kill 0")
+            """ * restart_loop(n, Base.shell_escape_posixly(cmd), heartbeat_file(), "kill 0", cfg.worker_restart_delay_seconds,
+                               cfg.worker_heartbeat_timeout_minutes)
     end
     flags = cfg.slurm_flags
     any(in(("--cpu-bind", "--mem-bind")), flags) &&
@@ -316,7 +334,8 @@ function worker_start_script(cfg::ProcessingConfig)
         #!/bin/bash
         # every step runs one task; the job's tasks per node would make `srun` warn at every start
         unset SLURM_NTASKS_PER_NODE
-        $(restart_loop(n, Base.shell_escape_posixly(step), heartbeat_file(), "scancel \"\$SLURM_JOB_ID\""))JOB
+        $(restart_loop(n, Base.shell_escape_posixly(step), heartbeat_file(), "scancel \"\$SLURM_JOB_ID\"", cfg.worker_restart_delay_seconds,
+                       cfg.worker_heartbeat_timeout_minutes))JOB
         job=\$!
         tail -n +1 -F "\$output" 2>/dev/null &
         follow=\$!
@@ -388,8 +407,8 @@ The started workers connect to this process and join its worker pool.
 
 From the first allocation on, this process touches its heartbeat file
 `juleana-<host>-<pid>.alive` in the [`JuLeAna.production_config_dir`](@ref) every minute until
-it exits; the start scripts end their allocation when the file has not been touched for 5
-minutes (see [`JuLeAna.worker_start_script`](@ref)).
+it exits; the start scripts end their allocation when the file has not been touched for the
+`worker_heartbeat_timeout_minutes` of the config (see [`JuLeAna.worker_start_script`](@ref)).
 """
 function add_workers!(mgr::WorkerManager)
     @lock mgr.lock begin

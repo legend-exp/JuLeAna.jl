@@ -144,7 +144,7 @@ state_of(mgr, id) = only(filter(a -> a.id == id, JuLeAna.allocations(mgr))).stat
             dir = mktempdir()
             runs, out, heartbeat = joinpath(dir, "runs"), joinpath(dir, "out"), joinpath(dir, "alive")
             touch(heartbeat)
-            loop = run(pipeline(detach(`bash -c $(JuLeAna.restart_loop(2, "echo \$slot >> $runs; sleep 0.1", heartbeat, "echo stop"))`);
+            loop = run(pipeline(detach(`bash -c $(JuLeAna.restart_loop(2, "echo \$slot >> $runs; sleep 0.1", heartbeat, "echo stop", 0, 5))`);
                                 stdout = out); wait = false)
             @test wait_until(() -> isfile(runs) && all(slot -> count(==(slot), readlines(runs)) >= 3, ("1", "2")))
             # the loop leads its own process group
@@ -153,11 +153,12 @@ state_of(mgr, id) = only(filter(a -> a.id == id, JuLeAna.allocations(mgr))).stat
             @test occursin("Worker slot 1: the worker ended after 0 s\n", read(out, String)) && !occursin("stop", read(out, String))
             # with a heartbeat file older than five minutes, or none, each slot runs `stop` after its worker ends and ends
             run(`touch -t 202001010000 $heartbeat`)
-            out = read(`bash -c $(JuLeAna.restart_loop(2, "true", heartbeat, "echo stop"))`, String)
+            out = read(`bash -c $(JuLeAna.restart_loop(2, "true", heartbeat, "echo stop", 0, 5))`, String)
             @test count(==("stop"), split(out, '\n')) == 2
             @test occursin("JuLeAna has not touched $heartbeat for 5 minutes: ending the allocation", out)
             rm(heartbeat)
-            @test count(==("stop"), split(read(`bash -c $(JuLeAna.restart_loop(2, "true", heartbeat, "echo stop"))`, String), '\n')) == 2
+            @test count(==("stop"),
+                        split(read(`bash -c $(JuLeAna.restart_loop(2, "true", heartbeat, "echo stop", 0, 5))`, String), '\n')) == 2
         end
 
         @testset "SLURM start script" begin
@@ -175,6 +176,10 @@ state_of(mgr, id) = only(filter(a -> a.id == id, JuLeAna.allocations(mgr))).stat
             # each worker is a job step with the CPUs of a task, the binding flags and no memory of its own
             step = "srun --nodes=1 --ntasks=1 --exact --cpus-per-task=2 --mem=0 --mem-bind=local --cpu-bind=cores "
             @test occursin(step, text) && occursin("elastic_worker", text) && occursin("\n      scancel \"\$SLURM_JOB_ID\"\n", text)
+            # a slot waits 30 s before it starts a new worker and ends the job without the heartbeat for 5 minutes, both set in the config
+            @test occursin("\n    sleep 30\n", text) && occursin(" -mmin -5 ", text)
+            other = JuLeAna.worker_start_script(slurm_config(; worker_restart_delay_seconds = 7, worker_heartbeat_timeout_minutes = 3))
+            @test occursin("\n    sleep 7\n", other) && occursin(" -mmin -3 ", other)
             # fixed memory: the memory of the node divided by its workers
             @test occursin("--mem=122880M --mem-bind", JuLeAna.worker_start_script(slurm_config(; slurm_worker_memory = :fixed)))
             flags = ["--ntasks=2"]
@@ -199,7 +204,7 @@ state_of(mgr, id) = only(filter(a -> a.id == id, JuLeAna.allocations(mgr))).stat
             flags = ["--ntasks=2", "--cpus-per-task=2"]
             # `squeue` lists no job, so only the script itself can cancel it
             mgr = JuLeAna.WorkerManager(; squeue = `true`)
-            JuLeAna.set_worker_config!(mgr, slurm_config(; log_path = logs))
+            JuLeAna.set_worker_config!(mgr, slurm_config(; log_path = logs, worker_restart_delay_seconds = 0))
             withenv("PATH" => "$bin:$(ENV["PATH"])") do
                 return JuLeAna.add_workers!(mgr)
             end

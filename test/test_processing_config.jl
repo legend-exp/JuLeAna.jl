@@ -153,6 +153,14 @@ const STUB_PROCESSORS = Dict{Symbol,Any}(:process_a => process_a, :p_process_b =
         @test_throws "`config.idle_timeout_minutes` must be zero or positive, got -1.0" ProcessingConfig(edited(d -> d["config"]["idle_timeout_minutes"] = -1))
         @test_throws "`config.idle_timeout_minutes` must be a Real" ProcessingConfig(edited(d -> d["config"]["idle_timeout_minutes"] = "20"))
         @test shipped.slurm_worker_memory === :shared
+        @test (shipped.worker_restart_delay_seconds, shipped.worker_heartbeat_timeout_minutes) == (30, 5)
+        defaults = ProcessingConfig(edited(d -> foreach(k -> delete!(d["config"], k),
+                                                        ("worker_restart_delay_seconds", "worker_heartbeat_timeout_minutes"))))
+        @test (defaults.worker_restart_delay_seconds, defaults.worker_heartbeat_timeout_minutes) == (30, 5)
+        @test ProcessingConfig(edited(d -> d["config"]["worker_restart_delay_seconds"] = 0)).worker_restart_delay_seconds == 0
+        @test_throws "`config.worker_restart_delay_seconds` must be zero or positive, got -1" ProcessingConfig(edited(d -> d["config"]["worker_restart_delay_seconds"] = -1))
+        @test_throws "`config.worker_heartbeat_timeout_minutes` must be at least 2, got 1" ProcessingConfig(edited(d -> d["config"]["worker_heartbeat_timeout_minutes"] = 1))
+        @test_throws "`config.worker_restart_delay_seconds` must be a Int64" ProcessingConfig(edited(d -> d["config"]["worker_restart_delay_seconds"] = 2.5))
         @test ProcessingConfig(edited(d -> delete!(d["config"]["runmode_settings"]["slurm"], "worker_memory"))).slurm_worker_memory ===
               :shared
         @test ProcessingConfig(edited(d -> d["config"]["runmode_settings"]["slurm"]["worker_memory"] = "fixed")).slurm_worker_memory ===
