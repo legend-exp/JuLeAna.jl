@@ -27,14 +27,20 @@ function read_hit_cal(l200::LegendData, det, runs, e_types::AbstractVector{Symbo
     columns_out = union([:timestamp], _input_columns(ljl_propfunc.(expressions)))
     detector = DetectorId(det)
     aoe_classifiers, lq_classifiers = Symbol.(string.(aoe_types) .* "_classifier"), Symbol.(string.(lq_types) .* "_classifier")
+    # `pars` is a NamedTuple rather than keywords, so that the whole `get_ged_evt_kwargs` result,
+    # which also holds other settings, can be passed.
     e_cal   = (; pars_type = get(pars, :e_cal_pars_type, :rpars), pars_cat = get(pars, :e_cal_pars_cat, :ecal))
     aoe_cal = (; pars_type = get(pars, :aoe_cal_pars_type, :ppars), pars_cat = get(pars, :aoe_cal_pars_cat, :aoe))
     aoe_cut = (; pars_type = get(pars, :aoe_cut_pars_type, :ppars), pars_cat = get(pars, :aoe_cut_pars_cat, :aoe))
     lq_cal  = (; pars_type = get(pars, :lq_cal_pars_type, :ppars), pars_cat = get(pars, :lq_cal_pars_cat, :lq))
     lq_cut  = (; pars_type = get(pars, :lq_cut_pars_type, :ppars), pars_cat = get(pars, :lq_cut_pars_cat, :lq))
+
     tables = map(collect(runs)) do (period, run)
         sel = start_filekey(l200, (period, run, :cal))
-        # LegendDataManagement keeps the parsed parameters of each run in the process.
+        # Not the public `get_ged_cal_propfunc`, `get_ged_psd_propfunc` and cut functions: each compiles one
+        # function over all configured types, which needs the jldsp columns of all of them. The expressions
+        # of the requested types alone keep the read to the columns they use. LegendDataManagement keeps
+        # the parsed parameters of each run in the process.
         psd_funcs = [[c => ljl_propfunc(LegendDataManagement._get_aoe_cal_propfunc_str(l200, sel, detector, t; aoe_cal...))
                       for (t, c) in zip(aoe_types, aoe_classifiers)];
                      [c => ljl_propfunc(LegendDataManagement._get_lq_cal_propfunc_str(l200, sel, detector, t; lq_cal...))
@@ -49,8 +55,8 @@ function read_hit_cal(l200::LegendData, det, runs, e_types::AbstractVector{Symbo
         # The classifiers may use other calibrated energies, named `<energy>_cal` as in `get_ged_cal_propfunc`.
         cal_types = union(e_types, filter(col -> endswith(string(col), "_cal"), _input_columns(last.(psd_funcs))))
         cal_funcs = [e_type => ljl_propfunc(LegendDataManagement._get_e_cal_propsfunc_str(l200, sel, detector,
-                                                                                         Symbol(chopsuffix(string(e_type), "_cal"));
-                                                                                         e_cal...))
+                                                                                          Symbol(chopsuffix(string(e_type), "_cal"));
+                                                                                          e_cal...))
                      for e_type in cal_types]
         # Each stage uses the outputs of the previous ones, as in `calibrate_ged_detector_data`.
         stages = (cal_funcs, psd_funcs, cut_funcs)

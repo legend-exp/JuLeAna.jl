@@ -31,16 +31,15 @@ using IntervalSets: IntervalSets, (..), leftendpoint, rightendpoint
 using LaTeXStrings: LaTeXStrings, @L_str
 using LegendDataManagement: LegendDataManagement, DataCategory, DataPeriod, DataRun, DataTier, DetectorId, FileKey, LegendData,
                             ProcessStatus, bad_filekeys, channelinfo, data_path, dataprod_config, get_aux_cal_propfunc,
-                            get_aux_evt_detsel_propfunc, get_dsp_pars, get_exposure, get_ged_evt_detsel_propfunc, get_ged_evt_kwargs,
-                            get_ged_qc_is_crosstalk_propfunc, get_values, is_analysis_run, is_lrun,
-                            ljl_propfunc, lreport, lreport!, lstring, partitioninfo, process_failed, process_succeeded, process_warning,
-                            read_ldata, readlprops, runinfo, start_filekey, writelprops, writelreport
+                            get_aux_evt_detsel_propfunc, get_dsp_pars, get_exposure, get_ged_evt_kwargs, get_values, is_analysis_run,
+                            is_lrun, ljl_propfunc, lreport, lreport!, lstring, partitioninfo, process_failed, process_succeeded,
+                            process_warning, read_ldata, readlprops, runinfo, start_filekey, writelprops, writelreport
 using LegendDataManagement.LDMUtils: LDMUtils, create_logtbl, create_metadatatbl, create_pars, create_validity, get_partitionvalidity,
                                      get_plottitle, get_preportfilename, get_rreportfilename, savelfig, writevalidity
 using LegendDataTypes: LegendDataTypes, decode_data, fast_flatten
 using LegendDSP: LegendDSP, DSPConfig, dsp_decay_times, dsp_icpc_compressed, dsp_pmts, dsp_qc_flt_optimization_compressed,
                  dsp_qdrift_flt_optimization, dsp_sipm_compressed
-using LegendEventAnalysis: LegendEventAnalysis, TimeEvolution, build_global_events, calibrate_all, flag_coincidences, rate, relative,
+using LegendEventAnalysis: LegendEventAnalysis, TimeEvolution, calibrate_all, flag_coincidences, rate, relative,
                            smooth
 using LegendHDF5IO: LegendHDF5IO, delete_entry!, lh5open
 import LegendMakie

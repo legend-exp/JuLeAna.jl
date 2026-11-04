@@ -124,13 +124,13 @@ function process_qcs_cal(processing_config, l200::LegendData, period::DataPeriod
         energy_config_det = merge(energy_config.default, get(energy_config, det, PropDict()))
 
         @debug "Summarize QC for detector $det ($ch)"
-        qc_parts, qc, data_det = @process_step "data loader" begin
+        qc_parts, qc, e_trap = @process_step "data loader" begin
             # Per filekey for the filekey summary, which includes the removed filekeys.
             qc_parts = [read_ldata(l200, DataTier(:jlqcs), fk, det) for fk in filekeys]
-            qc = reduce(vcat, qc_parts[included_filekeys]; init = first(qc_parts)[1:0])
-            data_det = read_ldata((:timestamp, :e_trap), l200, DataTier(:jldsp), filekeys[included_filekeys], det)
-            data_det.timestamp == qc.timestamp || throw(DimensionMismatch("DSP and QC timestamps differ for $det in $period-$run"))
-            qc_parts, qc, data_det
+            qc = reduce(vcat, qc_parts[included_filekeys])
+            e_trap = read_ldata(:e_trap, l200, DataTier(:jldsp), filekeys[included_filekeys], det).e_trap
+            length(e_trap) == length(qc) || throw(DimensionMismatch("DSP and QC event counts differ for $det in $period-$run"))
+            qc_parts, qc, e_trap
         end
         flag_names = [Symbol.(keys(qc_config_det.labels))...; :is_single_pulse]
         qc_propfunc = merge(qc_config_det.labels, PropDict(:is_single_pulse => qc_config_det.is_single_pulse))
@@ -180,8 +180,8 @@ function process_qcs_cal(processing_config, l200::LegendData, period::DataPeriod
         try
             length(qc) < 5000 && throw(ErrorException("Not enough data points for detector $det ($ch): $(length(qc)) < 5000"))
 
-            valid_energy = isfinite.(data_det.e_trap) .&& (data_det.e_trap .> 0) .&& .!is_pulser
-            e_uncal = collect(data_det.e_trap[valid_energy])
+            valid_energy = isfinite.(e_trap) .&& (e_trap .> 0) .&& .!is_pulser
+            e_uncal = collect(e_trap[valid_energy])
             plot_uncal_spectrum() = begin
                 fig = Makie.Figure()
                 ax = Makie.Axis(fig[1, 1]; title = get_plottitle(filekey, det, "Uncalibrated Spectrum"), xlabel = "Energy (ADC)",
@@ -219,15 +219,15 @@ function process_qcs_cal(processing_config, l200::LegendData, period::DataPeriod
 
             @process_step "energy spectrum plot" begin
                 # plot energy spectra before and after QC
-                data_det_for_plot = data_det[qc.is_valid_e]
-                data_det_after_qc = data_det[qc.is_single_pulse .&& .!is_pulser .&& qc.is_valid_e]
-                data_pulser = data_det[qc.is_single_pulse .&& is_pulser .&& qc.is_valid_e]
+                e_for_plot = e_trap[qc.is_valid_e]
+                e_after_qc = e_trap[qc.is_single_pulse .&& .!is_pulser .&& qc.is_valid_e]
+                e_pulser = e_trap[qc.is_single_pulse .&& is_pulser .&& qc.is_valid_e]
                 fig = Makie.Figure(size = (620, 400))
                 binwidth = 8 * 15
-                spectrum_range = range(0, maximum(data_det_after_qc.e_trap), step = binwidth)
-                hall = StatsBase.fit(StatsBase.Histogram, data_det_for_plot.e_trap, spectrum_range)
-                hqc = StatsBase.fit(StatsBase.Histogram, data_det_after_qc.e_trap, spectrum_range)
-                hp = StatsBase.fit(StatsBase.Histogram, data_pulser.e_trap, spectrum_range)
+                spectrum_range = range(0, maximum(e_after_qc), step = binwidth)
+                hall = StatsBase.fit(StatsBase.Histogram, e_for_plot, spectrum_range)
+                hqc = StatsBase.fit(StatsBase.Histogram, e_after_qc, spectrum_range)
+                hp = StatsBase.fit(StatsBase.Histogram, e_pulser, spectrum_range)
                 ax = Makie.Axis(fig[1, 1], xlabel = "Energy (ADC)", ylabel = "Counts / $(binwidth) ADC",
                                 xtickformat = x -> string.(round.(Int, x)), yscale = log10,
                                 limits = (extrema(first(hall.edges)), (0.9, maximum(hall.weights) * 1.2)),
@@ -319,7 +319,8 @@ function process_qcs_cal(processing_config, l200::LegendData, period::DataPeriod
     lreport!(report, "# Metadata")
     lreport!(report, create_metadatatbl(filekey))
     lreport!(report, "# QC stability warnings")
-    lreport!(report, "Pulser single-pulse survival fractions of filekeys that deviate from the other nonremoved filekeys by more than $(stability_sigma)σ.")
+    lreport!(report,
+             "Pulser single-pulse survival fractions of filekeys that deviate from the other nonremoved filekeys by more than $(stability_sigma)σ.")
     lreport!(report, isempty(warning_rows) ? "No unexpected filekey survival fraction deviations." : StructArray(warning_rows))
     # lreport!(report, "# Detector overview")
     # lreport!(report, fig)
