@@ -51,7 +51,7 @@ processors:
     rank: 1
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies: []
 
   process_peak_split_cal:
@@ -67,7 +67,7 @@ processors:
     rank: 2
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
       use_cache: false
     dependencies:
       - process_daq_energy_calibration_cal
@@ -85,7 +85,7 @@ processors:
     rank: 3
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_peak_split_cal
 
@@ -102,7 +102,7 @@ processors:
     rank: 4
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_decay_time_cal
 
@@ -119,7 +119,7 @@ processors:
     rank: 5
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_filter_optimization_cal
 
@@ -137,7 +137,7 @@ processors:
     kwargs:
       reprocess: false
       max_wvfs: 1000
-      timeout: 0
+      timeout: auto
       use_cache: true
     dependencies:
       - p_process_aoe_optimization_cal
@@ -156,7 +156,7 @@ processors:
     rank: 7
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
       use_cache: true
     dependencies:
       - process_dsp_cal
@@ -174,7 +174,7 @@ processors:
     rank: 8
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_qcs_cal
 
@@ -191,7 +191,7 @@ processors:
     rank: 9
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_ct_correction_cal
 
@@ -208,7 +208,7 @@ processors:
     rank: 10
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_energy_calibration_cal
 
@@ -225,7 +225,7 @@ processors:
     rank: 11
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_energy_calibration_cal
 
@@ -242,7 +242,7 @@ processors:
     rank: 12
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
       use_partition_pars: true
     dependencies:
       - p_process_aoe_calibration_cut_cal
@@ -264,7 +264,7 @@ processors:
     rank: 13
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
       use_cache: false
     dependencies:
       - process_daq_energy_calibration_cal
@@ -282,7 +282,7 @@ processors:
     rank: 14
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
       use_cache: true
     dependencies: []
 
@@ -299,7 +299,7 @@ processors:
     rank: 15
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_dsp_aux_phy
 
@@ -316,7 +316,7 @@ processors:
     rank: 16
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
       use_cache: true
       max_wvfs: 1000
     dependencies:
@@ -338,7 +338,7 @@ processors:
     rank: 17
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
       use_cache: true
     dependencies:
       - process_dsp_phy
@@ -356,7 +356,7 @@ processors:
     rank: 18
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_dsp_phy
       - process_dsp_aux_phy
@@ -373,7 +373,7 @@ processors:
     rank: 19
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
       use_cache: true
     dependencies:
       - process_energy_calibration_cal
@@ -399,7 +399,7 @@ processors:
     rank: 20
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_evt_phy
 
@@ -417,7 +417,7 @@ p_processors:
     rank: 1
     kwargs:
       reprocess: false
-      timeout: 180
+      timeout: auto
     dependencies:
       - process_peak_split_cal
 
@@ -434,7 +434,7 @@ p_processors:
     rank: 2
     kwargs:
       reprocess: false
-      timeout: 3000
+      timeout: auto
     dependencies:
       - p_process_decay_time_cal
 
@@ -451,7 +451,7 @@ p_processors:
     rank: 3
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
       max_wvfs: 35000
     dependencies:
       - p_process_filter_optimization_cal
@@ -469,7 +469,7 @@ p_processors:
     rank: 4
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_energy_calibration_cal
 
@@ -486,7 +486,7 @@ p_processors:
     rank: 5
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_energy_calibration_cal
 
@@ -503,7 +503,7 @@ p_processors:
     rank: 6
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_aoe_calibration_cut_cal
       - p_process_aoe_calibration_cut_cal
@@ -521,7 +521,7 @@ p_processors:
     rank: 7
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_energy_calibration_cal
       - p_process_energy_cal
@@ -539,7 +539,7 @@ p_processors:
     rank: 8
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - p_process_lq_calibration_cut_cal
       - p_process_aoe_calibration_cut_cal
@@ -558,7 +558,7 @@ p_processors:
     rank: 9
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_dsp_aux_phy
 
@@ -575,7 +575,7 @@ p_processors:
     rank: 10
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_dsp_phy
       - process_dsp_aux_phy
@@ -593,7 +593,7 @@ p_processors:
     rank: 11
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
       use_cache: true
     dependencies:
       - process_evt_phy
@@ -611,6 +611,6 @@ p_processors:
     rank: 12
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - p_process_skm_phy
