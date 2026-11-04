@@ -1,8 +1,8 @@
 # This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
 
 """
-    read_hit_cal(l200::LegendData, det, runs, e_types::AbstractVector{Symbol}, expressions = [];
-                 aoe_types = Symbol[], lq_types = Symbol[], cuts::Bool = false, pars::NamedTuple = (;))
+    read_hit_cal(l200::LegendData, det, runs, e_types::AbstractVector{Symbol}, expressions = String[], aoe_types = Symbol[],
+                 lq_types = Symbol[]; cuts::Bool = false, <stage>_pars_type::Symbol, <stage>_pars_cat::Symbol)
 
 Read the single-pulse, non-pulser events (`jlqcs` tier) of the `cal` data of detector `det`
 for each `(period, run)` in `runs` and return them as one `Table`.
@@ -16,47 +16,48 @@ For each type in `aoe_types` and `lq_types` the table also has its classifier `<
 and with `cuts` its cut flag (`<classifier>_low_cut` for A/E, `<classifier>_high_cut` for LQ).
 
 The calibration functions and cut flags are those of `calibrate_ged_detector_data`, from the
-parameters of each run that `pars` selects with the parameter keywords of that function (e.g.
-the result of `get_ged_evt_kwargs`): `<stage>_pars_type` and `<stage>_pars_cat` for the stages
-`e_cal` (default `rpars.ecal`), `aoe_cal`, `aoe_cut` (`ppars.aoe`), `lq_cal` and `lq_cut`
-(`ppars.lq`). Other entries of `pars` are not used. Only the `jldsp` columns the functions need
-are read.
+parameters of each run that its keywords `<stage>_pars_type` and `<stage>_pars_cat` select for the
+stages `e_cal` (default `rpars.ecal`), `aoe_cal`, `aoe_cut` (`ppars.aoe`), `lq_cal` and `lq_cut`
+(`ppars.lq`). Only the `jldsp` columns the functions need are read.
 """
-function read_hit_cal(l200::LegendData, det, runs, e_types::AbstractVector{Symbol}, expressions = []; aoe_types = Symbol[],
-                      lq_types = Symbol[], cuts::Bool = false, pars::NamedTuple = (;))
+function read_hit_cal(l200::LegendData, det, runs, e_types::AbstractVector{Symbol}, expressions = String[], aoe_types = Symbol[],
+                      lq_types = Symbol[]; cuts::Bool = false, e_cal_pars_type::Symbol = :rpars, e_cal_pars_cat::Symbol = :ecal,
+                      aoe_cal_pars_type::Symbol = :ppars, aoe_cal_pars_cat::Symbol = :aoe, aoe_cut_pars_type::Symbol = :ppars,
+                      aoe_cut_pars_cat::Symbol = :aoe, lq_cal_pars_type::Symbol = :ppars, lq_cal_pars_cat::Symbol = :lq,
+                      lq_cut_pars_type::Symbol = :ppars, lq_cut_pars_cat::Symbol = :lq)
     columns_out = union([:timestamp], _input_columns(ljl_propfunc.(expressions)))
     detector = DetectorId(det)
     aoe_classifiers, lq_classifiers = Symbol.(string.(aoe_types) .* "_classifier"), Symbol.(string.(lq_types) .* "_classifier")
-    # `pars` is a NamedTuple rather than keywords, so that the whole `get_ged_evt_kwargs` result,
-    # which also holds other settings, can be passed.
-    e_cal   = (; pars_type = get(pars, :e_cal_pars_type, :rpars), pars_cat = get(pars, :e_cal_pars_cat, :ecal))
-    aoe_cal = (; pars_type = get(pars, :aoe_cal_pars_type, :ppars), pars_cat = get(pars, :aoe_cal_pars_cat, :aoe))
-    aoe_cut = (; pars_type = get(pars, :aoe_cut_pars_type, :ppars), pars_cat = get(pars, :aoe_cut_pars_cat, :aoe))
-    lq_cal  = (; pars_type = get(pars, :lq_cal_pars_type, :ppars), pars_cat = get(pars, :lq_cal_pars_cat, :lq))
-    lq_cut  = (; pars_type = get(pars, :lq_cut_pars_type, :ppars), pars_cat = get(pars, :lq_cut_pars_cat, :lq))
-
     tables = map(collect(runs)) do (period, run)
         sel = start_filekey(l200, (period, run, :cal))
         # Not the public `get_ged_cal_propfunc`, `get_ged_psd_propfunc` and cut functions: each compiles one
         # function over all configured types, which needs the jldsp columns of all of them. The expressions
         # of the requested types alone keep the read to the columns they use. LegendDataManagement keeps
         # the parsed parameters of each run in the process.
-        psd_funcs = [[c => ljl_propfunc(LegendDataManagement._get_aoe_cal_propfunc_str(l200, sel, detector, t; aoe_cal...))
+        psd_funcs = [[c =>
+                          ljl_propfunc(LegendDataManagement._get_aoe_cal_propfunc_str(l200, sel, detector, t; pars_type = aoe_cal_pars_type,
+                                                                                      pars_cat = aoe_cal_pars_cat))
                       for (t, c) in zip(aoe_types, aoe_classifiers)];
-                     [c => ljl_propfunc(LegendDataManagement._get_lq_cal_propfunc_str(l200, sel, detector, t; lq_cal...))
+                     [c =>
+                          ljl_propfunc(LegendDataManagement._get_lq_cal_propfunc_str(l200, sel, detector, t; pars_type = lq_cal_pars_type,
+                                                                                     pars_cat = lq_cal_pars_cat))
                       for (t, c) in zip(lq_types, lq_classifiers)]]
         cut_funcs = !cuts ? [] :
                     [[Symbol("$(c)_low_cut") =>
-                          ljl_propfunc(LegendDataManagement._get_ged_aoe_lowcut_propfunc_str(l200, sel, detector, c; aoe_cut...))
+                          ljl_propfunc(LegendDataManagement._get_ged_aoe_lowcut_propfunc_str(l200, sel, detector, c;
+                                                                                             pars_type = aoe_cut_pars_type,
+                                                                                             pars_cat = aoe_cut_pars_cat))
                       for c in aoe_classifiers];
                      [Symbol("$(c)_high_cut") =>
-                          ljl_propfunc(LegendDataManagement._get_ged_lq_highcut_propfunc_str(l200, sel, detector, c; lq_cut...))
+                          ljl_propfunc(LegendDataManagement._get_ged_lq_highcut_propfunc_str(l200, sel, detector, c;
+                                                                                             pars_type = lq_cut_pars_type,
+                                                                                             pars_cat = lq_cut_pars_cat))
                       for c in lq_classifiers]]
         # The classifiers may use other calibrated energies, named `<energy>_cal` as in `get_ged_cal_propfunc`.
         cal_types = union(e_types, filter(col -> endswith(string(col), "_cal"), _input_columns(last.(psd_funcs))))
         cal_funcs = [e_type => ljl_propfunc(LegendDataManagement._get_e_cal_propsfunc_str(l200, sel, detector,
                                                                                           Symbol(chopsuffix(string(e_type), "_cal"));
-                                                                                          e_cal...))
+                                                                                          pars_type = e_cal_pars_type, pars_cat = e_cal_pars_cat))
                      for e_type in cal_types]
         # Each stage uses the outputs of the previous ones, as in `calibrate_ged_detector_data`.
         stages = (cal_funcs, psd_funcs, cut_funcs)
