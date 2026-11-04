@@ -145,7 +145,8 @@ Apply the QC selection `qc_string` to the waveforms of one peak as returned by
 `load_peak_waveforms`, compute qdrift from the windowed waveforms and prepare the presummed
 waveforms once with `dsp_flt_optimization_prepare`.
 
-Returns `(wvfs_pre, prep, qdrift)` of the events passing the QC.
+Returns `(prep, qdrift)` of the events passing the QC, where `prep` is a `FltOptPrep`. The
+presummed waveforms are not kept.
 """
 function prepare_peak_set(wvfs::NamedTuple, dsp_config::DSPConfig, τ::Unitful.Time, f_evaluate_qc, qc_string::AbstractString)
     dsp_qc = dsp_qc_flt_optimization_compressed(wvfs.wvfs_pre, dsp_config, τ, f_evaluate_qc)
@@ -155,7 +156,7 @@ function prepare_peak_set(wvfs::NamedTuple, dsp_config::DSPConfig, τ::Unitful.T
     wvfs_pre, wvfs_wdw = wvfs.wvfs_pre[qc], wvfs.wvfs_wdw[qc]
     blmean_wdw = (dsp_qc.blmean ./ wvfs.presum_rate)[qc]
     qdrift = dsp_qdrift_flt_optimization(wvfs_wdw, blmean_wdw, dsp_config, τ)
-    return (; wvfs_pre, prep = dsp_flt_optimization_prepare(wvfs_pre, dsp_config, τ), qdrift)
+    return (; prep = dsp_flt_optimization_prepare(wvfs_pre, dsp_config, τ), qdrift)
 end
 
 
@@ -429,7 +430,7 @@ function optimize_channel_filter(sets::NamedTuple, flt::Symbol, dsp_config::DSPC
     end
 
     result_rt, report_rt = @process_step "$flt noise sweep" begin
-        enc_grid = getfield(LegendDSP, Symbol("dsp_$(flt)_rt_optimization"))(sets.fep.wvfs_pre, dsp_config, τ; ft = flt_config.ft_fixed)
+        enc_grid = getfield(LegendDSP, Symbol("dsp_$(flt)_rt_optimization"))(sets.fep.prep, dsp_config; ft = flt_config.ft_fixed)
         result_rt, report_rt = fit_enc_sigmas(enc_grid, e_grid_rt, flt_config.min_enc, flt_config.max_enc,
             flt_config.nbins_enc_sigmas, flt_config.rel_cut_fit_enc_sigmas)
         f_save(LegendMakie.lplot(report_rt, title = f_title("Noise Sweep", flt)), Symbol("noise_sweep_$(flt)"))
@@ -625,9 +626,7 @@ function run_filter_optimization_channel(f_load::Function, filter_types::Abstrac
     sets = NamedTuple{keys(peaknames)}(map(keys(peaknames)) do key
         peakname = peaknames[key]
         wvfs = @process_step "$peakname data loader" f_load(peakname)
-        set = @process_step "$peakname QC and preparation" prepare_peak_set(wvfs, dsp_config, τ, f_evaluate_qc, opt_config.qc)
-        # the raw presummed waveforms serve only the FEP noise scan
-        key == :fep ? set : (prep = set.prep, qdrift = set.qdrift)
+        @process_step "$peakname QC and preparation" prepare_peak_set(wvfs, dsp_config, τ, f_evaluate_qc, opt_config.qc)
     end)
     GC.gc()
 
