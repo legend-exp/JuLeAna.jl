@@ -78,11 +78,12 @@ workers, in this order (see [`JuLeAna.waiting_chains`](@ref) and [`JuLeAna.Worke
 the step with the longest chain of selected steps that wait for it first, then the one
 with the most selected steps that wait for it, then by rank, name, period and run. When
 every step runs with `reprocess = true` and an item time is known, the estimated time of
-that chain comes first: a step takes the median item time of its processor times
+that chain comes first: a step takes the item time of its processor times
 `max(1, items / workers)`, with the number of workers in the worker pool and, for a step
-without counted items, one item. The item time of a processor is the median of its items
-of this run once one has finished, else `recorded_item_seconds[processor]` (such as from the
-history of the production), else the median of the known ones. The order is updated after
+without counted items, one item. The item time of a processor is the `cfg.item_time_estimate`
+(median, 95th percentile or maximum) of the durations of its items of this run once one has
+finished, else `recorded_item_seconds[processor]` (such as the same statistic from the history
+of the production), else the median of the known ones. The order is updated after
 every finished step and before a worker is handed out when the number of workers changed. With
 `max_parallel_steps > 0` at most that many steps run at the same time. At the start, the
 items of every step whose processor registers an `items` function (see
@@ -187,7 +188,7 @@ function run_processing(cfg::ProcessingConfig, l200, periods::AbstractVector{Dat
     function update_estimates!()
         isempty(untimed) || return false
         known = Dict{Symbol,Float64}(recorded_item_seconds)
-        isnothing(progress_store) || merge!(known, measured_item_seconds(progress_store))
+        isnothing(progress_store) || merge!(known, measured_item_seconds(progress_store, cfg.item_time_estimate))
         isempty(known) && return false
         fallback = median(collect(values(known)))
         workers = max(1, nworkers(ppt_worker_pool()))

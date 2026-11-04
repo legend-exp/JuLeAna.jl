@@ -148,16 +148,17 @@ end
 const HISTORY_GRID_OUTCOMES = (:failed, :stopped, :cancelled)
 
 """
-    JuLeAna.latest_item_seconds(history)
+    JuLeAna.latest_item_seconds(history, statistic::Symbol = :median)
 
-Return the median item time in seconds of every processor in the `timings` of the entries of
+Return the item time in seconds of every processor in the `timings` of the entries of
 `history` ([`JuLeAna.read_history`](@ref)), from the last entry that has one, as a
-`Dict{Symbol,Float64}`.
+`Dict{Symbol,Float64}`: the `statistic` of the recorded item times, `:median`, `:p95` or `:max`.
 """
-function latest_item_seconds(history)
+function latest_item_seconds(history, statistic::Symbol = :median)
+    statistic in (:median, :p95, :max) || throw(ArgumentError("latest_item_seconds: unknown statistic $(repr(statistic))"))
     seconds = Dict{Symbol,Float64}()
     for entry in history, t in entry.timings
-        seconds[t.process] = t.median
+        seconds[t.process] = getproperty(t, statistic)
     end
     return seconds
 end

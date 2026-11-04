@@ -170,6 +170,8 @@ Fields:
   starts a new worker in place of one that ended.
 - `worker_heartbeat_timeout_minutes::Int`: minutes after which a start script takes the
   interface as gone if it has not touched its heartbeat file, and ends its allocation.
+- `item_time_estimate::Symbol`: `:median`, `:p95` or `:max`, the statistic of the item
+  durations of a processor by which [`run_processing`](@ref) estimates the time of its steps.
 - `processors::Dict{Symbol,ProcessorSpec}`: run-level processors.
 - `p_processors::Dict{Symbol,ProcessorSpec}`: partition-level processors.
 
@@ -179,13 +181,13 @@ keywords named like the fields. Every field except the two processor tables has 
 default: empty flag and settings lists, no environment variables, `periods` and `runs`
 of `nothing`, all `Bool` fields `false`, `max_parallel_steps = 0`, `local_n = 1`, `log_path = ""`,
 `slurm_worker_memory = :shared`, `log_level = Logging.Info`, `processor_log_level = nothing`, `processor_plot_level = nothing`,
-`plot_formats = [:png]`, `idle_timeout_minutes = 20`, `worker_restart_delay_seconds = 30` and
-`worker_heartbeat_timeout_minutes = 5`. Every
+`plot_formats = [:png]`, `idle_timeout_minutes = 20`, `worker_restart_delay_seconds = 30`,
+`worker_heartbeat_timeout_minutes = 5` and `item_time_estimate = :median`. Every
 constructor throws an `ArgumentError` when `runmode` is not `:local` or `:slurm`,
 `slurm_worker_memory` is not `:shared` or `:fixed`,
 `processor_plot_level` is not `nothing`, `:info` or `:debug`, `plot_formats` is empty, repeats
 an entry or holds anything but `:png` and `:jls`, `local_n < 1`, `max_parallel_steps < 0`, `idle_timeout_minutes` is negative or not finite, `worker_restart_delay_seconds` is negative,
-`worker_heartbeat_timeout_minutes < 2`, both `only_runs` and `only_partitions` are set, a table key differs from
+`worker_heartbeat_timeout_minutes < 2`, `item_time_estimate` is not `:median`, `:p95` or `:max`, both `only_runs` and `only_partitions` are set, a table key differs from
 its spec's name or level, a name appears in both tables, a dependency names an unknown
 processor, or the dependencies form a cycle (see [`processor_graph`](@ref)).
 
@@ -214,19 +216,21 @@ struct ProcessingConfig
     idle_timeout_minutes::Float64
     worker_restart_delay_seconds::Int
     worker_heartbeat_timeout_minutes::Int
+    item_time_estimate::Symbol
     processors::Dict{Symbol,ProcessorSpec}
     p_processors::Dict{Symbol,ProcessorSpec}
 
     function ProcessingConfig(runmode, submit_jobs, local_n, local_julia_settings, slurm_flags, slurm_julia_settings, slurm_worker_memory,
                               env_variables, periods, runs, analysis_runs_only, only_partitions, only_runs, max_parallel_steps, log_path,
                               log_level, processor_log_level, processor_plot_level, plot_formats, idle_timeout_minutes,
-                              worker_restart_delay_seconds, worker_heartbeat_timeout_minutes, processors, p_processors)
+                              worker_restart_delay_seconds, worker_heartbeat_timeout_minutes, item_time_estimate, processors,
+                              p_processors)
         cfg = new(runmode, submit_jobs, local_n, local_julia_settings, slurm_flags, slurm_julia_settings, slurm_worker_memory,
                   env_variables,
                   periods, runs, analysis_runs_only, only_partitions, only_runs, max_parallel_steps, log_path, log_level,
                   processor_log_level,
                   processor_plot_level, plot_formats, idle_timeout_minutes, worker_restart_delay_seconds, worker_heartbeat_timeout_minutes,
-                  processors, p_processors)
+                  item_time_estimate, processors, p_processors)
         cfg.runmode in (:local, :slurm) ||
             throw(ArgumentError("processing_config: runmode must be \"local\" or \"slurm\", got $(repr(cfg.runmode))"))
         cfg.slurm_worker_memory in (:shared, :fixed) ||
@@ -251,6 +255,8 @@ struct ProcessingConfig
         # the interface touches its heartbeat file every minute
         cfg.worker_heartbeat_timeout_minutes >= 2 ||
             throw(ArgumentError("processing_config: key `config.worker_heartbeat_timeout_minutes` must be at least 2, got $(cfg.worker_heartbeat_timeout_minutes)"))
+        cfg.item_time_estimate in (:median, :p95, :max) ||
+            throw(ArgumentError("processing_config: key `config.item_time_estimate` must be \"median\", \"p95\" or \"max\", got $(repr(cfg.item_time_estimate))"))
         cfg.only_runs &&
             cfg.only_partitions &&
             throw(ArgumentError("processing_config: only one of `only_partitions` or `only_runs` can be set"))
@@ -283,11 +289,11 @@ function ProcessingConfig(; processors, p_processors, runmode = :local, submit_j
                           only_partitions = false, only_runs = false, max_parallel_steps = 0,
                           log_path = "", log_level = Logging.Info, processor_log_level = nothing, processor_plot_level = nothing,
                           plot_formats = [:png], idle_timeout_minutes = 20, worker_restart_delay_seconds = 30,
-                          worker_heartbeat_timeout_minutes = 5)
+                          worker_heartbeat_timeout_minutes = 5, item_time_estimate = :median)
     return ProcessingConfig(runmode, submit_jobs, local_n, local_julia_settings, slurm_flags, slurm_julia_settings, slurm_worker_memory,
                             env_variables, periods, runs, analysis_runs_only, only_partitions, only_runs, max_parallel_steps, log_path,
                             log_level, processor_log_level, processor_plot_level, plot_formats, idle_timeout_minutes,
-                            worker_restart_delay_seconds, worker_heartbeat_timeout_minutes, processors, p_processors)
+                            worker_restart_delay_seconds, worker_heartbeat_timeout_minutes, item_time_estimate, processors, p_processors)
 end
 
 # Recursively convert nested dictionaries to `Dict{Symbol,Any}`.
@@ -466,7 +472,8 @@ The config must contain exactly these keys; a missing or unknown key throws an
   (same values, default `nothing`), `processor_plot_level` (`"info"` or `"debug"`, default
   `nothing`), `plot_formats` (a list of `"png"` and `"jls"`, default `["png"]`),
   `idle_timeout_minutes` (a number, default 20), `worker_restart_delay_seconds` (an `Int`,
-  default 30) and `worker_heartbeat_timeout_minutes` (an `Int`, default 5)
+  default 30), `worker_heartbeat_timeout_minutes` (an `Int`, default 5) and `item_time_estimate`
+  (`"median"`, the default, `"p95"` or `"max"`)
 - `processing`: `periods` and `runs` (each `"all"` or a list), `analysis_runs_only`,
   `only_partitions`, `only_runs` (all `Bool`), and optionally `order` (`"rank"`, the
   default, or `"dependencies"`) and `max_parallel_steps` (an `Int`, default 0: no limit)
@@ -539,8 +546,7 @@ function ProcessingConfig(dict::AbstractDict; runmode::Union{Nothing,AbstractStr
     config = _typed(d, :config, AbstractDict, "")
     _check_keys(config, (:runmode, :submit_jobs, :runmode_settings, :env_variables, :log_level), "config.";
                 optional = (:idle_timeout_minutes, :processor_log_level, :processor_plot_level, :plot_formats,
-                            :worker_restart_delay_seconds,
-                            :worker_heartbeat_timeout_minutes))
+                            :worker_restart_delay_seconds, :worker_heartbeat_timeout_minutes, :item_time_estimate))
     settings = _typed(config, :runmode_settings, AbstractDict, "config.")
     _check_keys(settings, (:local, :slurm), "config.runmode_settings.")
     local_settings = _typed(settings, :local, AbstractDict, "config.runmode_settings.")
@@ -604,7 +610,9 @@ function ProcessingConfig(dict::AbstractDict; runmode::Union{Nothing,AbstractStr
                             haskey(config, :worker_restart_delay_seconds) ? _typed(config, :worker_restart_delay_seconds, Int, "config.") :
                             30,
                             haskey(config, :worker_heartbeat_timeout_minutes) ?
-                            _typed(config, :worker_heartbeat_timeout_minutes, Int, "config.") : 5, processors, p_processors)
+                            _typed(config, :worker_heartbeat_timeout_minutes, Int, "config.") : 5,
+                            Symbol(haskey(config, :item_time_estimate) ? _typed(config, :item_time_estimate, AbstractString, "config.") :
+                                   "median"), processors, p_processors)
 end
 
 function ProcessingConfig(filename::AbstractString; kwargs...)

@@ -363,11 +363,16 @@ const REPORT = """
         store = JuLeAna.ProgressStore()
         store.durations[:odd], store.durations[:even] = [1.0, 2.0, 4.0], [1.0, 3.0]
         @test JuLeAna.measured_item_seconds(store) == Dict(:odd => 2.0, :even => 2.0)
-        # the latest median of every processor in a history
-        history = [(; timings = [(; process = :a, median = 1.0)]),
-                   (; timings = [(; process = :a, median = 3.0), (; process = :b, median = 2.0)]),
+        @test JuLeAna.measured_item_seconds(store, :max) == Dict(:odd => 4.0, :even => 3.0)
+        @test JuLeAna.measured_item_seconds(store, :p95)[:even] ≈ 2.9
+        # the latest recorded statistic of every processor in a history
+        history = [(; timings = [(; process = :a, median = 1.0, p95 = 1.5, max = 2.0)]),
+                   (;
+                    timings = [(; process = :a, median = 3.0, p95 = 3.5, max = 4.0), (; process = :b, median = 2.0, p95 = 2.5, max = 5.0)]),
                    (; timings = NamedTuple[])]
         @test JuLeAna.latest_item_seconds(history) == Dict(:a => 3.0, :b => 2.0)
+        @test JuLeAna.latest_item_seconds(history, :max) == Dict(:a => 4.0, :b => 5.0)
+        @test_throws "unknown statistic :p50" JuLeAna.latest_item_seconds(history, :p50)
     end
 
     @testset "worker queue" begin

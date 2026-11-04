@@ -525,7 +525,7 @@ function effective_config(ctrl::DataflowController)
                             cfg.periods, cfg.runs, something(ctrl.analysis_runs_only, cfg.analysis_runs_only), cfg.only_partitions,
                             cfg.only_runs, cfg.max_parallel_steps, cfg.log_path, cfg.log_level, cfg.processor_log_level,
                             cfg.processor_plot_level, cfg.plot_formats, cfg.idle_timeout_minutes, cfg.worker_restart_delay_seconds,
-                            cfg.worker_heartbeat_timeout_minutes,
+                            cfg.worker_heartbeat_timeout_minutes, cfg.item_time_estimate,
                             with_overrides(cfg.processors, ctrl.kwarg_overrides, ctrl.level_overrides),
                             with_overrides(cfg.p_processors, ctrl.kwarg_overrides, ctrl.level_overrides))
 end
@@ -768,7 +768,8 @@ function apply!(ctrl::DataflowController, cmd::StartProcessing)
             end
             run_processing(cfg, l200, periods, steps, p_steps, run_status, partition_status; processors = ctrl.processors,
                            check_dependencies, reprocess, processor_log_level, processor_plot_level, ctrl.stop, ctrl.abandon,
-                           progress_store = ctrl.progress, recorded_item_seconds = latest_item_seconds(read_history(history_path(l200))))
+                           progress_store = ctrl.progress,
+                           recorded_item_seconds = latest_item_seconds(read_history(history_path(l200)), cfg.item_time_estimate))
             :finished, nothing
         catch e
             ctrl.stop[] ? (:stopped, nothing) : (:failed, e)

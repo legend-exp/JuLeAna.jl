@@ -154,6 +154,10 @@ const STUB_PROCESSORS = Dict{Symbol,Any}(:process_a => process_a, :p_process_b =
         @test_throws "`config.idle_timeout_minutes` must be a Real" ProcessingConfig(edited(d -> d["config"]["idle_timeout_minutes"] = "20"))
         @test shipped.slurm_worker_memory === :shared
         @test (shipped.worker_restart_delay_seconds, shipped.worker_heartbeat_timeout_minutes) == (30, 5)
+        @test shipped.item_time_estimate === :median
+        @test ProcessingConfig(edited(d -> delete!(d["config"], "item_time_estimate"))).item_time_estimate === :median
+        @test ProcessingConfig(edited(d -> d["config"]["item_time_estimate"] = "max")).item_time_estimate === :max
+        @test_throws "`config.item_time_estimate` must be \"median\", \"p95\" or \"max\", got :p50" ProcessingConfig(edited(d -> d["config"]["item_time_estimate"] = "p50"))
         defaults = ProcessingConfig(edited(d -> foreach(k -> delete!(d["config"], k),
                                                         ("worker_restart_delay_seconds", "worker_heartbeat_timeout_minutes"))))
         @test (defaults.worker_restart_delay_seconds, defaults.worker_heartbeat_timeout_minutes) == (30, 5)

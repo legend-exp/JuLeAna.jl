@@ -25,6 +25,7 @@ config:
   idle_timeout_minutes: 20
   worker_restart_delay_seconds: 30
   worker_heartbeat_timeout_minutes: 5
+  item_time_estimate: median
 
 processing:
   order: dependencies

@@ -13,7 +13,7 @@ current settings to that file and keeps the previous file as `processing_config.
 See [Running the dataflow](running.md). The
 file is loaded into a [`ProcessingConfig`](@ref); all keys of the `config` and
 `processing` sections are required except `idle_timeout_minutes`, `worker_restart_delay_seconds`,
-`worker_heartbeat_timeout_minutes`, `processor_log_level`, `processor_plot_level`, `plot_formats` and
+`worker_heartbeat_timeout_minutes`, `item_time_estimate`, `processor_log_level`, `processor_plot_level`, `plot_formats` and
 `runmode_settings.slurm.worker_memory`, and a missing or
 unknown key stops the dataflow with an error that names the key.
 
@@ -78,6 +78,13 @@ The run mode, the worker settings, environment variables and logging:
     has worker allocations, `juleana` touches a heartbeat file every minute. When a worker
     ends and the file has not been touched for this many minutes, for example because
     `juleana` crashed, the allocation ends itself instead of starting a new worker.
+12. **`item_time_estimate`** (optional, default `"median"`): `"median"`, `"p95"` (the 95th
+    percentile) or `"max"`, the statistic of the item times of a processor by which the
+    processing run estimates how long its steps take. When every selected step runs with
+    `reprocess = true`, the steps whose chain of waiting steps is expected to take longest
+    start first, and their items get free workers first. The item times come from the items
+    of the current run once they finish, before that from the latest run in the history of
+    the production that recorded them.
 
 ## `processing`
 
