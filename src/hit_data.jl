@@ -1,28 +1,67 @@
 # This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
 
 """
-    read_hit_cal(l200::LegendData, det, runs, e_types::AbstractVector{Symbol}, expressions)
+    read_hit_cal(l200::LegendData, det, runs, e_types::AbstractVector{Symbol}, expressions = [];
+                 aoe_types = Symbol[], lq_types = Symbol[], cuts::Bool = false, pars::NamedTuple = (;))
 
 Read the single-pulse, non-pulser events (`jlqcs` tier) of the `cal` data of detector `det`
 for each `(period, run)` in `runs` and return them as one `Table`.
 
 The table has a column for each calibrated energy in `e_types` (e.g. `:e_cusp_ctc_cal`),
-calibrated with the run-level calibration function of the energy without the `_cal` suffix
-(`l200.par.rpars.ecal`), a `timestamp` column, and the `jldsp` columns that `expressions`
-(e.g. the A/E functions of the PSD config) use. An expression may also use the calibrated
-energies.
+calibrated with the calibration function of the energy without the `_cal` suffix, a `timestamp`
+column, and the `jldsp` columns that `expressions` (e.g. the A/E functions of the PSD config)
+use. An expression may also use the calibrated energies.
+
+For each type in `aoe_types` and `lq_types` the table also has its classifier `<type>_classifier`,
+and with `cuts` its cut flag (`<classifier>_low_cut` for A/E, `<classifier>_high_cut` for LQ).
+
+The calibration functions and cut flags are those of `calibrate_ged_detector_data`, from the
+parameters of each run that `pars` selects with the parameter keywords of that function (e.g.
+the result of `get_ged_evt_kwargs`): `<stage>_pars_type` and `<stage>_pars_cat` for the stages
+`e_cal` (default `rpars.ecal`), `aoe_cal`, `aoe_cut` (`ppars.aoe`), `lq_cal` and `lq_cut`
+(`ppars.lq`). Other entries of `pars` are not used. Only the `jldsp` columns the functions need
+are read.
 """
-function read_hit_cal(l200::LegendData, det, runs, e_types::AbstractVector{Symbol}, expressions)
-    columns_out = Tuple(setdiff(union([:timestamp], _input_columns(ljl_propfunc.(expressions))), e_types))
+function read_hit_cal(l200::LegendData, det, runs, e_types::AbstractVector{Symbol}, expressions = []; aoe_types = Symbol[],
+                      lq_types = Symbol[], cuts::Bool = false, pars::NamedTuple = (;))
+    columns_out = union([:timestamp], _input_columns(ljl_propfunc.(expressions)))
+    detector = DetectorId(det)
+    aoe_classifiers, lq_classifiers = Symbol.(string.(aoe_types) .* "_classifier"), Symbol.(string.(lq_types) .* "_classifier")
+    stage_pars(stage, pars_type, pars_cat) = (; pars_type = get(pars, Symbol(stage, :_pars_type), pars_type),
+                                               pars_cat = get(pars, Symbol(stage, :_pars_cat), pars_cat))
+    e_cal, aoe_cal, aoe_cut = stage_pars(:e_cal, :rpars, :ecal), stage_pars(:aoe_cal, :ppars, :aoe), stage_pars(:aoe_cut, :ppars, :aoe)
+    lq_cal, lq_cut = stage_pars(:lq_cal, :ppars, :lq), stage_pars(:lq_cut, :ppars, :lq)
     tables = map(collect(runs)) do (period, run)
-        filekey = start_filekey(l200, (period, run, :cal))
-        # LegendDataManagement keeps the parsed calibration parameters of each run in the process
-        cal_funcs = [ljl_propfunc(LegendDataManagement._get_e_cal_propsfunc_str(l200, filekey, DetectorId(det),
-                                                                                Symbol(chopsuffix(string(e_type), "_cal"))))
-                     for e_type in e_types]
-        dsp = Table(read_ldata(Tuple(union(columns_out, _input_columns(cal_funcs))), l200, :jldsp, :cal, period, run, det;
+        sel = start_filekey(l200, (period, run, :cal))
+        # LegendDataManagement keeps the parsed parameters of each run in the process.
+        psd_funcs = [[c => ljl_propfunc(LegendDataManagement._get_aoe_cal_propfunc_str(l200, sel, detector, t; aoe_cal...))
+                      for (t, c) in zip(aoe_types, aoe_classifiers)];
+                     [c => ljl_propfunc(LegendDataManagement._get_lq_cal_propfunc_str(l200, sel, detector, t; lq_cal...))
+                      for (t, c) in zip(lq_types, lq_classifiers)]]
+        cut_funcs = !cuts ? [] :
+                    [[Symbol("$(c)_low_cut") =>
+                          ljl_propfunc(LegendDataManagement._get_ged_aoe_lowcut_propfunc_str(l200, sel, detector, c; aoe_cut...))
+                      for c in aoe_classifiers];
+                     [Symbol("$(c)_high_cut") =>
+                          ljl_propfunc(LegendDataManagement._get_ged_lq_highcut_propfunc_str(l200, sel, detector, c; lq_cut...))
+                      for c in lq_classifiers]]
+        # The classifiers may use other calibrated energies, named `<energy>_cal` as in `get_ged_cal_propfunc`.
+        cal_types = union(e_types, filter(col -> endswith(string(col), "_cal"), _input_columns(last.(psd_funcs))))
+        cal_funcs = [e_type => ljl_propfunc(LegendDataManagement._get_e_cal_propsfunc_str(l200, sel, detector,
+                                                                                         Symbol(chopsuffix(string(e_type), "_cal"));
+                                                                                         e_cal...))
+                     for e_type in cal_types]
+        # Each stage uses the outputs of the previous ones, as in `calibrate_ged_detector_data`.
+        stages = (cal_funcs, psd_funcs, cut_funcs)
+        outputs = [name for stage in stages for (name, _) in stage]
+        columns_dsp = setdiff(union(columns_out, _input_columns([f for stage in stages for (_, f) in stage])), outputs)
+        hit = Table(read_ldata(Tuple(columns_dsp), l200, :jldsp, :cal, period, run, det;
                                filterby = :jlqcs => @pf($is_single_pulse && !$is_pulser)))
-        return Table(merge(columns(dsp)[columns_out], NamedTuple{Tuple(e_types)}(map(f -> f.(dsp), cal_funcs))))
+        for stage in stages
+            hit = Table(merge(columns(hit), NamedTuple(name => f.(hit) for (name, f) in stage)))
+        end
+        # Only the requested columns, so that the tables of all runs have the same columns.
+        return Table(columns(hit)[Tuple(union(columns_out, e_types, first.(psd_funcs), first.(cut_funcs)))])
     end
     return fast_flatten(tables)
 end

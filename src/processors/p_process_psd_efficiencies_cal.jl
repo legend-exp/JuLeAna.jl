@@ -4,17 +4,16 @@
 
 Compute the survival fractions of the combined A/E and LQ cuts for every detector and `cal` partition that contains `period`.
 
-The `cal` data of all runs in a detector's partition are calibrated with `calibrate_ged_detector_data`, which applies
-the A/E and LQ cut flags (`<A/E classifier>_low_cut` and `<LQ classifier>_high_cut`) from the parameters selected by
-`get_ged_evt_kwargs`. The high A/E cut is taken from the `psd_classifiers` table of the configuration. Peaks and the
+The `cal` data of all runs in a detector's partition are read with `read_hit_cal`, which applies the A/E and LQ
+classifiers and cut flags (`<A/E classifier>_low_cut` and `<LQ classifier>_high_cut`) of the event tier, i.e. from the
+parameters selected by `get_ged_evt_kwargs`. The high A/E cut is taken from the `psd_classifiers` table of the configuration. Peaks and the
 Qbb window are fitted for five selections: the low A/E cut (`low`), the high A/E cut (`high`), the low and high A/E
 cuts (`ds`), the low A/E cut and the LQ cut (`low_lq`), and all three cuts (`lq_ds`). Detectors with `low_aoe_status`
 of `:valid` or `:present` are processed.
 
 # Inputs
 - `jlqcs` tier (single pulse, non-pulser events) and `jldsp` tier of all `cal` runs in the partition.
-- Calibration and cut parameters as read by `calibrate_ged_detector_data` with the keyword arguments of
-  `get_ged_evt_kwargs(l200, filekey)`.
+- Calibration and cut parameters as read by `read_hit_cal` with `pars = get_ged_evt_kwargs(l200, filekey)`.
 - `dataprod_config(l200).psd(filekey).psd` of the first run of the partition, `default` merged with the detector
   section: `e_type`, `psd_classifiers` (per classifier name, a list of the A/E classifier, the high A/E cut and the LQ
   classifier), `psd_peaks`, `psd_peaks_names`, `psd_peaks_windows_left`, `psd_peaks_windows_right`,
@@ -137,21 +136,12 @@ function p_process_psd_efficiencies_cal(processing_config, l200::LegendData, per
         end
 
         e_cal, hit_cal = @process_step "E data loading" begin
-            hpge_kwargs = get_ged_evt_kwargs(l200, filekey_det)
             if !all([haskey(processed_dict, psd_classifier) for psd_classifier in psd_classifiers])
-                # only the energy and the cut columns are used below
-                hit_columns = Tuple(unique(vcat(e_type,
-                                                [col for (aoe_classifier, _, lq_classifier) in values(psd_classifiers_dict)
-                                                 for col in (Symbol(aoe_classifier), Symbol("$(aoe_classifier)_low_cut"),
-                                                             Symbol("$(lq_classifier)_high_cut"))])))
-                hit_cal = fast_flatten([let
-                                            dsp = read_ldata(l200, :jldsp, :cal, pinfo.period, pinfo.run, det; filterby = :jlqcs => @pf($is_single_pulse && !$is_pulser))
-                                            @debug "Calibrating $(pinfo.period)-$(pinfo.run)"
-                                            hit = calibrate_ged_detector_data(l200, pinfo.cal.startkey, det, dsp; keep_detdata = false,
-                                                                              hpge_kwargs...)
-                                            Table(NamedTuple{hit_columns}(map(col -> getproperty(hit, col), hit_columns)))
-                                        end
-                                        for pinfo in partinfo_det])
+                aoe_types = unique([Symbol(chopsuffix(string(c[1]), "_classifier")) for c in values(psd_classifiers_dict)])
+                lq_types = unique([Symbol(chopsuffix(string(c[3]), "_classifier")) for c in values(psd_classifiers_dict)])
+                # The calibration and cut parameters of the event tier.
+                hit_cal = read_hit_cal(l200, det, zip(partinfo_det.period, partinfo_det.run), [e_type]; aoe_types, lq_types, cuts = true,
+                                       pars = get_ged_evt_kwargs(l200, filekey_det))
                 collect(getproperty(hit_cal, e_type)), hit_cal
             else
                 nothing, nothing

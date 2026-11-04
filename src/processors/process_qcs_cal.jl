@@ -1,6 +1,6 @@
 """
     process_qcs_cal(processing_config, l200::LegendData, period::DataPeriod, run::DataRun;
-        reprocess::Bool=false, timeout::Real=0, stability_sigma::Real=5.0)
+        reprocess::Bool=false, timeout::Real=0)
 
 Generate the quality-cut (QC) flags and their survival fractions for the `cal` data of the HPGe detectors (`geds`) of a run.
 
@@ -14,7 +14,8 @@ Only the Tl-208 FEP survival fraction of `is_single_pulse` has an uncertainty; i
 A detector with fewer than 5000 events fails. A detector with single-pulse events that fail the
 `is_valid_e` flag gets the status warning. The single-pulse survival fraction of the pulser events of each filekey is
 compared with that of the other nonremoved filekeys by an exact count test, and deviations above
-`stability_sigma` are reported without changing the status; the non-pulser survival fraction is shown for diagnosis only.
+`filekey_stability.sigma` of the QC config are reported without changing the status; the non-pulser survival fraction is
+shown for diagnosis only.
 
 # Inputs
 - `jldsp` tier of the `cal` filekeys of the run listed in the runinfo, except the filekeys marked unprocessable
@@ -33,15 +34,12 @@ compared with that of the other nonremoved filekeys by an exact count test, and 
 - `reprocess`: remove the existing `jlqcs` files and parameters and process all detectors again; otherwise detectors already present in a `jlqcs` file are skipped there. The run summary of every detector is always recomputed.
 - `timeout`: seconds allowed per filekey and per detector summary in `parallel` (0 = no limit)
 - `use_cache`: write each output file to a local cache directory first and move it to its place when done; otherwise write it next to its final location (default: `true`)
-- `stability_sigma`: deviation, in Gaussian standard deviations, above which a filekey survival fraction is reported (default: `5.0`)
 
 # Returns
 Return `nothing`.
 """
 function process_qcs_cal(processing_config, l200::LegendData, period::DataPeriod, run::DataRun; reprocess::Bool = false, timeout::Real = 0,
-                         use_cache::Bool = true, stability_sigma::Real = 5.0)
-    isfinite(stability_sigma) && stability_sigma > 0 || throw(ArgumentError("stability_sigma must be finite and positive"))
-
+                         use_cache::Bool = true)
     @info "Generate calibration QC flags for period $period and run $run"
 
     filekeys = filter(!in(bad_filekeys(l200; load_key = :unprocessable)), only(runinfo(l200, (period, run, :cal)).keys))
@@ -56,6 +54,7 @@ function process_qcs_cal(processing_config, l200::LegendData, period::DataPeriod
     qc_config = dataprod_config(l200).qc(filekey)
     energy_config = dataprod_config(l200).energy(filekey)
     @debug "Loaded QC config: $(lstring(qc_config))"
+    stability_sigma = qc_config.filekey_stability.sigma
 
     @debug "Create pars db"
     make_par_dir(joinpath(data_path(l200.par.rpars.qcs), string(period)))
@@ -70,8 +69,6 @@ function process_qcs_cal(processing_config, l200::LegendData, period::DataPeriod
                          Symbol("Number Pulser Events"),
                          Symbol("Number Single-pulse Events"), Symbol("Single pulses with invalid energy"), :Error)}
     log_fk_nt = NamedTuple{(:Filekey, :Status, Symbol("Processed Detectors"), Symbol("Failed Detectors"), :Error)}
-    warning_nt = NamedTuple{(:Detector, :Filekey, :Selection, Symbol("Efficiency (%)"), Symbol("Reference (%)"), :Events, Symbol("Reference events"),
-                             Symbol("Deviation (σ)")),Tuple{DetectorId,FileKey,Symbol,Float64,Float64,Int,Int,Float64}}
 
     # flush stdout
     flush(stdout)
@@ -127,14 +124,13 @@ function process_qcs_cal(processing_config, l200::LegendData, period::DataPeriod
 
         @debug "Summarize QC for detector $det ($ch)"
         qc_parts, qc, data_det = @process_step "data loader" begin
+            # Per filekey for the filekey summary, which includes the removed filekeys.
             qc_parts = [read_ldata(l200, DataTier(:jlqcs), fk, det) for fk in filekeys]
-            data_parts = [read_ldata((:timestamp, :e_trap), l200, DataTier(:jldsp), fk, det) for fk in filekeys]
             qc = reduce(vcat, qc_parts[included_filekeys]; init = first(qc_parts)[1:0])
-            data_det = reduce(vcat, data_parts[included_filekeys]; init = first(data_parts)[1:0])
+            data_det = read_ldata((:timestamp, :e_trap), l200, DataTier(:jldsp), filekeys[included_filekeys], det)
             data_det.timestamp == qc.timestamp || throw(DimensionMismatch("DSP and QC timestamps differ for $det in $period-$run"))
             qc_parts, qc, data_det
         end
-        single_pulse_pf = ljl_propfunc(qc_config_det.is_single_pulse)
         flag_names = [Symbol.(keys(qc_config_det.labels))...; :is_single_pulse]
         qc_propfunc = merge(qc_config_det.labels, PropDict(:is_single_pulse => qc_config_det.is_single_pulse))
         is_pulser = qc.is_pulser
@@ -164,64 +160,12 @@ function process_qcs_cal(processing_config, l200::LegendData, period::DataPeriod
                                                    :n_nonpulser_pass => count(qc_part.is_single_pulse .& .!pulser))
         end
         stability_warnings = @process_step "filekey stability" begin
-            # Compare each filekey with the pooled other nonremoved filekeys, using an exact two-sample count test.
-            summaries = [filekey_summary[Symbol(fk)] for fk in filekeys]
-            foreach(summary -> summary[:stability] = PropDict(), summaries)
-            warnings = warning_nt[]
-            x_fk = collect(eachindex(filekeys))
-            fig = Makie.Figure(size = (max(1100, 200 + 14 * length(filekeys)), 500))
-            ax = Makie.Axis(fig[1, 1]; title = get_plottitle(filekey, det, "QC Efficiency per Filekey"), xlabel = "Filekey start (UTC)", ylabel = "Survival fraction (%)",
-                            xticks = (x_fk, [string(fk.time) for fk in filekeys]), xticklabelrotation = pi / 3, xticklabelsize = 10)
-            plotted_sf = Float64[]
-            for (selection, n_key, k_key, color, label, monitor) in ((:pulser, :n_pulser, :n_pulser_pass, LegendMakie.AchatBlue, "Pulser single pulse", true),
-                                                                     (:nonpulser, :n_nonpulser, :n_nonpulser_pass, LegendMakie.BEGeOrange, "Non-pulser single pulse", false))
-                n = [getproperty(summary, n_key) for summary in summaries]
-                k = [getproperty(summary, k_key) for summary in summaries]
-                efficiency = [n[i] == 0 ? NaN : k[i] / n[i] for i in eachindex(n)]
-                total_n, total_k = sum(n[included_filekeys]), sum(k[included_filekeys])
-                outliers = Int[]
-                for i in eachindex(filekeys)
-                    ref_n = total_n - (included_filekeys[i] ? n[i] : 0)
-                    ref_k = total_k - (included_filekeys[i] ? k[i] : 0)
-                    reference = ref_n == 0 ? NaN : ref_k / ref_n
-                    sigma = NaN
-                    if n[i] > 0 && ref_n > 0
-                        # Exact two-sample count test: conditioning on the total accepted and rejected counts
-                        # includes the reference uncertainty and handles survival fractions of 0 and 100 %.
-                        null = Hypergeometric(k[i] + ref_k, n[i] + ref_n - k[i] - ref_k, n[i])
-                        tail = min(cdf(null, k[i]), ccdf(null, k[i] - 1), 0.5)
-                        sigma = sign(efficiency[i] - reference) * -quantile(Normal(), max(tail, floatmin(Float64)))
-                    end
-                    flagged = monitor && included_filekeys[i] && abs(sigma) > stability_sigma
-                    summaries[i].stability[selection] = PropDict(:reference => 100 * reference, :reference_events => ref_n, :sigma => sigma,
-                                                                 :flagged => flagged, :available => isfinite(sigma))
-                    if flagged
-                        push!(outliers, i)
-                        push!(warnings, warning_nt((det, filekeys[i], selection, 100 * efficiency[i], 100 * reference, n[i], ref_n, sigma)))
-                    end
-                end
-                # Wilson one-sigma intervals remain meaningful for small samples and survival fractions of 0 and 100 %.
-                center = [(k[i] + 0.5) / (n[i] + 1) for i in eachindex(n)]
-                halfwidth = [n[i] == 0 ? NaN : sqrt(n[i] * efficiency[i] * (1 - efficiency[i]) + 0.25) / (n[i] + 1) for i in eachindex(n)]
-                Makie.errorbars!(ax, x_fk, 100 .* efficiency, 100 .* (efficiency .- center .+ halfwidth), 100 .* (center .+ halfwidth .- efficiency);
-                                 color)
-                Makie.scatterlines!(ax, x_fk, 100 .* efficiency; label, color)
-                total_n > 0 && Makie.hlines!(ax, [100 * total_k / total_n]; color, linestyle = :dash, linewidth = 1)
-                isempty(outliers) ||
-                    Makie.scatter!(ax, x_fk[outliers], 100 .* efficiency[outliers]; color = :red, marker = :xcross, markersize = 16,
-                                   label = "$selection outlier")
-                append!(plotted_sf, filter(isfinite, 100 .* efficiency))
-            end
-            # Zoom to the survival fractions; the long error bars of short filekeys are clipped.
-            if !isempty(plotted_sf)
-                sf_min, sf_max = extrema(plotted_sf)
-                pad = max(0.1 * (sf_max - sf_min), 0.5)
-                Makie.ylims!(ax, sf_min - pad, sf_max + pad)
-            end
-            removed_indices = findall(!, included_filekeys)
-            isempty(removed_indices) || Makie.vlines!(ax, removed_indices; color = (:red, 0.3), linestyle = :dash, label = "Removed cycle")
-            Makie.axislegend(ax; position = :lb)
-            LegendMakie.add_watermarks!(final = true)
+            selections = ((name = :pulser, n = :n_pulser, k = :n_pulser_pass, monitor = true, label = "Pulser single pulse",
+                           color = LegendMakie.AchatBlue),
+                          (name = :nonpulser, n = :n_nonpulser, k = :n_nonpulser_pass, monitor = false, label = "Non-pulser single pulse",
+                           color = LegendMakie.BEGeOrange))
+            warnings, fig = qc_filekey_stability!(filekey_summary, det, filekeys, included_filekeys, selections; stability_sigma,
+                                                  title = get_plottitle(filekey, det, "QC Survival Fractions per Filekey"))
             save_plot(fig, l200, filekey, det, :qc_filekey_efficiency)
             warnings
         end
@@ -298,22 +242,10 @@ function process_qcs_cal(processing_config, l200::LegendData, period::DataPeriod
             end
 
             @debug_plot @process_step "survival fraction plot" begin
-                # plot survival fractions for is_single_pulse and its component flags
-                plot_flag_names = [Symbol[first(typeof(path).parameters[1])
-                                          for path in PropertyFunctions.input_property_paths(single_pulse_pf)];
-                                   :is_single_pulse]
-                x = collect(eachindex(plot_flag_names))
-                pulser_sf_plot = mvalue.(ustrip.(u"percent", [getproperty(pulser_sf, flag_name) for flag_name in plot_flag_names]))
-                fep_sf_plot = mvalue.(ustrip.(u"percent", [getproperty(fep_sf, flag_name) for flag_name in plot_flag_names]))
-                fig = Makie.Figure(size = (max(800, 55 * length(plot_flag_names)), 500))
-                ax = Makie.Axis(fig[1, 1], title = get_plottitle(filekey, det, "QC Survival Fractions"), xlabel = "QC flag",
-                                ylabel = "Survival fraction (%)", xticks = (x, string.(plot_flag_names)), xticklabelrotation = pi / 3,
-                                limits = ((0.3, length(plot_flag_names) + 0.7), nothing))
-                Makie.vspan!(ax, length(plot_flag_names) - 0.5, length(plot_flag_names) + 0.7; color = (:gray, 0.15))
-                Makie.scatter!(ax, x .- 0.2, pulser_sf_plot, markersize = 12, color = LegendMakie.AchatBlue, label = "Pulser")
-                Makie.scatter!(ax, x .+ 0.2, fep_sf_plot, markersize = 12, color = LegendMakie.BEGeOrange, label = "Tl-208 FEP")
-                Makie.axislegend(ax, position = :lb, orientation = :horizontal, framevisible = true, framecolor = :lightgray)
-                LegendMakie.add_watermarks!(final = true)
+                # is_single_pulse and the flags it combines
+                plot_flag_names = [_input_columns([ljl_propfunc(qc_config_det.is_single_pulse)]); :is_single_pulse]
+                series = (("Pulser", pulser_sf, LegendMakie.AchatBlue), ("Tl-208 FEP", fep_sf, LegendMakie.BEGeOrange))
+                fig = plot_qc_survival_fractions(plot_flag_names, series; title = get_plottitle(filekey, det, "QC Survival Fractions"))
                 save_plot(fig, l200, filekey, det, :qc_survival_fractions)
             end
 
@@ -321,9 +253,9 @@ function process_qcs_cal(processing_config, l200::LegendData, period::DataPeriod
                               # Filekey deviations are only reported; they leave the detector and processor status unchanged.
                               ProcessStatus(n_invalid_e_single_pulse > 0 ? -1 : 1), pulser_sf.is_single_pulse, fep_sf.is_single_pulse, n_pulser, n_single_pulse, n_invalid_e_single_pulse,
                               isempty(status_messages) ? "-" : join(status_messages, " ")))
-            return (result = (filekey_summary = filekey_summary, func = qc_propfunc, survival_fractions = survival_fractions,
-                              n_pulser = n_pulser, n_single_pulse = n_single_pulse, n_invalid_e_single_pulse = n_invalid_e_single_pulse),
-                    warnings = stability_warnings, log = log_det, processed = true)
+            return (result = (func = qc_propfunc, survival_fractions = survival_fractions, n_pulser = n_pulser,
+                              n_single_pulse = n_single_pulse, n_invalid_e_single_pulse = n_invalid_e_single_pulse),
+                    filekey_summary = filekey_summary, warnings = stability_warnings, log = log_det, processed = true)
         catch e
             e isa ProcessStepError || @error "QC summary failed for $det: $(truncate_error(e))"
             return (warnings = stability_warnings, filekey_summary = filekey_summary, processed = false,
@@ -341,24 +273,17 @@ function process_qcs_cal(processing_config, l200::LegendData, period::DataPeriod
 
     @info "Finished QC detector processing"
 
-    # A detector whose run summary failed keeps no previous results, only its new filekey summary.
-    for (chinfo_det, result) in result_qc
-        haskey(result, :result) || delete!(pars_db, Symbol(chinfo_det.detector))
+    # The run summary replaces the previous results of each detector; a failed one keeps only its filekey summary.
+    for (chinfo_det, res) in result_qc
+        det = Symbol(chinfo_det.detector)
+        haskey(res, :filekey_summary) ? (pars_db[det] = PropDict(:filekey_summary => res.filekey_summary)) : delete!(pars_db, det)
     end
     pars_db = create_pars(pars_db, result_qc)
-    # Replace the filekey summaries, which `create_pars` merges into the obsolete ones.
-    for (chinfo_det, result) in result_qc
-        if haskey(result, :result)
-            pars_db[chinfo_det.detector][:filekey_summary] = result.result.filekey_summary
-        elseif haskey(result, :filekey_summary)
-            pars_db[chinfo_det.detector] = PropDict(:filekey_summary => result.filekey_summary)
-        end
-    end
     write_pars(l200.par.rpars.qcs[period], run, pars_db)
     write_validity(l200.par.rpars.qcs, filekey, (period, run); category = :cal)
     @info "Saved QC-survival pars to disk"
 
-    warning_rows = reduce(vcat, (res.warnings for (_, res) in result_qc if haskey(res, :warnings)); init = warning_nt[])
+    warning_rows = reduce(vcat, (res.warnings for (_, res) in result_qc if haskey(res, :warnings)); init = QCStabilityWarning[])
 
     # Disabled until legend-exp/LegendMakie.jl#76 is fixed: LegendMakie's lplot and
     # parameterplot use Makie's global current axis, which steps running at the same time overwrite.
@@ -389,9 +314,7 @@ function process_qcs_cal(processing_config, l200::LegendData, period::DataPeriod
     lreport!(report, "# Metadata")
     lreport!(report, create_metadatatbl(filekey))
     lreport!(report, "# QC stability warnings")
-    lreport!(report,
-             "Threshold: $(stability_sigma)σ, two-sided exact count comparison against the other nonremoved filekeys. Red crosses mark unexpected deviations; " *
-             "dashed reference lines pool nonremoved filekeys. Error bars are one-sigma Wilson intervals. Non-pulser survival is diagnostic only.")
+    lreport!(report, "Pulser single-pulse survival fractions of filekeys that deviate from the other nonremoved filekeys by more than $(stability_sigma)σ.")
     lreport!(report, isempty(warning_rows) ? "No unexpected filekey survival fraction deviations." : StructArray(warning_rows))
     # lreport!(report, "# Detector overview")
     # lreport!(report, fig)

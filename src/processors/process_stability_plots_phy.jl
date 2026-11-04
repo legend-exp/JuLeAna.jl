@@ -69,12 +69,6 @@ function process_stability_plots_phy(processing_config, l200::LegendData, period
 
     log_nt = NamedTuple{(:Detector, :usability, :psd_usability, :Status, :Plot, :Error)}
 
-    @info "Loading pulser data for period $period and run $run"
-    puls = @process_step "pulser data loader" begin
-        read_ldata((puls_e_type, :aux_trig), l200, DataTier(:jlaux), :phy, period, run, det_puls)
-    end
-    puls_energy = getproperty(puls, puls_e_type)
-
     start_time = now()
 
     function det_stability_plots(chinfo_det::NamedTuple)
@@ -86,6 +80,11 @@ function process_stability_plots_phy(processing_config, l200::LegendData, period
         data = @process_step "data loader" begin
             read_ldata((:timestamp, :blmean, :blsigma, :e_10410), l200, DataTier(:jldsp), :phy, period, run, det)
         end
+
+        puls = @process_step "pulser data loader" begin
+            read_ldata((puls_e_type, :aux_trig), l200, DataTier(:jlaux), :phy, period, run, det_puls)
+        end
+        puls_energy = getproperty(puls, puls_e_type)
 
         timestamp, time_s, bl_f, σbl, e10410, puls_e, aux_trig = @process_step "finite event filter" begin
             length(puls_energy) == length(data.timestamp) ||
