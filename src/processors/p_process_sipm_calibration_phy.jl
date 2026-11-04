@@ -9,9 +9,10 @@ The method is the same as in `process_sipm_calibration_phy`, but the data of all
 detector's partition are combined and the results are valid for the whole partition.
 
 # Inputs
-- `dsp` tier (`DataTier(:jldsp)`) of the `phy` data of all runs of each detector's partition.
-- `jlaux` tier fields `timestamp` and `aux_trig` of the pulser channel named by `dataprod_config(l200).qc(filekey).pulser.puls_detector`
-  over the same runs; events within `puls_ts_window` of a pulser trigger are excluded.
+- `jldsp` tier of the `phy` data of all runs of each detector's partition: per energy type its column,
+  for the events that pass its `qc` expression.
+- `jlaux` tier field `aux_trig_intime` of the pulser channel named by `dataprod_config(l200).qc(filekey).pulser.puls_detector`
+  over the same runs; the in-time pulser events are excluded row by row (the `phy` tiers are event aligned).
 - `dataprod_config(l200).sipm(filekey).calibration`, using the `p_default` section merged with the
   per-detector section `p`. It sets `energy_types` (each with `qc`, `simple.kwargs`, `fit.min_pe`,
   `fit.max_pe`, `fit.kwargs`) and `pol_order`.
@@ -98,8 +99,6 @@ function p_process_sipm_calibration_phy(processing_config, l200::LegendData, per
         @debug "Loaded calibration config: $(lstring(calibration_config_det))"
 
         qc_config = dataprod_config(l200).qc(filekey_det)
-        pulser_config_det = merge(qc_config.pulser.default, get(qc_config.pulser, det, PropDict()))
-        @debug "Loaded pulser config: $(lstring(pulser_config_det))"
 
         #  write out pulser events
         chinfo_puls = channelinfo(l200, filekey_det, Symbol(qc_config.pulser.puls_detector))
@@ -143,21 +142,11 @@ function p_process_sipm_calibration_phy(processing_config, l200::LegendData, per
         # get data
         data_dsp = @process_step "data loader" begin
             @debug "Load DSP data"
-            # load DSP data and apply QC cut
+            # the energy types and the columns of their QC expressions, without in-time pulser events (phy tiers are event aligned)
             if !all([haskey(processed_dict, e_type) for e_type in energy_types])
-                @debug "Load DSP data for detector $det"
-                read_ldata(l200, DataTier(:jldsp), :phy, partinfo_det, det)
-            end
-        end
-
-        is_pulser = @process_step "pulser tag" begin
-            @debug "Get Pulser tags"
-            if !all([haskey(processed_dict, e_type) for e_type in energy_types])
-                data_pulser = read_ldata((:timestamp, :aux_trig), l200, DataTier(:jlaux), :phy, partinfo_det, det_puls)
-                is_pulser = flag_coincidences(data_dsp.timestamp, data_pulser.timestamp[data_pulser.aux_trig],
-                                              ts_window = pulser_config_det.puls_ts_window)
-                @debug "Found $(count(is_pulser)) pulser events"
-                is_pulser
+                qc_funcs = [ljl_propfunc(calibration_config_det.energy_types[e_type].qc) for e_type in energy_types]
+                read_ldata(Tuple(union(energy_types, _input_columns(qc_funcs))), l200, DataTier(:jldsp), :phy, partinfo_det, det;
+                           filterby = :jlaux => ljl_propfunc("!$det_puls.aux_trig_intime"))
             end
         end
 
@@ -168,21 +157,13 @@ function p_process_sipm_calibration_phy(processing_config, l200::LegendData, per
 
             e_type_config = calibration_config_det.energy_types[e_type]
 
-            # get data after per-energy-type QC
-            data_det_after_qc = @process_step "$e_type data loader" begin
-                @debug "Load DSP data for $e_type"
-                data_dsp[findall(ljl_propfunc(e_type_config.qc).(data_dsp) .&& .!is_pulser)]
+            # the amplitudes of the events that pass the QC of the energy type
+            amplitudes = @process_step "$e_type data selection" begin
+                getproperty(data_dsp, e_type)[findall(ljl_propfunc(e_type_config.qc).(data_dsp))]
             end
 
             try
                 @debug "Calibrate $e_type"
-
-                # get data
-                e_uncal = @process_step "$e_type data extraction" begin
-                    @debug "Get $e_type data"
-                    # open hit data file
-                    filter(isfinite, reduce(vcat, getproperty(data_det_after_qc, e_type)))
-                end
 
                 # get uncalibrated energy function
                 plot_one_pe_search_range() = begin
@@ -192,12 +173,12 @@ function p_process_sipm_calibration_phy(processing_config, l200::LegendData, per
                     ax = Makie.Axis(fig[1, 1];
                                     title = get_plottitle(filekey_det, part, det, "Uncalibrated PE"; additional_type = string(e_type)),
                                     xlabel = "Peak Amplitudes (ADC)", ylabel = "Counts")
-                    Makie.stephist!(ax, filter(x -> lo <= x <= hi, e_uncal); bins = range(lo, hi; length = 201))
+                    Makie.stephist!(ax, filter(x -> lo <= x <= hi, reduce(vcat, amplitudes)); bins = range(lo, hi; length = 201))
                     save_plot(fig, l200, part, filekey_det, det, Symbol("error_simple_calibration_$(e_type)"))
                 end
                 result_simple, report_simple = @process_step "$e_type simple calibration" on_error = plot_one_pe_search_range begin
                     @debug "Get $e_type simple calibration"
-                    sipm_simple_calibration(getproperty(data_det_after_qc, e_type); NamedTuple(e_type_config.simple.kwargs)...)
+                    sipm_simple_calibration(amplitudes; NamedTuple(e_type_config.simple.kwargs)...)
                 end
 
                 # save plots for simple calibration for control
@@ -210,7 +191,7 @@ function p_process_sipm_calibration_phy(processing_config, l200::LegendData, per
                 @debug_plot @process_step "$e_type PE uncalibrated plot" begin
                     # all trigger amplitudes, with the noise and trigger cuts of the simple calibration
                     p = LegendMakie.lplot(report_simple, cal = false,
-                                          h = fit(Histogram, e_uncal,
+                                          h = fit(Histogram, filter(isfinite, reduce(vcat, amplitudes)),
                                                   e_type_config.simple.kwargs.initial_min_amp:0.1:e_type_config.simple.kwargs.initial_max_amp),
                                           title = get_plottitle(filekey_det, part, det, "All Triggers";
                                                                 additional_type = string(e_type)))
