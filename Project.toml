@@ -4,6 +4,7 @@ version = "0.2.5"
 
 [deps]
 ArgParse = "c7e460c6-2fb9-53a9-8c5b-16f535851c63"
+ArraysOfArrays = "65a8f2f4-9b39-5baf-92e2-a9cc46fdf018"
 Base64 = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 CommonMark = "a80b9123-70ca-4bc0-993e-6e3bcb318db6"
@@ -56,6 +57,7 @@ JuLeAnaInfiltratorExt = "Infiltrator"
 
 [compat]
 ArgParse = "1"
+ArraysOfArrays = "1"
 Base64 = "1"
 CairoMakie = "0.15"
 CommonMark = "1"

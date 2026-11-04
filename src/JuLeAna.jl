@@ -19,6 +19,7 @@ logger installed on the head and all workers.
 module JuLeAna
 
 using ArgParse: @add_arg_table!, ArgParseSettings, parse_args
+using ArraysOfArrays: flatview
 using Base64: base64encode
 import CairoMakie
 # Loading CommonMark activates Tachikoma's Markdown extension, which the report viewer renders with.

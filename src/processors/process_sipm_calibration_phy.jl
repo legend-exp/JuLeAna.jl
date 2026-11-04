@@ -139,7 +139,7 @@ function process_sipm_calibration_phy(processing_config, l200::LegendData, perio
                     fig = Makie.Figure()
                     ax = Makie.Axis(fig[1, 1]; title = get_plottitle(filekey, det, "Uncalibrated PE"; additional_type = string(e_type)),
                                     xlabel = "Peak Amplitudes (ADC)", ylabel = "Counts")
-                    Makie.stephist!(ax, filter(x -> lo <= x <= hi, reduce(vcat, amplitudes)); bins = range(lo, hi; length = 201))
+                    Makie.stephist!(ax, filter(x -> lo <= x <= hi, flatview(amplitudes)); bins = range(lo, hi; length = 201))
                     save_plot(fig, l200, filekey, det, Symbol("error_simple_calibration_$(e_type)"))
                 end
                 result_simple, report_simple = @process_step "$e_type simple calibration" on_error = plot_one_pe_search_range begin
@@ -156,7 +156,7 @@ function process_sipm_calibration_phy(processing_config, l200::LegendData, perio
                 @debug_plot @process_step "$e_type PE uncalibrated plot" begin
                     # all trigger amplitudes, with the noise and trigger cuts of the simple calibration
                     p = LegendMakie.lplot(report_simple, cal = false,
-                                          h = fit(Histogram, filter(isfinite, reduce(vcat, amplitudes)),
+                                          h = fit(Histogram, filter(isfinite, flatview(amplitudes)),
                                                   e_type_config.simple.kwargs.initial_min_amp:0.1:e_type_config.simple.kwargs.initial_max_amp),
                                           title = get_plottitle(filekey, det, "All Triggers"; additional_type = string(e_type)))
                     save_plot(p, l200, filekey, det, Symbol("pe_uncalibrated_$(e_type)"))
