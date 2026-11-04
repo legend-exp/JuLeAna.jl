@@ -1,12 +1,11 @@
 # This file is a part of Juleana.jl, licensed under the MIT License (MIT).
 
-# Shared per-detector flow of process_filter_optimization and p_process_filter_optimization.
+# Per-detector filter optimization shared by the run and partition processors.
 
 # The Tl-208 SEP and DEP lie one and two electron masses below the FEP.
 const ELECTRON_MASS_ENERGY = 510.999u"keV"
 
-# DEP fit window below and above the line: the Bi-212 FEP at 1620.7 keV, 28 keV above the DEP,
-# stays outside.
+# The DEP window excludes the Bi-212 FEP at 1620.7 keV, 28 keV above the DEP.
 const DEP_WINDOW = (15.0u"keV", 12.0u"keV")
 
 const DEP_PEAKNAME = :Tl208DEP_Bi212FEP
@@ -16,18 +15,12 @@ const SEP_PEAKNAME = :Tl208SEP
     crosscheck_warning(legacy::NamedTuple, new::NamedTuple; max_shift_sigma::Real)
 
 Warning text for a new optimum that degrades the reconstruction relative to the legacy optimum,
-`""` if nothing is flagged. Both arguments carry `shifts`, a NamedTuple of `(shift, σ)` per
-crosscheck peak (the fitted position relative to its FEP-calibrated expectation, and the peak
-width), and `slow_mean_residual`, the mean FEP residual in units of σ of the five
-percent of events with the highest qdrift. Both also carry `rows`, the crosscheck table rows with `peak` and
-`status`; every peak whose status is not `"ok"` is reported with the optima at which its fit failed.
-Without a FEP fit the other shifts and the high-qdrift residual are scaled with nothing and are
-not compared.
+`""` if nothing is flagged. Both arguments are `crosscheck_optimum` results.
 
-Only degradations are flagged: a peak when `abs(new shift) > abs(legacy shift) +
-max_shift_sigma * σ` with σ at the new optimum, or when it is missing at one of the two optima;
-the high-qdrift class when `abs(new residual) > abs(legacy residual) + max_shift_sigma` (in units
-of σ). A non-finite shift, σ or residual is always flagged as "not finite".
+Flagged are: a peak whose shift grew by more than `max_shift_sigma * σ` (σ at the new optimum),
+a peak missing at one optimum, a peak whose fit failed, a non-finite shift or σ, and a growth of
+the high-qdrift residual by more than `max_shift_sigma`. Without a FEP fit the other peaks and the
+residual are not compared.
 """
 function crosscheck_warning(legacy::NamedTuple, new::NamedTuple; max_shift_sigma::Real)
     warnings = String[]
@@ -35,29 +28,35 @@ function crosscheck_warning(legacy::NamedTuple, new::NamedTuple; max_shift_sigma
     for (label, cc) in (("legacy", legacy), ("new", new)), row in cc.rows
         row.status == "ok" || push!(get!(failed, row.peak, String[]), label)
     end
+
     for peak in union(keys(legacy.shifts), keys(new.shifts))
         (haskey(failed, String(peak)) || haskey(failed, "FEP")) && continue
         if !(haskey(legacy.shifts, peak) && haskey(new.shifts, peak))
-            push!(warnings, "$peak crosscheck missing at the $(haskey(new.shifts, peak) ? "legacy" : "new") optimum")
+            missing_at = haskey(new.shifts, peak) ? "legacy" : "new"
+            push!(warnings, "$peak crosscheck missing at the $missing_at optimum")
             continue
         end
+        s_legacy = legacy.shifts[peak].shift
+        s_new = new.shifts[peak].shift
+        σ_new = new.shifts[peak].σ
         nonfinite = String[]
-        for (label, x) in (("legacy shift", legacy.shifts[peak].shift), ("new shift", new.shifts[peak].shift), ("new σ", new.shifts[peak].σ))
-            isfinite(x) || push!(nonfinite, label)
-        end
+        isfinite(s_legacy) || push!(nonfinite, "legacy shift")
+        isfinite(s_new) || push!(nonfinite, "new shift")
+        isfinite(σ_new) || push!(nonfinite, "new σ")
         if !isempty(nonfinite)
             push!(warnings, "$peak $(join(nonfinite, ", ")) not finite")
-            continue
-        end
-        s_legacy, s_new = legacy.shifts[peak].shift, new.shifts[peak].shift
-        abs(s_new) > abs(s_legacy) + max_shift_sigma * new.shifts[peak].σ &&
+        elseif abs(s_new) > abs(s_legacy) + max_shift_sigma * σ_new
             push!(warnings, "$peak shift grew from $(round(u"keV", s_legacy, digits = 2)) to $(round(u"keV", s_new, digits = 2))")
+        end
     end
+
     for peak in sort!(collect(keys(failed)))
         push!(warnings, "$peak fit failed ($(join(failed[peak], ", ")))")
     end
-    r_legacy, r_new = legacy.slow_mean_residual, new.slow_mean_residual
+
     if !haskey(failed, "FEP")
+        r_legacy = legacy.slow_mean_residual
+        r_new = new.slow_mean_residual
         if !(isfinite(r_legacy) && isfinite(r_new))
             push!(warnings, "high-qdrift residual not finite")
         elseif abs(r_new) > abs(r_legacy) + max_shift_sigma
@@ -72,14 +71,16 @@ end
     write_fltopt_tables(path::AbstractString, tables::NamedTuple)
 
 Write every entry of `tables` (anything `TypedTables.Table` accepts) to the LH5 file `path`
-under its name. Symbol and string columns are stored as strings, `Measurement` values as
-their central values. An existing file at `path` is overwritten. Read string columns back with
-`col[:]`; `collect` fails on LH5 string arrays.
+under its name, overwriting the file. Symbol and string columns are stored as strings,
+`Measurement` values as their central values.
 """
 function write_fltopt_tables(path::AbstractString, tables::NamedTuple)
     lh5open(path, "w") do h
         for (name, t) in pairs(tables)
-            h[string(name)] = Table(map(c -> map(x -> x isa Union{Symbol, AbstractString} ? String(x) : mvalue(x), c), columns(Table(t))))
+            cols = map(columns(Table(t))) do col
+                map(x -> x isa Union{Symbol, AbstractString} ? String(x) : mvalue(x), col)
+            end
+            h[string(name)] = Table(cols)
         end
     end
     return path
@@ -91,11 +92,11 @@ end
     load_peak_waveforms(l200::LegendData, partinfo_det, det, peakname::Symbol, max_wvfs::Integer; n_evts::Integer)
 
 Presummed and windowed waveforms and presum rates of the `peakname` events of detector `det`
-from the jlpks tier: of the run of `filekey`, or of all runs of the partition `partinfo_det`
-with `n_evts` events per run (all events for `n_evts == -1`; random ones, drawn with the same
-seeded RNG, if `select_random` is set, otherwise the first ones). Sets above `max_wvfs` events are reduced with
-`limit_peak_waveforms`, with an RNG seeded from the detector and the filekey (or the runs of
-the partition), so that repeated runs select the same events.
+from the jlpks tier, for the run of `filekey` or for all runs of the partition `partinfo_det`.
+The partition method takes `n_evts` events per run (all for `n_evts == -1`), random ones if
+`select_random` is set and the first ones otherwise. Sets above `max_wvfs` events are reduced
+with `limit_peak_waveforms`. The RNG is seeded from the detector and the filekey or runs, so
+repeated calls select the same events.
 """
 function load_peak_waveforms(l200::LegendData, filekey::FileKey, det, peakname::Symbol, max_wvfs::Integer)
     rng = MersenneTwister(hash((string(det), string(filekey))))
@@ -105,7 +106,7 @@ end
 function load_peak_waveforms(l200::LegendData, partinfo_det, det, peakname::Symbol, max_wvfs::Integer; n_evts::Integer,
                              select_random::Bool = false)
     rng = MersenneTwister(hash((string(det), join(string.(partinfo_det.period, "-", partinfo_det.run), ","))))
-    # The events of each run are selected by timestamp before reading, so only the selected waveforms are loaded.
+    # Select by timestamp before reading so that only the selected waveforms are loaded.
     f_timestamp = ljl_propfunc("$peakname.timestamp")
     peak_data = fast_flatten(map(partinfo_det) do r
                                  ts = read_ldata(f_timestamp, l200, DataTier(:jlpks), DataCategory(:cal), r.period, r.run, det)
@@ -123,8 +124,7 @@ end
     limit_peak_waveforms(peak_data, peakname::Symbol, max_wvfs::Integer, rng::AbstractRNG)
 
 `(wvfs_pre, wvfs_wdw, presum_rate)` of `peak_data`. A set with more than `max_wvfs` events is
-reduced to `max_wvfs` distinct events drawn with `rng` without replacement from all events,
-kept in their original order.
+reduced to `max_wvfs` events drawn with `rng` without replacement, in their original order.
 """
 function limit_peak_waveforms(peak_data, peakname::Symbol, max_wvfs::Integer, rng::AbstractRNG)
     wvfs_pre, wvfs_wdw, presum_rate = peak_data.waveform_presummed, peak_data.waveform_windowed, peak_data.presum_rate
@@ -141,12 +141,11 @@ end
 """
     prepare_peak_set(wvfs::NamedTuple, dsp_config::DSPConfig, τ::Unitful.Time, f_evaluate_qc, qc_string::AbstractString)
 
-Apply the QC selection `qc_string` to the waveforms of one peak as returned by
-`load_peak_waveforms`, compute qdrift from the windowed waveforms and prepare the presummed
-waveforms once with `dsp_flt_optimization_prepare`.
+Apply the QC selection `qc_string` to the waveforms of one peak (see `load_peak_waveforms`),
+compute qdrift from the windowed waveforms and prepare the presummed waveforms with
+`dsp_flt_optimization_prepare`.
 
-Returns `(prep, qdrift)` of the events passing the QC, where `prep` is a `FltOptPrep`. The
-presummed waveforms are not kept.
+Returns `(prep, qdrift)` of the events passing the QC, where `prep` is a `FltOptPrep`.
 """
 function prepare_peak_set(wvfs::NamedTuple, dsp_config::DSPConfig, τ::Unitful.Time, f_evaluate_qc, qc_string::AbstractString)
     dsp_qc = dsp_qc_flt_optimization_compressed(wvfs.wvfs_pre, dsp_config, τ, f_evaluate_qc)
@@ -166,10 +165,9 @@ end
 Fit the calibrated energies `e_cal` inside `line - window[1] .. line + window[2]` with
 `fit_single_peak_th228` and compute `peak_width_metrics` of the fitted signal shape.
 
-Returns `(μ, σ, fwhm, w90, asym, tail_fraction, tail_scale, centroid, n_events, h, f_fit, report)`;
-energies carry keV units, the histogram `h` and the fit function `f_fit` (counts per keV) work
-on unitless keV, and `report` is the `fit_single_peak_th228` report that `LegendMakie.lplot`
-draws. Throws an `ArgumentError` with fewer than 100 events in the window.
+Returns `(μ, σ, fwhm, w90, asym, tail_fraction, tail_scale, centroid, n_events, h, f_fit, report)`.
+Energies carry keV units; `h` and `f_fit` work on unitless keV. Throws an `ArgumentError` with
+fewer than 100 events in the window.
 """
 function fit_crosscheck_peak(e_cal::AbstractVector{<:Unitful.Energy}, line::Unitful.Energy, window::Tuple; containment::Real)
     x = ustrip.(u"keV", filter(e -> line - first(window) < e < line + last(window), e_cal))
@@ -190,8 +188,7 @@ end
     try_fit_crosscheck_peak(e_cal, line, window; containment, context = "")
 
 `(fit_crosscheck_peak(e_cal, line, window; containment), "ok")`, or `(nothing, "failed: ...")` if
-the fit throws. The failure is logged as a warning with the exception and `context`, a text
-that says where the fit was attempted. An `InterruptException` propagates.
+the fit throws, with a warning that includes `context`. An `InterruptException` propagates.
 """
 function try_fit_crosscheck_peak(e_cal, line, window; containment, context::AbstractString = "")
     try
@@ -207,11 +204,9 @@ end
 """
     crosscheck_peak_figure(check::NamedTuple, fit, status::AbstractString; title::AbstractString)
 
-Figure of one crosscheck peak fit. `check` carries the calibrated energies `e_cal`, the `line`
-and the fit `window` of the peak; `fit` and `status` are the results of `try_fit_crosscheck_peak`.
-A successful fit is drawn with `LegendMakie.lplot` of its report. For a failed fit (`fit` is
-`nothing`) the figure shows the histogram of the energies inside the fit window with the
-`status` text written into the axis.
+Figure of one crosscheck peak fit. `check` is an entry of `crosscheck_optimum(...).checks`;
+`fit` and `status` are the results of `try_fit_crosscheck_peak`. A failed fit is shown as the
+histogram of the energies in the fit window with the `status` text.
 """
 function crosscheck_peak_figure(check::NamedTuple, fit, status::AbstractString; title::AbstractString)
     isnothing(fit) || return LegendMakie.lplot(fit.report; title, figsize = (700, 450), show_residuals = false)
@@ -232,13 +227,9 @@ end
 Reconstruction crosscheck of filter `flt` at `(rt, ft)`.
 
 The FEP set is evaluated with `evaluate_energy_point`; its qdrift slope `fct` and simple
-calibration `m_cal_simple` are applied unchanged to the DEP and SEP sets (present in `sets` if
-enabled). Every peak is fitted with `try_fit_crosscheck_peak`: a fit that throws is recorded in
-the `status` of its row and left out of `fits` and `shifts`. Without a FEP fit the peak shifts
-cannot be scaled, so `shifts` is empty, `residuals` holds empty vectors and `slow_mean` is `NaN`.
-
-Per-event FEP residuals `(e - μ) / σ` cover the events inside the FEP window with finite
-qdrift; `slow_mean` is their mean over the five percent of these events with the highest qdrift.
+calibration `m_cal_simple` are applied to the DEP and SEP sets (if present in `sets`). Every peak
+is fitted with `try_fit_crosscheck_peak`; a failed fit is recorded in the `status` of its row.
+Without a FEP fit `shifts` is empty, `residuals` holds empty vectors and `slow_mean` is `NaN`.
 
 Returns `(fep_row, checks, fits, rows, shifts, slow_mean_residual, residuals, ctc_report)`:
 - `fep_row`: `evaluate_energy_point` row of the FEP
@@ -246,11 +237,12 @@ Returns `(fep_row, checks, fits, rows, shifts, slow_mean_residual, residuals, ct
 - `fits`: `fit_crosscheck_peak` results by peak (`:FEP`, `:DEP`, `:SEP`)
 - `rows`: one crosscheck table row per attempted peak
 - `shifts`: `(shift, σ)` of `:DEP` and `:SEP`, scaled so that the FEP sits at its line
-- `residuals`: `(residual, qdrift, slow_mean)`
+- `residuals`: `(residual, qdrift, slow_mean)`, the residuals `(e - μ) / σ` of the FEP events in
+  the FEP window with finite qdrift and their mean over the five percent with the highest qdrift
 - `ctc_report`: `ctc_energy` report of the FEP energies if `opt_config.apply_ctc`, else `nothing`
 """
-function crosscheck_optimum(sets::NamedTuple,
-        dsp_config, opt_config::PropDict, flt_config::PropDict, flt::Symbol, rt::Unitful.Time, ft::Unitful.Time)
+function crosscheck_optimum(sets::NamedTuple, dsp_config, opt_config::PropDict, flt_config::PropDict,
+        flt::Symbol, rt::Unitful.Time, ft::Unitful.Time)
     peak = opt_config.peak
     window = (opt_config.left_window_size, opt_config.right_window_size)
     containment = opt_config.containment
@@ -263,22 +255,29 @@ function crosscheck_optimum(sets::NamedTuple,
 
     checks = NamedTuple[(name = :FEP, e_cal = e_cal_fep, line = peak, window = window)]
     if haskey(sets, :dep)
-        push!(checks, (name = :DEP, e_cal = calibrate(dsp_energy_rtft(sets.dep.prep, dsp_config, rt, ft, flt), sets.dep.qdrift),
+        e_dep = dsp_energy_rtft(sets.dep.prep, dsp_config, rt, ft, flt)
+        push!(checks, (name = :DEP, e_cal = calibrate(e_dep, sets.dep.qdrift),
                        line = peak - 2 * ELECTRON_MASS_ENERGY, window = DEP_WINDOW))
     end
     if haskey(sets, :sep)
-        push!(checks, (name = :SEP, e_cal = calibrate(dsp_energy_rtft(sets.sep.prep, dsp_config, rt, ft, flt), sets.sep.qdrift),
+        e_sep = dsp_energy_rtft(sets.sep.prep, dsp_config, rt, ft, flt)
+        push!(checks, (name = :SEP, e_cal = calibrate(e_sep, sets.sep.qdrift),
                        line = peak - ELECTRON_MASS_ENERGY, window = window))
     end
 
     fit_names, fit_values, statuses = Symbol[], NamedTuple[], String[]
     for c in checks
-        fit, status = try_fit_crosscheck_peak(c.e_cal, c.line, c.window; containment, context = " ($(c.name) of $flt at rt = $rt, ft = $ft)")
+        context = " ($(c.name) of $flt at rt = $rt, ft = $ft)"
+        fit, status = try_fit_crosscheck_peak(c.e_cal, c.line, c.window; containment, context)
         push!(statuses, status)
-        isnothing(fit) || (push!(fit_names, c.name); push!(fit_values, fit))
+        if !isnothing(fit)
+            push!(fit_names, c.name)
+            push!(fit_values, fit)
+        end
     end
     fits = NamedTuple{Tuple(fit_names)}(Tuple(fit_values))
-    # every other peak is scaled with the FEP fit
+
+    # DEP and SEP positions are scaled with the FEP fit.
     k = haskey(fits, :FEP) ? peak / fits.FEP.μ : NaN
 
     rows = map(checks, statuses) do c, status
@@ -293,26 +292,30 @@ function crosscheck_optimum(sets::NamedTuple,
              centroid = f.centroid, n_events = f.n_events, status = status)
         end
     end
-    shift_peaks = haskey(fits, :FEP) ? Tuple(p for p in (:DEP, :SEP) if haskey(fits, p)) : ()
-    line_of = Dict(c.name => c.line for c in checks)
-    shifts = NamedTuple{shift_peaks}(map(p -> (shift = fits[p].μ * k - line_of[p], σ = fits[p].σ * k), shift_peaks))
 
-    residuals = if haskey(fits, :FEP)
+    shifts = (;)
+    if haskey(fits, :FEP)
+        shift_pairs = [c.name => (shift = fits[c.name].μ * k - c.line, σ = fits[c.name].σ * k)
+                       for c in checks if c.name != :FEP && haskey(fits, c.name)]
+        shifts = (; shift_pairs...)
+    end
+
+    if haskey(fits, :FEP)
         sel = [i for i in eachindex(e_cal_fep, sets.fep.qdrift)
                if peak - first(window) < e_cal_fep[i] < peak + last(window) && isfinite(sets.fep.qdrift[i])]
         residual = ustrip.(NoUnits, (e_cal_fep[sel] .- fits.FEP.μ) ./ fits.FEP.σ)
         slow = sets.fep.qdrift[sel] .>= quantile(sets.fep.qdrift[sel], 0.95)
-        (residual = residual, qdrift = sets.fep.qdrift[sel], slow_mean = mean(residual[slow]))
+        residuals = (residual = residual, qdrift = sets.fep.qdrift[sel], slow_mean = mean(residual[slow]))
     else
-        (residual = Float64[], qdrift = sets.fep.qdrift[Int[]], slow_mean = NaN)
+        residuals = (residual = Float64[], qdrift = sets.fep.qdrift[Int[]], slow_mean = NaN)
     end
 
-    ctc_report = if opt_config.apply_ctc
+    ctc_report = nothing
+    if opt_config.apply_ctc
         valid = [i for i in eachindex(e_fep, sets.fep.qdrift)
                  if isfinite(e_fep[i]) && isfinite(sets.fep.qdrift[i]) && e_fep[i] > 0 && sets.fep.qdrift[i] > 0]
-        last(ctc_energy(e_fep[valid] .* fep_row.m_cal_simple, sets.fep.qdrift[valid], peak, window, fep_row.m_cal_simple))
-    else
-        nothing
+        ctc_report = last(ctc_energy(e_fep[valid] .* fep_row.m_cal_simple, sets.fep.qdrift[valid], peak, window,
+                                     fep_row.m_cal_simple))
     end
 
     return (; fep_row, checks, fits, rows, shifts, slow_mean_residual = residuals.slow_mean, residuals, ctc_report)
@@ -322,22 +325,24 @@ end
 """
     snap_seed(rt0, ft0, rt_bounds, ft_bounds, lattice, feasible, flt)
 
-Move the seed `(rt0, ft0)` of `optimize_rtft` onto the lattice `k * lattice`, inside the bounds
-(which are snapped inward to lattice points) and into the region where `feasible(rt, ft)` holds,
-by lowering `ft` in lattice steps. Returns the lattice-point seed `(rt, ft)`. Throws an
-`ErrorException` naming the filter `flt` if no admissible seed exists.
+Move the seed `(rt0, ft0)` onto the lattice `k * lattice` inside the bounds (snapped inward to
+lattice points), lowering `ft` in lattice steps until `feasible(rt, ft)` holds. Returns the
+seed `(rt, ft)`. Throws an `ErrorException` naming the filter `flt` if no admissible seed exists.
 """
 function snap_seed(rt0, ft0, rt_bounds, ft_bounds, lattice, feasible, flt)
     to_lattice(t) = uconvert(NoUnits, t / lattice)
     rt_range = ceil(Int, to_lattice(first(rt_bounds)) - 1e-6):floor(Int, to_lattice(last(rt_bounds)) + 1e-6)
     ft_range = ceil(Int, to_lattice(first(ft_bounds)) - 1e-6):floor(Int, to_lattice(last(ft_bounds)) + 1e-6)
-    (isempty(rt_range) || isempty(ft_range)) && throw(ErrorException("Filter $flt: no lattice point inside the bounds $rt_bounds, $ft_bounds"))
+    if isempty(rt_range) || isempty(ft_range)
+        throw(ErrorException("Filter $flt: no lattice point inside the bounds $rt_bounds, $ft_bounds"))
+    end
     i = clamp(round(Int, to_lattice(rt0)), first(rt_range), last(rt_range))
     j = clamp(round(Int, to_lattice(ft0)), first(ft_range), last(ft_range))
     while j in ft_range && !feasible(i * lattice, j * lattice)
         j -= 1
     end
-    j in ft_range || throw(ErrorException("Filter $flt: no feasible seed for (rt, ft) = ($rt0, $ft0) inside the bounds $rt_bounds, $ft_bounds"))
+    j in ft_range ||
+        throw(ErrorException("Filter $flt: no feasible seed for (rt, ft) = ($rt0, $ft0) inside the bounds $rt_bounds, $ft_bounds"))
     return i * lattice, j * lattice
 end
 
@@ -345,58 +350,43 @@ end
 """
     flat_top_edge(ft, ft_range, lattice)
 
-`:lower` or `:upper` if the flat-top time `ft` equals the first or last element of `ft_range`
-(`(lowest, highest)`) at the precision of the sampling `lattice`, otherwise `nothing`. A
-degenerate range with both ends equal gives `:upper`.
+`:lower` or `:upper` if `ft` equals the first or last element of `ft_range` (`(lowest, highest)`)
+at the precision of `lattice`, otherwise `nothing`. A degenerate range gives `:upper`.
 """
 function flat_top_edge(ft, ft_range, lattice)
-    steps(x) = round(Int, ustrip(NoUnits, x / lattice))
-    lo, hi = steps.(ft_range)
-    n = steps(ft)
+    n = round(Int, ustrip(NoUnits, ft / lattice))
+    lo = round(Int, ustrip(NoUnits, first(ft_range) / lattice))
+    hi = round(Int, ustrip(NoUnits, last(ft_range) / lattice))
     return n == hi ? :upper : n == lo ? :lower : nothing
 end
+
 
 """
     optimize_channel_filter(sets::NamedTuple, flt::Symbol, dsp_config::DSPConfig,
                             opt_config::PropDict, τ::Unitful.Time;
                             detector, f_title::Function, f_save::Function, f_tablepath::Function)
 
-Optimization of energy filter `flt` of one detector on the prepared peak sets `sets` (see
+Optimize energy filter `flt` of one detector on the prepared peak sets `sets` (see
 `run_filter_optimization_channel`):
-1. noise scan with `dsp_<flt>_rt_optimization` and `fit_enc_sigmas`, giving `rt_enc`;
-2. flat-top scan at `rt_enc` with `fit_fwhm_ft`, giving `ft0`, the optimum of the configured
-   objective, and the legacy optimum `(rt_enc, legacy_ft)`;
-3. if `opt_config.joint_search`, a joint lattice search from `(rt_enc, ft0)` with
-   `optimize_rtft` gives the optimum; otherwise the optimum is `(rt_enc, ft0)` with the
-   metrics of the flat-top scan;
-4. crosschecks at the legacy and the new optimum (`crosscheck_optimum`, `crosscheck_warning`);
-5. figures through `f_save(fig, name)` with titles `f_title(label, flt)`, and tables written
-   to `f_tablepath(flt)` with `write_fltopt_tables`.
+1. A noise sweep gives the rise time `rt_enc` with minimal ENC.
+2. A flat-top scan at `rt_enc` gives `ft0`, the optimum of `opt_config.objective`, and the
+   legacy optimum `(rt_enc, legacy_ft)`.
+3. With `opt_config.joint_search`, a lattice search with `optimize_rtft` from `(rt_enc, ft0)`
+   gives the optimum; otherwise it is `(rt_enc, ft0)`.
+4. Crosschecks at the legacy and the new optimum (`crosscheck_optimum`, `crosscheck_warning`).
+5. Figures are saved with `f_save(fig, name)` and titles `f_title(label, flt)`; tables are
+   written to `f_tablepath(flt)` with `write_fltopt_tables`.
 
-For CUSP and ZAC the flat-top times in the pars, the crosscheck table and the log are those
-that the filter applies (`realized_flattop`), and the lattice search visits only flat tops that
-are applied as requested. The `ft_applied` column of the evaluation table holds the applied
-flat-top time of each row; the `ft` of a flat-top scan row is the requested grid value. The
-trapezoidal flat-top time is written as requested.
+For CUSP and ZAC the flat-top times in the pars, the crosscheck table and the log are those the
+filter applies (`realized_flattop`), and the lattice search visits only flat tops that are applied
+as requested. The `ft_applied` column of the evaluation table holds the applied flat-top time;
+`ft` is the requested one. The trapezoidal flat-top time is written as requested.
 
-Every crosscheck peak fit that is not part of the `peaks_<flt>` figure (a peak fitted at both
-optima) is saved in `crosscheck_<peak>_<optimum>_<flt>`: its fit, or for a failed fit the
-histogram of the energies in the fit window with the error text.
+An optimum on the lower or upper end of the flat-top grid (`flat_top_edge`) logs a warning naming
+`detector` and `flt` and is added to the crosscheck warning.
 
-The objective is `opt_config.objective`; `:fwhm_ct` uses `opt_config.ctc_rel_uncertainty`, the
-assumed relative error of the charge-trapping correction.
-
-If the applied optimum flat-top time equals the lower or upper end of the flat-top grid
-(`flat_top_edge`), a warning naming `detector` and `flt` is logged and added to the crosscheck
-warning of the log.
-
-Returns `(pars, log)`: the fltopt pars of the filter and the extra log table fields (`ft_edge` is
-`:lower`, `:upper` or `nothing`). `pars` holds `n_evals` and `converged` of the joint search only
-if it ran.
-
-The stages run as `@process_step`s named "<flt> noise sweep", "<flt> flat-top scan",
-"<flt> joint search" (or the flat-top scan optimum is used), "<flt> crosschecks",
-"<flt> crosscheck plots", "<flt> example waveforms" and "<flt> tables".
+Returns `(pars, log)`: the fltopt pars of the filter and the extra log table fields. `pars` holds
+`n_evals` and `converged` only if the joint search ran.
 """
 function optimize_channel_filter(sets::NamedTuple, flt::Symbol, dsp_config::DSPConfig, opt_config::PropDict,
         τ::Unitful.Time; detector, f_title::Function, f_save::Function, f_tablepath::Function)
@@ -408,29 +398,32 @@ function optimize_channel_filter(sets::NamedTuple, flt::Symbol, dsp_config::DSPC
     window = (opt_config.left_window_size, opt_config.right_window_size)
     prep = sets.fep.prep
 
-    # Every candidate must be readable in every FEP waveform: trap output exists from
-    # t_first + 2rt + ft on and is read at t50 + rt + ft/2; CUSP and ZAC are read at
+    # Every candidate filter must be readable in every FEP waveform. Trapezoidal output exists
+    # from t_first + 2rt + ft on and is read at t50 + rt + ft/2. CUSP and ZAC are read at
     # t50 + flt_length/2 and hold the flat top inside flt_length. Events without a finite t50
     # have no energy and do not constrain the window.
     t_first, t_last = extrema(first(prep.wvfs_pz).time)
-    all(t -> extrema(t) == (t_first, t_last), prep.wvfs_pz.time) || throw(ArgumentError("The FEP waveforms do not share one time axis"))
+    all(t -> extrema(t) == (t_first, t_last), prep.wvfs_pz.time) ||
+        throw(ArgumentError("The FEP waveforms do not share one time axis"))
     t50_min, t50_max = extrema(filter(isfinite, prep.t50))
     max_half_length = min(t50_min - t_first, t_last - t50_max) - dsp_config.kwargs_pars.sig_interpolation_length
     flt_length = flt == :trap ? zero(prep.sampling_period) : getproperty(dsp_config, Symbol("flt_length_$(flt)"))
-    # flat-top time that the filter applies; CUSP and ZAC lengthen some flat tops by one sample
+    if flt != :trap && !(flt_length / 2 <= max_half_length)
+        throw(ArgumentError("The $flt filter length $flt_length does not fit the FEP waveform window"))
+    end
+
+    # CUSP and ZAC lengthen some flat tops by one sample.
     ft_applied(ft) = uconvert(u"µs", realized_flattop(ft, flt_length, prep.sampling_period, flt))
-    # the trapezoidal filter is built and read out with the requested flat-top time
     ft_written(ft) = flt == :trap ? uconvert(u"µs", ft) : ft_applied(ft)
-    feasible = if flt == :trap
-        (rt, ft) -> rt + ft / 2 <= max_half_length
-    else
-        flt_length / 2 <= max_half_length || throw(ArgumentError("The $flt filter length $flt_length does not fit the FEP waveform window"))
-        # only flat tops that are applied as requested: others duplicate a longer flat top
-        (rt, ft) -> ft < flt_length && ft_applied(ft) == uconvert(u"µs", ft)
+
+    # Flat tops that CUSP and ZAC do not apply as requested duplicate a longer flat top.
+    function feasible(rt, ft)
+        flt == :trap && return rt + ft / 2 <= max_half_length
+        return ft < flt_length && ft_applied(ft) == uconvert(u"µs", ft)
     end
 
     result_rt, report_rt = @process_step "$flt noise sweep" begin
-        enc_grid = getfield(LegendDSP, Symbol("dsp_$(flt)_rt_optimization"))(sets.fep.prep, dsp_config; ft = flt_config.ft_fixed)
+        enc_grid = getfield(LegendDSP, Symbol("dsp_$(flt)_rt_optimization"))(prep, dsp_config; ft = flt_config.ft_fixed)
         result_rt, report_rt = fit_enc_sigmas(enc_grid, e_grid_rt, flt_config.min_enc, flt_config.max_enc,
             flt_config.nbins_enc_sigmas, flt_config.rel_cut_fit_enc_sigmas)
         f_save(LegendMakie.lplot(report_rt, title = f_title("Noise Sweep", flt)), Symbol("noise_sweep_$(flt)"))
@@ -440,38 +433,43 @@ function optimize_channel_filter(sets::NamedTuple, flt::Symbol, dsp_config::DSPC
     @debug "Filter $flt: ENC rise time $rt_enc"
 
     # One dsp_energy_rtft call allocates about five (CUSP, ZAC) or two (trap) times the prepared
-    # waveform set transiently, so the number of simultaneous calls is bounded per detector. The
-    # ft grid below is computed serially; the bound matters for the threaded optimize_rtft batches.
+    # waveform set, so the number of simultaneous calls is bounded (relevant for the threaded
+    # optimize_rtft batches).
     sem = Base.Semaphore(opt_config.max_concurrent_evals)
-    f_energy = function (rt, ft)
+    function f_energy(rt, ft)
         Base.acquire(sem)
         try
-            dsp_energy_rtft(prep, dsp_config, rt, ft, flt)
+            return dsp_energy_rtft(prep, dsp_config, rt, ft, flt)
         finally
             Base.release(sem)
         end
     end
-    # flat-top scan at the ENC rise time
+
     result_ft, report_ft = @process_step "$flt flat-top scan" begin
         e_grid = permutedims(reduce(hcat, [f_energy(rt_enc, ft) for ft in e_grid_ft]))
-        result_ft, report_ft = fit_fwhm_ft(e_grid, e_grid_ft, sets.fep.qdrift, rt_enc, flt_config.min_e_fep, flt_config.max_e_fep,
-            flt_config.rel_cut_fit_e_fep, opt_config.apply_ctc; n_bins = flt_config.nbins_e_fep, peak = opt_config.peak, window,
-            objective, ctc_rel_uncertainty, containment = opt_config.containment, rel_tol = opt_config.rel_tol, ft_fwhm_tol = opt_config.ft_fwhm_tol)
+        result_ft, report_ft = fit_fwhm_ft(e_grid, e_grid_ft, sets.fep.qdrift, rt_enc, flt_config.min_e_fep,
+            flt_config.max_e_fep, flt_config.rel_cut_fit_e_fep, opt_config.apply_ctc;
+            n_bins = flt_config.nbins_e_fep, peak = opt_config.peak, window, objective, ctc_rel_uncertainty,
+            containment = opt_config.containment, rel_tol = opt_config.rel_tol, ft_fwhm_tol = opt_config.ft_fwhm_tol)
         f_save(LegendMakie.lplot(report_ft, title = f_title("FEP FT Scan", flt), figsize = (600, 900)), Symbol("ft_scan_$(flt)"))
         (result_ft, report_ft)
     end
-    ft0, legacy_ft = mvalue(result_ft.ft), ft_written(mvalue(result_ft.legacy_ft))
+    ft0 = mvalue(result_ft.ft)
+    legacy_ft = ft_written(mvalue(result_ft.legacy_ft))
     @debug "Filter $flt: seed flat-top time $ft0, legacy flat-top time $legacy_ft"
 
-    # the optimum: joint lattice search from the seed (rt_enc, ft0) moved onto the lattice, inside
-    # the bounds and into the feasible region, or the flat-top scan optimum at rt_enc
-    optimum, result_rtft, report_rtft = if joint_search
-        @process_step "$flt joint search" begin
+    if joint_search
+        result_rtft, report_rtft = @process_step "$flt joint search" begin
             # CUSP and ZAC flat tops lie on every second lattice point: the flat-top step is a power
-            # of two lattice steps, at least two, so that halving keeps it feasible down to two
-            step_ft = flt == :trap ? step(e_grid_ft) :
-                2^max(1, round(Int, log2(ustrip(NoUnits, max(step(e_grid_rt), step(e_grid_ft)) / prep.sampling_period)))) * prep.sampling_period
-            rt_seed, ft_seed = snap_seed(rt_enc, ft_written(ft0), extrema(e_grid_rt), extrema(e_grid_ft), prep.sampling_period, feasible, flt)
+            # of two lattice steps, at least two, so that halving keeps it feasible down to two.
+            if flt == :trap
+                step_ft = step(e_grid_ft)
+            else
+                n_steps = ustrip(NoUnits, max(step(e_grid_rt), step(e_grid_ft)) / prep.sampling_period)
+                step_ft = 2^max(1, round(Int, log2(n_steps))) * prep.sampling_period
+            end
+            rt_seed, ft_seed = snap_seed(rt_enc, ft_written(ft0), extrema(e_grid_rt), extrema(e_grid_ft),
+                                         prep.sampling_period, feasible, flt)
             result_rtft, report_rtft = optimize_rtft(f_energy, sets.fep.qdrift, rt_seed, ft_seed;
                 rt_bounds = extrema(e_grid_rt), ft_bounds = extrema(e_grid_ft), feasible,
                 step0 = (step(e_grid_rt), step_ft), lattice = prep.sampling_period,
@@ -480,18 +478,20 @@ function optimize_channel_filter(sets::NamedTuple, flt::Symbol, dsp_config::DSPC
                 rel_cut_fit = flt_config.rel_cut_fit_e_fep, n_bins = flt_config.nbins_e_fep,
                 apply_ctc = opt_config.apply_ctc, containment = opt_config.containment)
             @debug "Filter $flt: optimum rt = $(result_rtft.rt), ft = $(result_rtft.ft) after $(result_rtft.n_evals) evaluations"
-            f_save(LegendMakie.lplot(report_rtft, legacy = (rt_enc, legacy_ft), title = f_title("RT-FT Search", flt), figsize = (700, 550)),
-                Symbol("rtft_landscape_$(flt)"))
-            (result_rtft, result_rtft, report_rtft)
+            f_save(LegendMakie.lplot(report_rtft, legacy = (rt_enc, legacy_ft), title = f_title("RT-FT Search", flt),
+                                     figsize = (700, 550)), Symbol("rtft_landscape_$(flt)"))
+            (result_rtft, report_rtft)
         end
+        optimum = result_rtft
     else
+        result_rtft, report_rtft = nothing, nothing
         i_scan = only(findall(==(ft0), report_ft.table.ft))
         @debug "Filter $flt: optimum rt = $rt_enc, ft = $ft0 from the flat-top scan"
-        (merge(report_ft.table[i_scan], (rt = rt_enc, ft = ft0, min_objective = result_ft.min_objective)), nothing, nothing)
+        optimum = merge(report_ft.table[i_scan], (rt = rt_enc, ft = ft0, min_objective = result_ft.min_objective))
     end
-    rt_new, ft_new = uconvert(u"µs", mvalue(optimum.rt)), ft_written(mvalue(optimum.ft))
+    rt_new = uconvert(u"µs", mvalue(optimum.rt))
+    ft_new = ft_written(mvalue(optimum.ft))
 
-    # crosschecks at both optima
     cc_legacy, cc_new, warning = @process_step "$flt crosschecks" begin
         cc_legacy = crosscheck_optimum(sets, dsp_config, opt_config, flt_config, flt, rt_enc, legacy_ft)
         cc_new = crosscheck_optimum(sets, dsp_config, opt_config, flt_config, flt, rt_new, ft_new)
@@ -500,31 +500,42 @@ function optimize_channel_filter(sets::NamedTuple, flt::Symbol, dsp_config::DSPC
         (cc_legacy, cc_new, warning)
     end
 
-    # an optimum on the edge of the ft grid may lie beyond it
+    # An optimum on the edge of the ft grid may lie beyond it.
     ft_edge = flat_top_edge(ft_new, ft_written.(extrema(e_grid_ft)), prep.sampling_period)
-    isnothing(ft_edge) || @warn "Detector $detector, filter $flt: optimum flat-top time $ft_new is on the $ft_edge edge of the ft grid $(extrema(e_grid_ft))"
-    warning = join(filter(!isempty, [warning, isnothing(ft_edge) ? "" : "flat-top time on the $ft_edge edge of the ft grid"]), "; ")
+    if !isnothing(ft_edge)
+        @warn "Detector $detector, filter $flt: optimum flat-top time $ft_new is on the $ft_edge edge of the ft grid $(extrema(e_grid_ft))"
+        warning = isempty(warning) ? "" : warning * "; "
+        warning *= "flat-top time on the $ft_edge edge of the ft grid"
+    end
 
     @process_step "$flt crosscheck plots" begin
         if opt_config.apply_ctc
-            f_save(LegendMakie.lplot(cc_legacy.ctc_report, figsize = (600, 600), title = f_title("CTC Legacy Optimum", flt)), Symbol("ctc_$(flt)_legacy"))
-            f_save(LegendMakie.lplot(cc_new.ctc_report, figsize = (600, 600), title = f_title("CTC New Optimum", flt)), Symbol("ctc_$(flt)_new"))
+            f_save(LegendMakie.lplot(cc_legacy.ctc_report, figsize = (600, 600), title = f_title("CTC Legacy Optimum", flt)),
+                   Symbol("ctc_$(flt)_legacy"))
+            f_save(LegendMakie.lplot(cc_new.ctc_report, figsize = (600, 600), title = f_title("CTC New Optimum", flt)),
+                   Symbol("ctc_$(flt)_new"))
         end
-        # the peaks fitted at both optima share one figure; every other peak fit is drawn on its own
+
+        # Peaks fitted at both optima share one figure; every other peak fit is drawn on its own.
         peaks = [p for p in keys(cc_new.fits) if haskey(cc_legacy.fits, p)]
-        isempty(peaks) || f_save(LegendMakie.lplot((peaks = peaks, legacy = [cc_legacy.fits[p] for p in peaks], new = [cc_new.fits[p] for p in peaks]);
-            figsize = (700, 300 * length(peaks)), title = f_title("Crosscheck Peaks", flt)), Symbol("peaks_$(flt)"))
+        if !isempty(peaks)
+            fits = (peaks = peaks, legacy = [cc_legacy.fits[p] for p in peaks], new = [cc_new.fits[p] for p in peaks])
+            f_save(LegendMakie.lplot(fits; figsize = (700, 300 * length(peaks)), title = f_title("Crosscheck Peaks", flt)),
+                   Symbol("peaks_$(flt)"))
+        end
         for (which, cc) in ((:legacy, cc_legacy), (:new, cc_new)), (c, row) in zip(cc.checks, cc.rows)
             c.name in peaks && continue
-            f_save(crosscheck_peak_figure(c, get(cc.fits, c.name, nothing), row.status; title = f_title("Crosscheck $(c.name) $(titlecase(String(which))) Optimum", flt)),
-                Symbol("crosscheck_$(lowercase(String(c.name)))_$(which)_$(flt)"))
+            title = f_title("Crosscheck $(c.name) $(titlecase(String(which))) Optimum", flt)
+            f_save(crosscheck_peak_figure(c, get(cc.fits, c.name, nothing), row.status; title),
+                   Symbol("crosscheck_$(lowercase(String(c.name)))_$(which)_$(flt)"))
         end
-        isempty(cc_legacy.residuals.residual) || isempty(cc_new.residuals.residual) ||
+        if !isempty(cc_legacy.residuals.residual) && !isempty(cc_new.residuals.residual)
             f_save(LegendMakie.lplot((legacy = cc_legacy.residuals, new = cc_new.residuals); figsize = (900, 450),
-                title = f_title("FEP Residuals", flt)), Symbol("residuals_$(flt)"))
+                                     title = f_title("FEP Residuals", flt)), Symbol("residuals_$(flt)"))
+        end
     end
 
-    # example waveforms: events with the lowest and the highest qdrift
+    # Example waveforms: the events with the lowest and the highest qdrift.
     @process_step "$flt example waveforms" begin
         n_class = opt_config.n_example_wvfs
         qdrift = sets.fep.qdrift
@@ -532,57 +543,84 @@ function optimize_channel_filter(sets::NamedTuple, flt::Symbol, dsp_config::DSPC
         idx = vcat(valid[partialsortperm(qdrift[valid], 1:n_class)],
                    valid[partialsortperm(qdrift[valid], 1:n_class, rev = true)])
         wvfs = prep.wvfs_pz[idx]
-        flt_legacy, flt_new = map(((rt_enc, legacy_ft), (rt_new, ft_new))) do (rt, ft)
-            # the filters take all times in one floating-point type
-            flt_obj = if flt == :trap
+
+        # The filters take all times in one floating-point type.
+        function make_filter(rt, ft)
+            if flt == :trap
                 T = typeof(float(prep.sampling_period))
-                TrapezoidalChargeFilter(convert(T, rt), convert(T, ft))
-            else
-                # CUSP and ZAC with the constants of dsp_energy_rtft
-                flt_length = getproperty(dsp_config, Symbol("flt_length_$(flt)"))
-                T = typeof(float(flt_length))
-                (flt == :cusp ? CUSPChargeFilter : ZACChargeFilter)(convert(T, rt), convert(T, ft), convert(T, 10000000.0u"µs"),
-                    flt_length, ustrip(NoUnits, flt_length / prep.sampling_period))
+                return TrapezoidalChargeFilter(convert(T, rt), convert(T, ft))
             end
-            flt_obj.(wvfs)
+            # Constants as in dsp_energy_rtft.
+            flt_length = getproperty(dsp_config, Symbol("flt_length_$(flt)"))
+            T = typeof(float(flt_length))
+            FilterType = flt == :cusp ? CUSPChargeFilter : ZACChargeFilter
+            return FilterType(convert(T, rt), convert(T, ft), convert(T, 10000000.0u"µs"),
+                              flt_length, ustrip(NoUnits, flt_length / prep.sampling_period))
         end
-        f_save(LegendMakie.lplot((classes = repeat([:fast, :slow], inner = n_class), wvfs = wvfs, flt_legacy = flt_legacy, flt_new = flt_new);
-            figsize = (1200, 600), title = f_title("Example Waveforms", flt)), Symbol("example_wvfs_$(flt)"))
+        flt_legacy = make_filter(rt_enc, legacy_ft).(wvfs)
+        flt_new = make_filter(rt_new, ft_new).(wvfs)
+
+        classes = repeat([:fast, :slow], inner = n_class)
+        f_save(LegendMakie.lplot((; classes, wvfs, flt_legacy, flt_new); figsize = (1200, 600),
+                                 title = f_title("Example Waveforms", flt)), Symbol("example_wvfs_$(flt)"))
     end
 
-    # tables: noise scan, ft scan and lattice rows share the columns of `evaluation`; `ft` is the
-    # requested flat-top time of a row and `ft_applied` the one that the filter applies
+    # The noise scan, ft scan and lattice rows share the columns of `evaluation`.
     @process_step "$flt tables" begin
-        metric_columns(t) = (status = string.(t.status), enc = fill(NaN, length(t)),
+        metric_columns(t) = (
+            status = string.(t.status), enc = fill(NaN, length(t)),
             fwhm_before = uconvert.(u"keV", mvalue.(t.fwhm_before)), fwhm = uconvert.(u"keV", mvalue.(t.fwhm)),
-            w90 = uconvert.(u"keV", mvalue.(t.w90)), asym = mvalue.(t.asym), tail_fraction = mvalue.(t.tail_fraction),
-            tail_scale = uconvert.(u"keV", mvalue.(t.tail_scale)), centroid = uconvert.(u"keV", mvalue.(t.centroid)),
-            fct = mvalue.(t.fct), ct_spread = uconvert.(u"keV", mvalue.(t.ct_spread)), m_cal_simple = uconvert.(u"keV", mvalue.(t.m_cal_simple)),
-            ctc_converged = t.ctc_converged, n_events = t.n_events)
-        n_rt, n_ft = length(report_rt.enc), length(report_ft.table)
-        evaluation = vcat(
-            Table(scan = fill("noise", n_rt), rt = uconvert.(u"µs", collect(report_rt.enc_grid_rt)),
-                ft = fill(uconvert(u"µs", flt_config.ft_fixed), n_rt), ft_applied = fill(ft_applied(flt_config.ft_fixed), n_rt), stage = fill("", n_rt),
-                step_rt = fill(NaN * u"µs", n_rt), step_ft = fill(NaN * u"µs", n_rt), status = fill("ok", n_rt),
-                enc = mvalue.(report_rt.enc), fwhm_before = fill(NaN * u"keV", n_rt), fwhm = fill(NaN * u"keV", n_rt),
-                w90 = fill(NaN * u"keV", n_rt), asym = fill(NaN, n_rt), tail_fraction = fill(NaN, n_rt),
-                tail_scale = fill(NaN * u"keV", n_rt), centroid = fill(NaN * u"keV", n_rt), fct = fill(NaN, n_rt),
-                ct_spread = fill(NaN * u"keV", n_rt), m_cal_simple = fill(NaN * u"keV", n_rt), ctc_converged = fill(false, n_rt), n_events = fill(0, n_rt)),
-            Table(merge((scan = fill("ft_scan", n_ft), rt = fill(uconvert(u"µs", rt_enc), n_ft),
-                ft = uconvert.(u"µs", report_ft.table.ft), ft_applied = ft_applied.(report_ft.table.ft), stage = fill("", n_ft), step_rt = fill(NaN * u"µs", n_ft),
-                step_ft = fill(uconvert(u"µs", step(e_grid_ft)), n_ft)), metric_columns(report_ft.table))),
-            (joint_search ? [Table(merge((scan = fill("lattice", length(report_rtft.table)), rt = uconvert.(u"µs", report_rtft.table.rt),
-                ft = uconvert.(u"µs", report_rtft.table.ft), ft_applied = ft_applied.(report_rtft.table.ft), stage = string.(report_rtft.table.stage),
-                step_rt = uconvert.(u"µs", report_rtft.table.step_rt), step_ft = uconvert.(u"µs", report_rtft.table.step_ft)),
-                metric_columns(report_rtft.table)))] : Table[])...)
-        crosscheck = Table(vcat(map(((:legacy, rt_enc, legacy_ft, cc_legacy), (:new, rt_new, ft_new, cc_new))) do (optimum, rt, ft, cc)
-            [merge((optimum = String(optimum), rt = uconvert(u"µs", rt), ft = uconvert(u"µs", ft), fct = mvalue(cc.fep_row.fct),
-                    ct_spread = uconvert(u"keV", mvalue(cc.fep_row.ct_spread)), slow_mean_residual = cc.slow_mean_residual), row)
-             for row in cc.rows]
-        end...))
-        write_fltopt_tables(f_tablepath(flt), (evaluation = evaluation, crosscheck = crosscheck,
+            w90 = uconvert.(u"keV", mvalue.(t.w90)), asym = mvalue.(t.asym),
+            tail_fraction = mvalue.(t.tail_fraction), tail_scale = uconvert.(u"keV", mvalue.(t.tail_scale)),
+            centroid = uconvert.(u"keV", mvalue.(t.centroid)), fct = mvalue.(t.fct),
+            ct_spread = uconvert.(u"keV", mvalue.(t.ct_spread)), m_cal_simple = uconvert.(u"keV", mvalue.(t.m_cal_simple)),
+            ctc_converged = t.ctc_converged, n_events = t.n_events,
+        )
+
+        n_rt = length(report_rt.enc)
+        noise_table = Table(
+            scan = fill("noise", n_rt), rt = uconvert.(u"µs", collect(report_rt.enc_grid_rt)),
+            ft = fill(uconvert(u"µs", flt_config.ft_fixed), n_rt), ft_applied = fill(ft_applied(flt_config.ft_fixed), n_rt),
+            stage = fill("", n_rt), step_rt = fill(NaN * u"µs", n_rt), step_ft = fill(NaN * u"µs", n_rt),
+            status = fill("ok", n_rt), enc = mvalue.(report_rt.enc), fwhm_before = fill(NaN * u"keV", n_rt),
+            fwhm = fill(NaN * u"keV", n_rt), w90 = fill(NaN * u"keV", n_rt), asym = fill(NaN, n_rt),
+            tail_fraction = fill(NaN, n_rt), tail_scale = fill(NaN * u"keV", n_rt), centroid = fill(NaN * u"keV", n_rt),
+            fct = fill(NaN, n_rt), ct_spread = fill(NaN * u"keV", n_rt), m_cal_simple = fill(NaN * u"keV", n_rt),
+            ctc_converged = fill(false, n_rt), n_events = fill(0, n_rt),
+        )
+
+        n_ft = length(report_ft.table)
+        ft_scan_table = Table(merge((
+            scan = fill("ft_scan", n_ft), rt = fill(uconvert(u"µs", rt_enc), n_ft),
+            ft = uconvert.(u"µs", report_ft.table.ft), ft_applied = ft_applied.(report_ft.table.ft),
+            stage = fill("", n_ft), step_rt = fill(NaN * u"µs", n_ft),
+            step_ft = fill(uconvert(u"µs", step(e_grid_ft)), n_ft),
+        ), metric_columns(report_ft.table)))
+
+        evaluation_tables = [noise_table, ft_scan_table]
+        if joint_search
+            lattice = report_rtft.table
+            push!(evaluation_tables, Table(merge((
+                scan = fill("lattice", length(lattice)), rt = uconvert.(u"µs", lattice.rt),
+                ft = uconvert.(u"µs", lattice.ft), ft_applied = ft_applied.(lattice.ft), stage = string.(lattice.stage),
+                step_rt = uconvert.(u"µs", lattice.step_rt), step_ft = uconvert.(u"µs", lattice.step_ft),
+            ), metric_columns(lattice))))
+        end
+        evaluation = vcat(evaluation_tables...)
+
+        crosscheck_rows(optimum, rt, ft, cc) = [
+            merge((; optimum, rt = uconvert(u"µs", rt), ft = uconvert(u"µs", ft), fct = mvalue(cc.fep_row.fct),
+                   ct_spread = uconvert(u"keV", mvalue(cc.fep_row.ct_spread)), slow_mean_residual = cc.slow_mean_residual), row)
+            for row in cc.rows
+        ]
+        crosscheck = Table(vcat(crosscheck_rows("legacy", rt_enc, legacy_ft, cc_legacy),
+                                crosscheck_rows("new", rt_new, ft_new, cc_new)))
+
+        write_fltopt_tables(f_tablepath(flt), (;
+            evaluation, crosscheck,
             residuals_legacy = (; cc_legacy.residuals.residual, cc_legacy.residuals.qdrift),
-            residuals_new = (; cc_new.residuals.residual, cc_new.residuals.qdrift)))
+            residuals_new = (; cc_new.residuals.residual, cc_new.residuals.qdrift),
+        ))
     end
 
     pars = (
@@ -591,43 +629,46 @@ function optimize_channel_filter(sets::NamedTuple, flt::Symbol, dsp_config::DSPC
         objective = string(objective), ctc_rel_uncertainty, joint_search, containment = opt_config.containment,
         min_objective = optimum.min_objective, fwhm = optimum.fwhm, w90 = optimum.w90,
         asym = optimum.asym, fct = optimum.fct, ct_spread = optimum.ct_spread,
-        legacy = (rt = rt_enc, ft = legacy_ft, fwhm = cc_legacy.fep_row.fwhm)
+        legacy = (rt = rt_enc, ft = legacy_ft, fwhm = cc_legacy.fep_row.fwhm),
     )
     joint_search && (pars = merge(pars, (n_evals = result_rtft.n_evals, converged = result_rtft.converged)))
-    return (; pars, log = (objective = pars.objective, legacy_rt = rt_enc, legacy_ft, crosscheck_warning = isempty(warning) ? "-" : warning, ft_edge))
+    log = (objective = pars.objective, legacy_rt = rt_enc, legacy_ft,
+           crosscheck_warning = isempty(warning) ? "-" : warning, ft_edge)
+    return (; pars, log)
 end
 
 
 """
     run_filter_optimization_channel(f_load::Function, filter_types::AbstractVector, dsp_config,
-                                    opt_config::PropDict, τ::Unitful.Time, f_evaluate_qc; detector, f_title::Function, f_save::Function, f_tablepath::Function)
+                                    opt_config::PropDict, τ::Unitful.Time, f_evaluate_qc;
+                                    detector, f_title::Function, f_save::Function, f_tablepath::Function)
 
 Filter optimization of one detector. Loads the FEP waveforms and, if enabled in
-`opt_config.crosscheck`, the DEP and SEP waveforms with `f_load(peakname)` (as returned by
-`load_peak_waveforms`), applies the QC, computes qdrift and prepares every set once
-(`prepare_peak_set`), and runs `optimize_channel_filter` for every filter in `filter_types`, a vector of
-filter `Symbol`s (the keys of a `PropDict`, whose eltype is wider than `Symbol`). Throws an
-`ArgumentError` if `opt_config.joint_search` is not a `Bool` or `opt_config.ctc_rel_uncertainty`
-is not a `Real` (including a missing key).
+`opt_config.crosscheck`, the DEP and SEP waveforms with `f_load(peakname)` (see
+`load_peak_waveforms`), applies the QC, prepares every set once (`prepare_peak_set`) and runs
+`optimize_channel_filter` for every filter in `filter_types`. Throws an `ArgumentError` if
+`opt_config.joint_search` is not a `Bool` or `opt_config.ctc_rel_uncertainty` is not a `Real`.
 
 Returns a `Dict` from filter to its `(pars, log)`, or to the exception that stopped that
-filter. Errors while loading or preparing a peak set propagate. The steps of the loading, the
-preparation and of each filter are `@process_step`s named by peak or filter; a failed step of a
-filter is returned as its `ProcessStepError`. `detector` names the detector in warnings.
+filter. Errors while loading or preparing a peak set propagate.
 """
 function run_filter_optimization_channel(f_load::Function, filter_types::AbstractVector, dsp_config,
         opt_config::PropDict, τ::Unitful.Time, f_evaluate_qc;
         detector, f_title::Function, f_save::Function, f_tablepath::Function)
-    opt_config.joint_search isa Bool || throw(ArgumentError("flt_optimization.joint_search must be a Bool, got $(typeof(opt_config.joint_search))"))
-    opt_config.ctc_rel_uncertainty isa Real || throw(ArgumentError("flt_optimization.ctc_rel_uncertainty must be a Real, got $(typeof(opt_config.ctc_rel_uncertainty))"))
+    if !(opt_config.joint_search isa Bool)
+        throw(ArgumentError("flt_optimization.joint_search must be a Bool, got $(typeof(opt_config.joint_search))"))
+    end
+    if !(opt_config.ctc_rel_uncertainty isa Real)
+        throw(ArgumentError("flt_optimization.ctc_rel_uncertainty must be a Real, got $(typeof(opt_config.ctc_rel_uncertainty))"))
+    end
+
     peaknames = (fep = Symbol(opt_config.peakname),)
     opt_config.crosscheck.dep && (peaknames = merge(peaknames, (dep = DEP_PEAKNAME,)))
     opt_config.crosscheck.sep && (peaknames = merge(peaknames, (sep = SEP_PEAKNAME,)))
-    sets = NamedTuple{keys(peaknames)}(map(keys(peaknames)) do key
-        peakname = peaknames[key]
+    sets = map(peaknames) do peakname
         wvfs = @process_step "$peakname data loader" f_load(peakname)
         @process_step "$peakname QC and preparation" prepare_peak_set(wvfs, dsp_config, τ, f_evaluate_qc, opt_config.qc)
-    end)
+    end
     GC.gc()
 
     results = Dict{Symbol, Union{NamedTuple, Exception}}()
