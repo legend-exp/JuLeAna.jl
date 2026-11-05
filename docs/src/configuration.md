@@ -49,7 +49,9 @@ The run mode, the worker settings, environment variables and logging:
 5. **`log_level`**: `"debug"`, `"info"`, `"warn"` or `"error"`, the level of the records
    that every process writes to its log file in the log directory (`head.log` for the
    main process, `worker-<id>-<host>.log` for each worker). `"debug"` adds the debug
-   records of the packages listed in `JULIA_DEBUG`.
+   records of the packages listed in `JULIA_DEBUG`. The terminal user interface also writes
+   the error output of the main process to `head-stderr.log` there, each line after its UTC
+   time; Distributed and the cluster manager that adds the workers print their errors there.
 6. **`processor_log_level`** (optional): `"debug"`, `"info"`, `"warn"` or `"error"`.
    Without it, the processors' own records are written at `log_level`. With it, it
    replaces `log_level` for them; see `log_level` of the processor entries below. The command line option

@@ -238,7 +238,13 @@ In the `slurm` run mode the start script submits one SLURM job with the settings
 `runmode_settings.slurm` in the config, such as the number of nodes, and waits for it. The job
 runs every worker as its own job step; `--cpu-bind` applies to these steps. The output of
 the job, with the messages of SLURM and of the restarts of workers, goes to
-`julia-workers-<n>.out` in the log directory and to the Workers page. `o` on the Workers
+`julia-workers-<n>.out` in the log directory and to the Workers page. Each end of a worker
+is logged with its run time and exit code. The Workers page shows for each allocation how
+many of its workers ended with an error (an exit code other than 0); the first of them and
+the 10th, 100th and so on are warnings. Started workers connect to `juleana` and wait until
+it adds them. The top line of the Workers page shows how many wait, and a warning comes
+when workers have waited for a minute: a worker that is not added within
+`JULIA_WORKER_TIMEOUT` ends with exit code 1. `o` on the Workers
 page opens a form of the common options: partition, time limit, nodes, workers per node
 (`--ntasks-per-node`), threads per worker (`--cpus-per-task`) and memory per node
 (`--mem`). `Enter` edits the option under the cursor, and an empty value removes it. The

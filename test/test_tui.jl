@@ -393,6 +393,14 @@ withenv("LEGEND_DATA_CONFIG" => joinpath(mktempdir(), "config.json")) do
             entries = JuLeAna.message_entries(buf)
             @test [e.level for e in entries] == [Logging.Error, Logging.Info, Logging.Warn]
             @test allunique(e.record for e in entries)
+            # with a file for the error output, its finished lines go there after their time as well
+            buf.stderr_file = joinpath(mktempdir(), "head-stderr.log")
+            JuLeAna.append_output!(buf, :stderr, "worker did not connect\nwithin 240")
+            JuLeAna.append_output!(buf, :stdout, "only kept\n")
+            JuLeAna.append_output!(buf, :stderr, " seconds\n")
+            @test occursin(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z worker did not connect\n\d{4}\S+ within 240 seconds\n$",
+                           read(buf.stderr_file, String))
+            @test JuLeAna.message_lines(buf)[(end - 2):end] == ["worker did not connect", "only kept", "within 240 seconds"]
         end
     end # testset
 end # withenv

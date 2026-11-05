@@ -2,7 +2,8 @@
 
 using JuLeAna
 using Dates: Day, Minute, Second, UTC, now
-using Distributed: addprocs, myid, remotecall_fetch, rmprocs
+using Distributed: Distributed, addprocs, myid, remotecall_fetch, rmprocs
+using Logging: Info, Warn, with_logger
 using Test
 
 # Wait until `cond()` holds, at most `timeout` seconds.
@@ -83,6 +84,50 @@ state_of(mgr, id) = only(filter(a -> a.id == id, JuLeAna.allocations(mgr))).stat
             @test wait_until(() -> !process_alive(child))
         end
 
+        @testset "ends of workers" begin
+            mgr = JuLeAna.WorkerManager()
+            JuLeAna.set_worker_config!(mgr, ProcessingConfig(; processors = Dict(), p_processors = Dict(), local_n = 2))
+            JuLeAna.edit_start_script!(mgr, """
+                echo 'Worker slot 1: the worker ended after 3 s with exit code 0'
+                for i in \$(seq 10); do echo 'Worker slot 2: the worker ended after 255 s with exit code 1'; done
+                echo 'Worker slot 2 ended'
+                """)
+            logs = Test.TestLogger()
+            with_logger(logs) do
+                JuLeAna.add_workers!(mgr)
+                return wait_until(() -> state_of(mgr, 1) !== :running)
+            end
+            @test only(JuLeAna.allocations(mgr)).worker_errors == 10
+            ends = [(r.level, r.message) for r in logs.logs if startswith(r.message, "Worker slot")]
+            @test first(ends) == (Info, "Worker slot 1 of allocation 1 ended after 3 s with exit code 0")
+            # the first error and the tenth are warnings
+            @test [level for (level, _) in ends] == [Info; Warn; fill(Info, 8); Warn]
+            @test ends[2][2] == "Worker slot 2 of allocation 1 ended after 255 s with exit code 1; worker errors of the allocation: 1"
+            @test endswith(ends[end][2], "worker errors of the allocation: 10")
+        end
+
+        @testset "workers that wait to join" begin
+            mgr = JuLeAna.WorkerManager()
+            @test JuLeAna.joining_workers(mgr) == 0
+            logs = Test.TestLogger()
+            with_logger(logs) do
+                @test JuLeAna.check_joining!(mgr; at = 100.0, joining = 3) == 3
+                JuLeAna.check_joining!(mgr; at = 159.0, joining = 2)
+                # waiting at every call for a minute
+                JuLeAna.check_joining!(mgr; at = 160.0, joining = 4)
+                JuLeAna.check_joining!(mgr; at = 200.0, joining = 4)
+                JuLeAna.check_joining!(mgr; at = 230.0, joining = 0)
+                # no warning before, so no message when none waits anymore
+                JuLeAna.check_joining!(mgr; at = 300.0, joining = 1)
+                return JuLeAna.check_joining!(mgr; at = 330.0, joining = 0)
+            end
+            @test [(r.level, r.message) for r in logs.logs] ==
+                  [(Warn,
+                    "Workers have waited to join this process for 60 s, 4 now; a worker that is not added within the " *
+                    "JULIA_WORKER_TIMEOUT of $(Distributed.worker_timeout()) s ends"),
+                   (Info, "No more workers wait to join this process, 130 s after the first ones")]
+        end
+
         @testset "SLURM allocations" begin
             dir = mktempdir()
             # squeue lists jobs of this allocation, of another allocation of this process,
@@ -150,11 +195,13 @@ state_of(mgr, id) = only(filter(a -> a.id == id, JuLeAna.allocations(mgr))).stat
             # the loop leads its own process group
             ccall(:kill, Cint, (Cint, Cint), -getpid(loop), 15)
             wait(loop)
-            @test occursin("Worker slot 1: the worker ended after 0 s\n", read(out, String)) && !occursin("stop", read(out, String))
+            @test occursin("Worker slot 1: the worker ended after 0 s with exit code 0\n", read(out, String)) &&
+                  !occursin("stop", read(out, String))
             # with a heartbeat file older than five minutes, or none, each slot runs `stop` after its worker ends and ends
             run(`touch -t 202001010000 $heartbeat`)
-            out = read(`bash -c $(JuLeAna.restart_loop(2, "true", heartbeat, "echo stop", 0, 5))`, String)
+            out = read(`bash -c $(JuLeAna.restart_loop(2, "(exit 3)", heartbeat, "echo stop", 0, 5))`, String)
             @test count(==("stop"), split(out, '\n')) == 2
+            @test occursin("Worker slot 1: the worker ended after 0 s with exit code 3\n", out)
             @test occursin("JuLeAna has not touched $heartbeat for 5 minutes: ending the allocation", out)
             rm(heartbeat)
             @test count(==("stop"),
@@ -211,7 +258,7 @@ state_of(mgr, id) = only(filter(a -> a.id == id, JuLeAna.allocations(mgr))).stat
             output() = only(JuLeAna.allocations(mgr)).output
             @test wait_until(() -> count(==("srun --nodes=1 --ntasks=1 --exact --cpus-per-task=2 --mem=0"), output()) >= 4)
             @test first(output()) == "Submitted batch job 7"
-            @test any(l -> occursin(r"^Worker slot [12]: the worker ended after \d s$", l), output())
+            @test any(l -> occursin(r"^Worker slot [12]: the worker ended after \d s with exit code 0$", l), output())
             # the allocation started the heartbeat of this process, which the script checks
             @test isfile(JuLeAna.heartbeat_file()) && occursin(JuLeAna.heartbeat_file(), JuLeAna.start_script!(mgr).text)
             sbatch_args = read(joinpath(bin, "sbatch.args"), String)
@@ -245,7 +292,7 @@ state_of(mgr, id) = only(filter(a -> a.id == id, JuLeAna.allocations(mgr))).stat
             write(joinpath(dir, "sstat.sh"), "echo \"\$@\" >> $dir/sstat.args; cat $stat\n")
             mgr = JuLeAna.WorkerManager(; sacct = `bash $dir/sacct.sh`, sstat = `bash $dir/sstat.sh`)
             # a SLURM allocation whose job runs, as `update_job_ids!` leaves it
-            alloc = JuLeAna.WorkerAllocation(1, :slurm, "julia-1-1", now(UTC), nothing, :running, nothing, nothing, ["4711"], String[])
+            alloc = JuLeAna.WorkerAllocation(1, :slurm, "julia-1-1", now(UTC), nothing, :running, nothing, nothing, ["4711"], 0, String[])
             push!(mgr.allocations, alloc)
             JuLeAna.update_steps!(mgr; at = 100)
             # the CPUs over the last minute only from the second query on

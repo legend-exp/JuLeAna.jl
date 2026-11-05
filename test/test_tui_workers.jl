@@ -20,16 +20,9 @@ workers_screen(tb) = join((row_text(tb, r) for r in 1:tb.height), "\n")
 
 @testset "Workers page" begin
     t0 = DateTime(2026, 10, 15, 11, 47, 56)
-    allocation(id, state; backend = :local, job_name = nothing, job_ids = String[], exit_code = nothing, finished = nothing, output = String[]) = (;
-                                                                                                                                                   id,
-                                                                                                                                                   backend,
-                                                                                                                                                   job_name,
-                                                                                                                                                   started = t0,
-                                                                                                                                                   finished,
-                                                                                                                                                   state,
-                                                                                                                                                   exit_code,
-                                                                                                                                                   job_ids,
-                                                                                                                                                   output)
+    allocation(id, state; backend = :local, job_name = nothing, job_ids = String[], exit_code = nothing, finished = nothing,
+               worker_errors = 0,
+               output = String[]) = (; id, backend, job_name, started = t0, finished, state, exit_code, job_ids, worker_errors, output)
     allocations = [allocation(1, :running; backend = :slurm, job_name = "julia-42-1", job_ids = ["4711", "4712"],
                               output = ["starting workers", "srun: job 4711 queued"]),
                    allocation(2, :cancelled; finished = t0 + Minute(3), exit_code = 143, output = ["cancelled output"]),
@@ -39,10 +32,10 @@ workers_screen(tb) = join((row_text(tb, r) for r in 1:tb.height), "\n")
     local_attributes = (; host = "cslg4", os_pid = 101, threads = 4, memory = 64 * 2^30, job = "", step = "", tasks = "", cpus = "",
                         gpus = "")
     slurm = (; queue = "JOBID PARTITION NAME\n4711 debug julia-42-1\n", idle = "PARTITION AVAIL NODES\ndebug* up 3\n")
-    overview(; slurm = nothing, script = script) = (; allocations, script,
-                                                    workers = [(; pid = 2, attributes = local_attributes),
-                                                               (; pid = 3, attributes = nothing)],
-                                                    steps = JuLeAna.StepInfo[], slurm)
+    overview(; slurm = nothing, script = script, joining = 0) = (; allocations, script,
+                                                                 workers = [(; pid = 2, attributes = local_attributes),
+                                                                            (; pid = 3, attributes = nothing)], joining,
+                                                                 steps = JuLeAna.StepInfo[], slurm)
     snap = (; nworkers = 2, idle_deadline = DateTime(2026, 10, 15, 12, 4, 12))
     busy = [JuLeAna.BusyItem((2, "item", DataPeriod(2), DataRun(6), :process_dsp_cal, t0, false))]
 
@@ -97,6 +90,13 @@ workers_screen(tb) = join((row_text(tb, r) for r in 1:tb.height), "\n")
         @test occursin("Allocations", text) && occursin("▶  1 slurm", text)
         @test occursin("julia-42-1 (4711,4712)", text) && occursin("00:12:04", text)
         @test occursin("ended after 00:03:00", text) && occursin("exit 3", text) && !occursin("exit 0", text)
+        @test !occursin("worker error", text)
+        # the workers of an allocation that ended with an error, shown before the job, which a narrow pane cuts
+        errors = allocation(1, :running; backend = :slurm, job_name = "julia-42-1", job_ids = ["4711", "4712"], worker_errors = 3)
+        errors_tb = render_workers_page(loaded_page((; overview()..., allocations = [errors])), snap; at)
+        @test occursin("running   3 worker errors  julia-42-1", workers_screen(errors_tb))
+        hit = find_text(errors_tb, "3 worker errors")
+        @test style_at(errors_tb, hit.x, hit.y).fg == Tachikoma.tstyle(:error).fg
         for (word, color) in (("running", :success), ("cancelled", :warning), ("failed", :error), ("ended    ", :text_dim))
             hit = find_text(tb, word)
             @test hit !== nothing && style_at(tb, hit.x, hit.y).fg == Tachikoma.tstyle(color).fg
@@ -123,7 +123,12 @@ workers_screen(tb) = join((row_text(tb, r) for r in 1:tb.height), "\n")
     @testset "information line" begin
         page = loaded_page()
         text = row_text(render_workers_page(page, snap, busy), 1)
-        @test occursin("workers 2, 1 busy", text) && occursin("idle cancel in 04:12", text)
+        @test occursin("workers 2, 1 busy", text) && occursin("idle cancel in 04:12", text) && !occursin("waiting to join", text)
+        # workers that wait to join
+        tb = render_workers_page(loaded_page(overview(; joining = 5)), snap, busy)
+        @test occursin("workers 2, 1 busy, 5 waiting to join", row_text(tb, 1))
+        hit = find_text(tb, "5 waiting to join")
+        @test style_at(tb, hit.x, hit.y).fg == Tachikoma.tstyle(:warning).fg
         text = row_text(render_workers_page(page, (; nworkers = 0, idle_deadline = nothing)), 1)
         @test occursin("workers 0", text) && occursin("no idle cancel", text)
         # a deadline in the past counts down to zero
