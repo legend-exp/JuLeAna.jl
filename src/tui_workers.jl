@@ -414,14 +414,16 @@ function workers_attributes_text(a)
     return " │ " * join(parts, " │ ")
 end
 
-# Lines of the table of the job steps `steps`, with an empty line after it; none without steps.
+# Lines of the table of the running and pending job steps of `steps`, after an empty line; none without
+# such steps.
 function workers_steps_lines(steps)
+    steps = filter(s -> s.state in ("RUNNING", "PENDING"), steps)
     isempty(steps) && return String[]
     row(id, node, state, exit_code, elapsed, memory) = rpad(id, 14) * rpad(node, 12) * rpad(state, 15) * rpad(exit_code, 6) *
                                                        rpad(elapsed, 12) *
                                                        memory
-    return [row("STEP", "NODE", "STATE", "EXIT", "ELAPSED", "MEMORY/PEAK");
-            [row(s.id, s.node, s.state, s.exit_code, s.elapsed, workers_memory_text(s)) for s in steps]; ""]
+    return [""; row("STEP", "NODE", "STATE", "EXIT", "ELAPSED", "MEMORY/PEAK");
+            [row(s.id, s.node, s.state, s.exit_code, s.elapsed, workers_memory_text(s)) for s in steps]]
 end
 
 # Spans of the row of the worker `w` at the time `at`; `item` is its busy item or `nothing`, `step` the
@@ -528,8 +530,9 @@ allocation below, the newest line at the bottom. The right one lists the workers
 ID, host, the memory and peak memory of a SLURM worker in GB, the item a busy worker runs or
 `idle`) with the lines the selected worker wrote below, under a title with its attributes;
 while that output is scrolled up, it stays on the same lines as new ones arrive. If the
-overview has SLURM output, the right pane can show it instead (the job steps, `squeue`,
-then `sinfo -t idle`) over the whole column. The focused pane has the heavy border.
+overview has SLURM output, the right pane can show it instead (`squeue`, `sinfo -t idle`,
+then the running and pending job steps) over the whole column. The focused pane has the
+heavy border.
 
 While the start script is edited the editor fills the whole area. A message about the
 start script, the form of the SLURM options and the question before a cancel are drawn
@@ -574,8 +577,8 @@ function render_workers(page::WorkersPage, snap, busy, messages, area::Tachikoma
     if slurm
         inner = Tachikoma.render(pane_block(tab_title, page.focus == 2), right, buf)
         page.worker_list = inner
-        text = [workers_steps_lines(page.overview.steps); split(chomp(page.overview.slurm.queue), '\n'); "";
-                split(chomp(page.overview.slurm.idle), '\n')]
+        text = [split(chomp(page.overview.slurm.queue), '\n'); ""; split(chomp(page.overview.slurm.idle), '\n');
+                workers_steps_lines(page.overview.steps)]
         page.slurm_top = clamp(page.slurm_top, 1, max(1, length(text) - inner.height + 1))
         for (r, line) in enumerate(text[page.slurm_top:min(end, page.slurm_top + inner.height - 1)])
             Tachikoma.set_string!(buf, inner.x, inner.y + r - 1, replace(line, '\t' => " "), Tachikoma.tstyle(:text);

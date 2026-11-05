@@ -293,9 +293,9 @@ workers_screen(tb) = join((row_text(tb, r) for r in 1:tb.height), "\n")
         press!(page, KeyEvent('s'))
         tb = render_workers_page(page, snap; width = 200)
         text = workers_screen(tb)
-        @test occursin("4711.2        vipc2329    OUT_OF_MEMORY  0:125 00:03:10    –/1.0 GB", text)
-        # the steps come above the queue
-        @test find_text(tb, "4711.3").y < find_text(tb, "4711 debug").y
+        # only the running and pending steps, below the queue and the idle nodes
+        @test occursin("4711.3        vipc2329    RUNNING        0:0   00:01:00    5.0/8.0 GB", text) && !occursin("4711.2", text)
+        @test find_text(tb, "4711 debug").y < find_text(tb, "debug* up 3").y < find_text(tb, "4711.3").y
     end
 
     @testset "SLURM pane" begin

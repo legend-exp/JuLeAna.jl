@@ -208,9 +208,8 @@ The list of workers shows the host of each worker and, for SLURM workers, the me
 job step and the peak memory in GB; the title of the output of the selected worker shows
 its attributes (job step, threads, CPUs, the memory it may use, GPUs). SLURM measures the
 memory every few seconds, so a short peak can be missing. `s` switches the right column to
-the SLURM view: the job steps of the allocations with node, state (such as `OUT_OF_MEMORY`
-for a worker ended for lack of memory), exit code, run time and memory, then the output of
-`squeue` and `sinfo -t idle`.
+the SLURM view: the output of `squeue` and `sinfo -t idle`, then the running and pending job
+steps of the allocations with node, state, exit code, run time and memory.
 
 Idle allocations are cancelled after `idle_timeout_minutes` of the
 [config](@ref Configuration) (default 20, `0` disables) without processing. The status panel under the tabs
