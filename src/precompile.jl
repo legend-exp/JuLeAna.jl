@@ -13,7 +13,7 @@
     # the interface logs on its first frame; nothing is printed while precompiling
     @compile_workload Logging.with_logger(Logging.NullLogger()) do
         ctrl = DataflowController(Dict{String,Any}("config" => nothing); loader = nothing)
-        m = JuLeAnaTUI(ctrl; splash_seconds = 0.0)
+        m = JuLeAnaTUI(ctrl; splash_seconds = 0.0, sync_settings = offline_sync_settings())
         # ends the task that runs the commands of the interface
         close(m.commands)
         m.snap = snapshot(ctrl)
@@ -303,6 +303,23 @@
         for p in eachindex(TUI_PAGES)
             press(Char('0' + p))
         end
+
+        # Sync window: its settings connect to nothing; the state of the screen is set to reach the question of Escape
+        m.page = 1
+        running_snap = m.snap
+        m.snap = (; m.snap..., state = :ready)
+        press('S')
+        press(:tab, :down, :up, :escape, 'p', 'p', '?', :escape)
+        mouse(70, 20, Tachikoma.mouse_left, Tachikoma.mouse_press)
+        m.sync.modal_kind = :transfer
+        m.sync.step = Sync.StepProgress("copying", 1, 1, 50, 100, nothing, "")
+        press(:escape, 'x', 'c', :escape, 'b', 'S', :escape, 's')
+        m.sync.modal_kind, m.sync.modal = :error,
+                                          Tachikoma.Modal(; title = "Error", message = "", cancel_label = "Close", confirm_label = "")
+        m.sync.step = nothing
+        press(:escape)
+        press(:escape)
+        m.snap = running_snap
 
         # New-production form: editing, rows, phases of the creation
         m.page = 1

@@ -151,7 +151,7 @@ withenv("LEGEND_DATA_CONFIG" => joinpath(mktempdir(), "config.json")) do
             m = JuLeAna.JuLeAnaTUI(DataflowController(new_session(); processors, record_software = false, record_metadata = false))
             Tachikoma.update!(m, KeyEvent('6'))
             @test m.page == 6
-            Tachikoma.update!(m, KeyEvent('8'))
+            Tachikoma.update!(m, KeyEvent('9'))
             @test m.page == 6
             Tachikoma.update!(m, KeyEvent('7'))
             @test m.page == 7

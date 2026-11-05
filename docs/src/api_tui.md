@@ -5,6 +5,7 @@ The types and functions behind the pages of the terminal user interface that
 
 ```@docs
 JuLeAna.JuLeAnaTUI
+JuLeAna.Sync
 JuLeAna.TUI_THEMES
 JuLeAna.tui_theme
 JuLeAna.theme_preference_path

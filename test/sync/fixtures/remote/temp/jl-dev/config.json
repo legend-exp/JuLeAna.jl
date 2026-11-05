@@ -1,0 +1,11 @@
+{
+    "setups": {
+        "l200": {
+            "paths": {
+                "metadata": "$_/legend-metadata/",
+                "tier": "$_/generated/tier/",
+                "par": "$_/generated/jlpar/"
+            }
+        }
+    }
+}

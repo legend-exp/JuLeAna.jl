@@ -1,0 +1,4 @@
+setups:
+  l200:
+    paths:
+      "tier/raw": "$_/raw-fixture/"
