@@ -141,7 +141,8 @@ function process_dsp_aux_phy(processing_config, l200::LegendData, period::DataPe
                                       title = get_plottitle(filekey, det, "$energy_type vs. $time_type"), xlabel = "$time_type (µs)",
                                       ylabel = "$energy_type (ADC)", yscale = log10, colorbarlabel = "Counts / bin", juleana_logo = false)
                 ax = Makie.current_axis()
-                Makie.vlines!(ax, window; color = LegendMakie.BEGeOrange, linestyle = :dash, linewidth = 2, label = "aux_trig_intime window")
+                Makie.vlines!(ax, window; color = LegendMakie.BEGeOrange, linestyle = :dash, linewidth = 2,
+                              label = "aux_trig_intime window")
                 Makie.axislegend(ax; position = :rt)
                 save_plot(p, l200, filekey, det, :dsp_aux_energy_time)
             end
