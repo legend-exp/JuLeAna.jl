@@ -64,6 +64,7 @@ JuLeAna.WorkerAttributes
 JuLeAna.StepInfo
 JuLeAna.worker_attributes
 JuLeAna.kill_worker
+JuLeAna.worker_job_ended
 JuLeAna.cancel_allocation!
 JuLeAna.cancel_all!
 JuLeAna.allocations

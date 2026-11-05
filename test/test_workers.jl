@@ -327,8 +327,23 @@ state_of(mgr, id) = only(filter(a -> a.id == id, JuLeAna.allocations(mgr))).stat
                     @test process.termsignal == 9
                 end
                 @test countlines(joinpath(dir, "scancel.args")) == 1
+                # whether a worker ended with its SLURM job: any state of the job but `RUNNING`
+                state = joinpath(dir, "state")
+                squeue = `bash -c "echo \"\$*\" >> $dir/squeue.args; cat $state" squeue`
+                @test !JuLeAna.worker_job_ended(99004; squeue)
+                JuLeAna.WORKER_ATTRIBUTES[99004] = attributes(; job = "")
+                @test !JuLeAna.worker_job_ended(99004; squeue) && !isfile(joinpath(dir, "squeue.args"))
+                JuLeAna.WORKER_ATTRIBUTES[99004] = attributes()
+                for (text, ended) in (("RUNNING\n", false), ("TIMEOUT\n", true), ("COMPLETING\n", true), ("", false))
+                    write(state, text)
+                    @test JuLeAna.worker_job_ended(99004; squeue) == ended
+                end
+                @test readline(joinpath(dir, "squeue.args")) == "--noheader --states=all --jobs=4711 --format=%T"
+                # no state when `squeue` fails or is missing
+                @test !JuLeAna.worker_job_ended(99004; squeue = `bash -c "exit 1"`)
+                @test !JuLeAna.worker_job_ended(99004; squeue = `$dir/no-squeue`)
             finally
-                foreach(pid -> delete!(JuLeAna.WORKER_ATTRIBUTES, pid), (99001, 99002, 99003))
+                foreach(pid -> delete!(JuLeAna.WORKER_ATTRIBUTES, pid), (99001, 99002, 99003, 99004))
             end
         end
 

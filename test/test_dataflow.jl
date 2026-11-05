@@ -33,6 +33,13 @@ function Base.display(d::PlotPaneDisplay, ::MIME"application/vnd.julia-vscode.pl
     return (push!(d.shown, x); nothing)
 end
 
+# Hands out the same process ID every time, also one of a process that does not exist.
+struct SameWorkerPool <: Distributed.AbstractWorkerPool
+    worker::Int
+end
+Base.take!(p::SameWorkerPool) = p.worker
+Base.put!(::SameWorkerPool, ::Int) = nothing
+
 # Stands in for `LegendData`: every run is in the run info, and every period is its own
 # partition.
 struct FakeData end
@@ -848,6 +855,57 @@ const REPORT = """
         finally
             ppt_worker_pool!(original_pool)
             rmprocs(filter(in(Distributed.workers()), pids))
+        end
+    end
+
+    @testset "end of the SLURM job of the worker" begin
+        Row = NamedTuple{(:Detector, :usability, :Status, :Error)}
+        dir = mktempdir()
+        # `squeue` reports the state of the job in `state`
+        state = joinpath(dir, "state")
+        write(joinpath(dir, "squeue"), "#!/bin/bash\ncat $state\n")
+        chmod(joinpath(dir, "squeue"), 0o755)
+        path = "$dir:$(ENV["PATH"])"
+        original_pool = ppt_worker_pool()
+        pool = FlexWorkerPool(withmyid = false, label = "job end test"; maxoccupancy = 1)
+        ppt_worker_pool!(pool)
+        pids = Int[]
+        try
+            append!(pids, addprocs(2; exeflags = "--project=$(Base.active_project())"))
+            @everywhere pids using JuLeAna
+            for pid in pids
+                JuLeAna.WORKER_ATTRIBUTES[pid] = merge(JuLeAna.worker_attributes(pid), (; job = "4711", step = "0"))
+                push!(pool, pid)
+            end
+            # the first worker that gets the item ends, as at the time limit of its job
+            marker = joinpath(dir, "ended")
+            end_first_worker(itr) = isfile(marker) ? (processed = true, log = Row((itr.detector, :on, 1, "")), worker = myid()) :
+                                    (touch(marker); exit(1))
+            rerun = (:warn, r"^The SLURM job of worker \d+ ended while it ran item .*: the item runs again on the next free worker$")
+            write(state, "TIMEOUT\n")
+            result = withenv("PATH" => path) do
+                @test_logs rerun match_mode = :any parallel(end_first_worker, [(detector = :V1, usability = :on)], Row)
+            end
+            @test last(only(result)).processed && count(in(Distributed.workers()), pids) == 1
+            @test last(only(result)).worker in Distributed.workers()
+            # while the job runs, the end of the worker counts as a try
+            rm(marker)
+            write(state, "RUNNING\n")
+            result = withenv(() -> parallel(end_first_worker, [(detector = :V2, usability = :on)], Row), "PATH" => path)
+            @test occursin("the process of the worker ended while it ran the item, 1 time", last(only(result)).log.Error)
+            # the third end of the job fails the item, so that an item longer than the time limit ends
+            JuLeAna.WORKER_ATTRIBUTES[99011] = merge(JuLeAna.WORKER_ATTRIBUTES[pids[1]], (; job = "4711"))
+            items = JuLeAna.ItemPool(SameWorkerPool(99011), "V3", 0, 1)
+            write(state, "TIMEOUT\n")
+            withenv("PATH" => path) do
+                @test_logs((:warn, r"item V3: the item runs again"), (:warn, r"item V3: the item runs again"),
+                           (:warn, r"item V3: the item fails after 3 such ends"), foreach(_ -> put!(items, take!(items)), 1:3))
+            end
+            @test_throws "the SLURM job of the worker ended while it ran the item, 3 times" take!(items)
+        finally
+            ppt_worker_pool!(original_pool)
+            rmprocs(filter(in(Distributed.workers()), pids))
+            foreach(pid -> delete!(JuLeAna.WORKER_ATTRIBUTES, pid), [pids; 99011])
         end
     end
 

@@ -136,6 +136,27 @@ function kill_worker(pid::Integer; scancel::Cmd = `scancel`)
 end
 
 """
+    JuLeAna.worker_job_ended(pid::Integer; squeue::Cmd = `squeue`)
+
+Whether the SLURM job of the worker `pid` no longer runs, so that a worker that ended ended
+with its allocation, at its time limit or cancelled, and not through what it ran. `squeue`
+reports the state of the job; any state but `RUNNING` counts as ended. `false` for a worker
+whose [`JuLeAna.worker_attributes`](@ref) are not known or that is not in a SLURM job, and when
+`squeue` reports no state or cannot run.
+"""
+function worker_job_ended(pid::Integer; squeue::Cmd = `squeue`)
+    a = @lock WORKER_ATTRIBUTES_LOCK get(WORKER_ATTRIBUTES, pid, nothing)
+    (isnothing(a) || isempty(a.job)) && return false
+    state = try
+        strip(read(pipeline(ignorestatus(`$squeue --noheader --states=all --jobs=$(a.job) --format=%T`); stderr = devnull), String))
+    catch e
+        e isa Base.IOError || rethrow()
+        ""
+    end
+    return !isempty(state) && state != "RUNNING"
+end
+
+"""
     JuLeAna.StepInfo
 
 A SLURM job step of a worker allocation as `sacct` and `sstat` report it (see

@@ -195,7 +195,10 @@ the session.
 An allocation is a group of workers started by one run of the script, local or as a SLURM
 job. A worker that ends, for example after running out of memory or after being stopped,
 is started again in its place after `worker_restart_delay_seconds` (default 30), until the
-allocation is cancelled. While it has allocations, `juleana` touches the file
+allocation is cancelled. The item it ran fails, unless its processor tries items again. An item
+whose worker ended with its SLURM job, at the job's time limit or cancelled, runs again on the
+next free worker, waiting for one if no allocation is left, and fails only after the third such
+end. While it has allocations, `juleana` touches the file
 `juleana-<host>-<pid>.alive` in the `setup/config` folder every minute. If a worker ends while
 that file has not been touched for `worker_heartbeat_timeout_minutes` (default 5), for
 example because `juleana` crashed, the allocation ends itself. Both are keys of the
