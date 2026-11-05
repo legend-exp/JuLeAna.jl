@@ -280,6 +280,12 @@ function history_selection(page::HistoryPage)
     return (; row, period, run, label = isnothing(run) ? string(period) : "$period-$run", cell = get(row.cells, (period, run), nothing))
 end
 
+# Item times of a processor, an entry of the `timings` of `read_history`.
+function item_time_text(t)
+    return isnothing(t.p99) ? "min/med/95%/max $(t.min)/$(t.median)/$(t.p95)/$(t.max) s" :
+           "min/med/95%/99%/max $(t.min)/$(t.median)/$(t.p95)/$(t.p99)/$(t.max) s"
+end
+
 # Spans of the line that describes the cell under the cursor.
 function history_detail(page::HistoryPage)
     sel = history_selection(page)

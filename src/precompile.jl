@@ -144,8 +144,7 @@
         m.page = 6
         reports_visit!(m.reports_page, snap)
         deliver!(Tachikoma.TaskEvent(:reports,
-                                     (; request = only(take_requests!(m.reports_page)), value = rows, history = nothing,
-                                      timings = Dict{Any,Any}(("dsp_cal", :run, "cal") => timing))))
+                                     (; request = only(take_requests!(m.reports_page)), value = rows, history = nothing)))
         m.page = 7
         history_visit!(m.history_page, snap)
         deliver!(Tachikoma.TaskEvent(:history, (; request = only(take_requests!(m.history_page)), value = grid)))
