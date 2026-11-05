@@ -26,7 +26,7 @@ const STUB_PROCESSORS = Dict{Symbol,Any}(:process_a => process_a, :p_process_b =
         @test !shipped.submit_jobs
         @test shipped.local_n == 64
         @test shipped.local_julia_settings == String[]
-        @test "--nodes=1" in shipped.slurm_flags && "--time=01:00:00" in shipped.slurm_flags
+        @test "--nodes=1" in shipped.slurm_flags && "--time=02:00:00" in shipped.slurm_flags
         @test shipped.env_variables["JULIA_WORKER_TIMEOUT"] == "240"
         @test shipped.log_level == JuLeAna.parse_log_level("info")
         @test shipped.periods == DataPeriod.([16, 18, 19, 20, 21, 22])
@@ -37,7 +37,7 @@ const STUB_PROCESSORS = Dict{Symbol,Any}(:process_a => process_a, :p_process_b =
         @test spec.level === :run && spec.category === :cal && spec.rank == 6 && !spec.enabled
         @test spec.dependencies == [:p_process_aoe_optimization_cal, :process_aoe_optimization_cal]
         @test spec.kwargs ==
-              Dict{Symbol,Any}(:reprocess => false, :max_wvfs => 1000, :timeout => 0, :use_partition_pars => true, :use_cache => true)
+              Dict{Symbol,Any}(:reprocess => false, :max_wvfs => 1000, :timeout => "auto", :use_cache => true)
         @test shipped.p_processors[:p_process_energy_cal].level === :partition
         @test shipped.p_processors[:p_process_energy_cal].category === :cal
         @test shipped.p_processors[:p_process_skm_phy].category === :phy
@@ -152,6 +152,43 @@ const STUB_PROCESSORS = Dict{Symbol,Any}(:process_a => process_a, :p_process_b =
         @test ProcessingConfig(edited(d -> d["config"]["idle_timeout_minutes"] = 2.5)).idle_timeout_minutes == 2.5
         @test_throws "`config.idle_timeout_minutes` must be zero or positive, got -1.0" ProcessingConfig(edited(d -> d["config"]["idle_timeout_minutes"] = -1))
         @test_throws "`config.idle_timeout_minutes` must be a Real" ProcessingConfig(edited(d -> d["config"]["idle_timeout_minutes"] = "20"))
+        @test shipped.slurm_worker_memory === :shared
+        @test (shipped.worker_restart_delay_seconds, shipped.worker_heartbeat_timeout_minutes) == (30, 5)
+        @test shipped.item_time_estimate === :median
+        @test ProcessingConfig(edited(d -> delete!(d["config"], "item_time_estimate"))).item_time_estimate === :median
+        @test ProcessingConfig(edited(d -> d["config"]["item_time_estimate"] = "max")).item_time_estimate === :max
+        @test_throws "`config.item_time_estimate` must be \"median\", \"p95\" or \"max\", got :p50" ProcessingConfig(edited(d -> d["config"]["item_time_estimate"] = "p50"))
+        @test (shipped.item_time_minimum_items, shipped.item_timeout_factor, shipped.item_timeout_minimum_minutes) == (100, 2, 5)
+        @test ProcessingConfig(edited(d -> delete!(d["config"], "item_time_minimum_items"))).item_time_minimum_items == 100
+        @test ProcessingConfig(edited(d -> d["config"]["item_time_minimum_items"] = 20)).item_time_minimum_items == 20
+        @test_throws "`config.item_time_minimum_items` must be at least 1, got 0" ProcessingConfig(edited(d -> d["config"]["item_time_minimum_items"] = 0))
+        @test_throws "`config.item_time_minimum_items` must be a Int64" ProcessingConfig(edited(d -> d["config"]["item_time_minimum_items"] = 2.5))
+        defaults = ProcessingConfig(edited(d -> foreach(k -> delete!(d["config"], k),
+                                                        ("item_timeout_factor", "item_timeout_minimum_minutes"))))
+        @test (defaults.item_timeout_factor, defaults.item_timeout_minimum_minutes) == (2, 5)
+        @test ProcessingConfig(edited(d -> d["config"]["item_timeout_factor"] = 1.5)).item_timeout_factor == 1.5
+        @test ProcessingConfig(edited(d -> d["config"]["item_timeout_minimum_minutes"] = 0)).item_timeout_minimum_minutes == 0
+        @test_throws "`config.item_timeout_factor` must be positive, got 0.0" ProcessingConfig(edited(d -> d["config"]["item_timeout_factor"] = 0))
+        @test_throws "`config.item_timeout_minimum_minutes` must be zero or positive, got -1.0" ProcessingConfig(edited(d -> d["config"]["item_timeout_minimum_minutes"] = -1))
+        @test_throws "`config.item_timeout_factor` must be a Real" ProcessingConfig(edited(d -> d["config"]["item_timeout_factor"] = "2"))
+        # a processor timeout is "auto" or a number of seconds
+        timeout(value) = ProcessingConfig(edited(d -> d["processors"]["process_dsp_cal"]["kwargs"]["timeout"] = value)).processors[:process_dsp_cal].kwargs[:timeout]
+        @test timeout("auto") == "auto"
+        @test timeout(600) == 600
+        @test_throws "`processors.process_dsp_cal.kwargs.timeout` must be \"auto\" or a number of seconds that is zero or positive, got \"never\"" timeout("never")
+        @test_throws "`processors.process_dsp_cal.kwargs.timeout` must be \"auto\" or a number of seconds that is zero or positive, got -1" timeout(-1)
+        defaults = ProcessingConfig(edited(d -> foreach(k -> delete!(d["config"], k),
+                                                        ("worker_restart_delay_seconds", "worker_heartbeat_timeout_minutes"))))
+        @test (defaults.worker_restart_delay_seconds, defaults.worker_heartbeat_timeout_minutes) == (30, 5)
+        @test ProcessingConfig(edited(d -> d["config"]["worker_restart_delay_seconds"] = 0)).worker_restart_delay_seconds == 0
+        @test_throws "`config.worker_restart_delay_seconds` must be zero or positive, got -1" ProcessingConfig(edited(d -> d["config"]["worker_restart_delay_seconds"] = -1))
+        @test_throws "`config.worker_heartbeat_timeout_minutes` must be at least 2, got 1" ProcessingConfig(edited(d -> d["config"]["worker_heartbeat_timeout_minutes"] = 1))
+        @test_throws "`config.worker_restart_delay_seconds` must be a Int64" ProcessingConfig(edited(d -> d["config"]["worker_restart_delay_seconds"] = 2.5))
+        @test ProcessingConfig(edited(d -> delete!(d["config"]["runmode_settings"]["slurm"], "worker_memory"))).slurm_worker_memory ===
+              :shared
+        @test ProcessingConfig(edited(d -> d["config"]["runmode_settings"]["slurm"]["worker_memory"] = "fixed")).slurm_worker_memory ===
+              :fixed
+        @test_throws "`config.runmode_settings.slurm.worker_memory` must be \"shared\" or \"fixed\", got :half" ProcessingConfig(edited(d -> d["config"]["runmode_settings"]["slurm"]["worker_memory"] = "half"))
         @test_throws "`p_processors.p_process_energy_cal.category` must be \"cal\" or \"phy\"" ProcessingConfig(edited(d -> d["p_processors"]["p_process_energy_cal"]["category"] = "physics"))
         @test_throws "`processors.process_dsp_cal.enabled` must be a Bool" ProcessingConfig(edited(d -> d["processors"]["process_dsp_cal"]["enabled"] = "yes"))
         @test_throws "`processors.process_dsp_cal.rank` must be a $Int" ProcessingConfig(edited(d -> d["processors"]["process_dsp_cal"]["rank"] = 5.5))
@@ -223,6 +260,7 @@ const STUB_PROCESSORS = Dict{Symbol,Any}(:process_a => process_a, :p_process_b =
         positional(; kw...) = ProcessingConfig(values(merge(fields, kw))...)
         @test_throws "runmode must be \"local\" or \"slurm\", got :cluster" positional(runmode = :cluster)
         @test_throws "`config.runmode_settings.local.n` must be positive" positional(local_n = 0)
+        @test_throws "`config.runmode_settings.slurm.worker_memory` must be \"shared\" or \"fixed\", got :half" positional(slurm_worker_memory = :half)
         @test_throws "only one of `only_partitions` or `only_runs`" positional(only_runs = true, only_partitions = true)
         @test_throws "`config.processor_plot_level` must be \"info\" or \"debug\"" positional(processor_plot_level = :verbose)
         @test_throws "`config.plot_formats` must list only" positional(plot_formats = [:gif])
@@ -347,5 +385,81 @@ const STUB_PROCESSORS = Dict{Symbol,Any}(:process_a => process_a, :p_process_b =
 
         @test_logs ProcessingConfig(base)
         @test all(((old, new),) -> haskey(JuLeAna.PROCESSORS, new) && !haskey(JuLeAna.PROCESSORS, old), JuLeAna.RENAMED_PROCESSORS)
+    end
+
+    @testset "detectors and report_status" begin
+        edited(f) = (d = deepcopy(base); f(d); d)
+        entry(d) = d["processors"]["process_energy_calibration_cal"]
+
+        # every processor except the event builder has a detector selection
+        selecting = filter(s -> s.name !== :process_evt_phy,
+                           vcat(collect(values(shipped.processors)), collect(values(shipped.p_processors))))
+        @test all(s -> s.detectors isa String, selecting)
+        @test isnothing(shipped.processors[:process_evt_phy].detectors)
+        @test shipped.processors[:process_energy_calibration_cal].detectors == "processable"
+        @test shipped.p_processors[:p_process_skm_phy].detectors == "true"
+
+        # the expressions use columns of the channel info table only
+        chinfo = JuLeAna.Table(; detector = [:a, :b, :c, :d], channel = 1:4, system = [:geds, :geds, :geds, :geds],
+                               processable = [true, true, true, false], usability = [:on, :ac, :off, :on], psd_usability = fill(:on, 4),
+                               low_aoe_status = [:valid, :present, :missing, :valid], high_aoe_status = fill(:valid, 4),
+                               lq_status = [:valid, :missing, :present, :valid], ann_status = fill(:valid, 4),
+                               coax_rt_status = fill(:valid, 4),
+                               is_bb_like = fill(false, 4), det_type = fill(:icpc, 4))
+        selected(name) = JuLeAna.detector_filter(shipped, name)(chinfo).detector
+        @test all(s -> !isempty(selected(s.name)), selecting)
+        @test selected(:process_energy_calibration_cal) == [:a, :b, :c]
+        @test selected(:process_aoe_optimization_cal) == [:a]
+        @test selected(:p_process_aoe_optimization_cal) == [:a]
+        @test selected(:process_lq_calibration_cut_cal) == [:a]
+        @test selected(:p_process_lq_calibration_cut_cal) == [:a]
+        @test selected(:p_process_skm_phy) == [:a, :b, :c, :d]
+
+        custom = ProcessingConfig(edited(d -> entry(d)["detectors"] = "processable && usability != :off"))
+        @test JuLeAna.detector_filter(custom, :process_energy_calibration_cal)(chinfo).detector == [:a, :b]
+
+        @test_throws "key `processors.process_energy_calibration_cal.detectors` must be a AbstractString" ProcessingConfig(edited(d -> entry(d)["detectors"] = 1))
+        @test_throws "key `processors.process_energy_calibration_cal.detectors` is not a valid detector expression" ProcessingConfig(edited(d -> entry(d)["detectors"] = "processable &&"))
+        @test_throws "key `p_processors.p_process_energy_cal.detectors` is not a valid detector expression" ProcessingConfig(edited(d -> d["p_processors"]["p_process_energy_cal"]["detectors"] = "usability in (:on, :ac)"))
+        # a column that the channel info table lacks fails when the expression is applied
+        bogus = ProcessingConfig(edited(d -> entry(d)["detectors"] = "bogus_column"))
+        @test_throws "bogus_column" JuLeAna.detector_filter(bogus, :process_energy_calibration_cal)(chinfo)
+
+        # a processor without the setting stops with a clear error
+        missing_detectors = ProcessingConfig(edited(d -> delete!(entry(d), "detectors")))
+        @test isnothing(missing_detectors.processors[:process_energy_calibration_cal].detectors)
+        @test_throws "key `processors.process_energy_calibration_cal.detectors` is missing" JuLeAna.detector_filter(missing_detectors,
+                                                                                                                    :process_energy_calibration_cal)
+        @test_throws "unknown processor `process_nope`" JuLeAna.detector_filter(shipped, :process_nope)
+
+        # report_status: the default reproduces the fixed table, entries are overridden one by one
+        @test shipped.processors[:process_energy_calibration_cal].report_status == JuLeAna.DEFAULT_REPORT_STATUS
+        @test JuLeAna.processor_spec(shipped, :p_process_skm_phy).report_status == JuLeAna.DEFAULT_REPORT_STATUS
+        tuned = ProcessingConfig(edited(d -> entry(d)["report_status"] = Dict("off" => Dict("failure" => "success"),
+                                                                              "ac" => Dict("warning" => "failure"))))
+        rules = JuLeAna.processor_spec(tuned, :process_energy_calibration_cal).report_status
+        @test rules[:off] == Dict(:warning => :success, :failure => :success)
+        @test rules[:ac] == Dict(:warning => :failure, :failure => :failure)
+        @test rules[:on] == JuLeAna.DEFAULT_REPORT_STATUS[:on]
+        @test JuLeAna.DEFAULT_REPORT_STATUS[:off][:failure] === :warning
+
+        @test_throws "unknown key `processors.process_energy_calibration_cal.report_status.dead`" ProcessingConfig(edited(d -> entry(d)["report_status"] = Dict("dead" =>
+                                                                                                                                                                    Dict("failure" => "warning"))))
+        @test_throws "unknown key `processors.process_energy_calibration_cal.report_status.on.error`" ProcessingConfig(edited(d -> entry(d)["report_status"] = Dict("on" =>
+                                                                                                                                                                        Dict("error" => "warning"))))
+        @test_throws "key `processors.process_energy_calibration_cal.report_status.on.failure` must be one of success, warning, failure, got \"fail\"" ProcessingConfig(edited(d -> entry(d)["report_status"] = Dict("on" =>
+                                                                                                                                                                                                                         Dict("failure" => "fail"))))
+        @test_throws "key `processors.process_energy_calibration_cal.report_status` must be a AbstractDict" ProcessingConfig(edited(d -> entry(d)["report_status"] = "off"))
+        @test_throws "report_status.off.failure" ProcessingConfig(edited(d -> d["processors"]["process_energy_calibration_cal"]["report_status"] = Dict("off" =>
+                                                                                                                                                            Dict("failure" => "ok"))))
+        @test_throws "key `p_processors.x.report_status` must set every usability and row status" ProcessorSpec(:x, :partition, true, :cal,
+                                                                                                                1, Symbol[],
+                                                                                                                Dict{Symbol,Any}(),
+                                                                                                                false, Logging.Info, :info,
+                                                                                                                nothing,
+                                                                                                                Dict{Symbol,
+                                                                                                                     Dict{Symbol,Symbol}}())
+        @test_throws "report_status.on.failure" ProcessorSpec(; name = :x, level = :run, category = :cal, rank = 1,
+                                                              report_status = Dict(:on => Dict(:failure => :bad)))
     end
 end

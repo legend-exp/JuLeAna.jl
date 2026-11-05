@@ -7,7 +7,7 @@ Calibrate the energy of all processable HPGe detectors (`geds`) of the `cal` run
 For each energy type in `energy_types` of the energy config, the uncalibrated energies of single-pulse, non-pulser events passing the quality cuts are calibrated in three steps: a simple calibration locates the Th-228 peaks, the peaks are fitted with the functions in `th228_fit_func`, and a polynomial calibration curve (`cal_pol_order`) and a FWHM curve (`fwhm_pol_order` for energy types ending in `_ctc`, otherwise a quadratic FWHM² model) are fitted to the peaks that pass the fit quality cuts in `qc`. Peaks in `cal_fit_excluded_peaks` and `fwhm_fit_excluded_peaks` are left out of the respective fit. Energy types ending in `_ctc` use the charge-trapping-corrected energy expression from the CT correction results.
 
 # Inputs
-- `jlqcs` tier of the start `cal` filekey (event mask `is_single_pulse && !is_pulser`) and `jldsp` tier of the `cal` run, for each detector.
+- `jlqcs` tier (event mask `is_single_pulse && !is_pulser`) and `jldsp` tier of the `cal` run, for each detector.
 - `dataprod_config(l200).energy(filekey)` (`default` and per-detector entries).
 - `l200.par.rpars.ctc[period, run]` (needed for `_ctc` energy types).
 - `l200.par.rpars.ecal[period, run]` (existing results, unless `reprocess` is set).
@@ -31,7 +31,7 @@ function process_energy_calibration_cal(processing_config, l200::LegendData, per
     filekey = start_filekey(l200, (period, run, :cal))
     @info "Found filekey $filekey"
 
-    chinfo = channelinfo(l200, filekey; system = :geds, only_processable = true)
+    chinfo = channelinfo(l200, filekey; system = :geds) |> detector_filter(processing_config, :process_energy_calibration_cal)
     @info "Loaded channel info with $(length(chinfo)) detectors"
 
     energy_config = dataprod_config(l200).energy(filekey)
@@ -50,7 +50,7 @@ function process_energy_calibration_cal(processing_config, l200::LegendData, per
     end
 
     # create log line Tuple
-    log_nt = NamedTuple{(:Detector, :usability, :Status, Symbol("Energy Type"), Symbol("FWHM Qbb"), Symbol("FWHM FEP"),
+    log_nt = NamedTuple{(:Detector, :usability, :psd_usability, :Status, Symbol("Energy Type"), Symbol("FWHM Qbb"), Symbol("FWHM FEP"),
                          Symbol("Cal. Constant"), :Error)}
 
     # get worker pool
@@ -77,7 +77,8 @@ function process_energy_calibration_cal(processing_config, l200::LegendData, per
             for e_type in energy_types
                 if haskey(pars_db[det], e_type)
                     @debug "Filter $e_type already processed, skip"
-                    log_info = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(1), e_type, pars_db[det][e_type].fwhm.qbb,
+                    log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability),
+                                       ProcessStatus(1), e_type, pars_db[det][e_type].fwhm.qbb,
                                        pars_db[det][e_type].fit.Tl208FEP.fwhm, pars_db[det][e_type].cal.par[2],
                                        "Already processed --> skipped."))
                     processed_dict[e_type] = false
@@ -93,8 +94,7 @@ function process_energy_calibration_cal(processing_config, l200::LegendData, per
                 e_names = Symbol.(first.(split.(string.(energy_types), "_ctc")))
                 columns_to_read = any(endswith(string(e_type), "_ctc") for e_type in energy_types) ? (unique(e_names)..., :qdrift) :
                                   Tuple(unique(e_names))
-                qc_mask = read_ldata(@pf($is_single_pulse && !$is_pulser), l200, :jlqcs, filekey, det)
-                read_ldata(columns_to_read, l200, :jldsp, :cal, period, run, det)[qc_mask]
+                read_ldata(columns_to_read, l200, :jldsp, :cal, period, run, det; filterby = :jlqcs => @pf($is_single_pulse && !$is_pulser))
             end
         end
 
@@ -125,7 +125,6 @@ function process_energy_calibration_cal(processing_config, l200::LegendData, per
                         getproperty(data_det_after_qc, e_type_name), "$e_type_name"
                     end
                 end
-                GC.gc()
 
                 # with error plots on, a failed simple calibration saves the uncalibrated spectrum
                 plot_uncal_spectrum() = begin
@@ -142,7 +141,6 @@ function process_energy_calibration_cal(processing_config, l200::LegendData, per
                                        energy_config_det.right_window_sizes, ; calib_type = :th228, quantile_perc = quantile_perc,
                                        binning_peak_window = energy_config_det.binning_peak_window)
                 end
-                GC.gc()
 
                 # get simple calibration constant
                 m_cal_simple = result_simple.c
@@ -160,7 +158,6 @@ function process_energy_calibration_cal(processing_config, l200::LegendData, per
                     fit_peaks(result_simple.peakhists, result_simple.peakstats, th228_names; e_unit = result_simple.unit,
                               calib_type = :th228, fit_func = Symbol.(energy_config_det.th228_fit_func), m_cal_simple = m_cal_simple)
                 end
-                GC.gc()
 
                 @debug_plot @process_step "$e_type peak fits plot" begin
                     p = LegendMakie.lplot(report_fit, figsize = (600, 400*length(report_fit)),
@@ -242,7 +239,8 @@ function process_energy_calibration_cal(processing_config, l200::LegendData, per
 
                 yield()
 
-                log_info = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(1), e_type, result_fwhm.qbb,
+                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), ProcessStatus(1),
+                                   e_type, result_fwhm.qbb,
                                    result_fit[:Tl208FEP].fwhm, result_calib.par[2], "-"))
 
                 result_energy = (m_cal_simple = m_cal_simple, fwhm = result_fwhm, cal = result_calib, fit = result_fit)
@@ -252,11 +250,11 @@ function process_energy_calibration_cal(processing_config, l200::LegendData, per
                 log_info_dict[e_type] = log_info
                 processed_dict[e_type] = true
 
-                GC.gc()
             catch e
                 # a failed `@process_step` has logged its error already
                 e isa ProcessStepError || @error "$e_type calibration failed for $det: $(truncate_error(e))"
-                log_info = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(0), e_type, "-", "-", "-", truncate_error(e)))
+                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), ProcessStatus(0),
+                                   e_type, "-", "-", "-", truncate_error(e)))
                 # add results to dict
                 log_info_dict[e_type] = log_info
                 processed_dict[e_type] = false
@@ -281,7 +279,8 @@ function process_energy_calibration_cal(processing_config, l200::LegendData, per
 
     report = lreport()
     lreport!(report, "# Main Log")
-    lreport!(report, StructArray(var"Processor Status" = [master_status(result_energy)]))
+    lreport!(report,
+             StructArray(var"Processor Status" = [master_status(processing_config, :process_energy_calibration_cal, result_energy)]))
     lreport!(report, "Date of processing: $(utc_timestamp())")
     lreport!(report, "Total Processing time: $(canonicalize(now() - start_time))")
     lreport!(report, energy_log_text)

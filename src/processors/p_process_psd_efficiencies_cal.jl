@@ -4,17 +4,16 @@
 
 Compute the survival fractions of the combined A/E and LQ cuts for every detector and `cal` partition that contains `period`.
 
-The `cal` data of all runs in a detector's partition are calibrated with `calibrate_ged_detector_data`, which applies
-the A/E and LQ cut flags (`<A/E classifier>_low_cut` and `<LQ classifier>_high_cut`) from the parameters selected by
-`get_ged_evt_kwargs`. The high A/E cut is taken from the `psd_classifiers` table of the configuration. Peaks and the
+The `cal` data of all runs in a detector's partition are read with `read_hit_cal`, which applies the A/E and LQ
+classifiers and cut flags (`<A/E classifier>_low_cut` and `<LQ classifier>_high_cut`) of the event tier, i.e. from the
+parameters selected by `get_ged_evt_kwargs`. The high A/E cut is taken from the `psd_classifiers` table of the configuration. Peaks and the
 Qbb window are fitted for five selections: the low A/E cut (`low`), the high A/E cut (`high`), the low and high A/E
 cuts (`ds`), the low A/E cut and the LQ cut (`low_lq`), and all three cuts (`lq_ds`). Detectors with `low_aoe_status`
 of `:valid` or `:present` are processed.
 
 # Inputs
 - `jlqcs` tier (single pulse, non-pulser events) and `jldsp` tier of all `cal` runs in the partition.
-- Calibration and cut parameters as read by `calibrate_ged_detector_data` with the keyword arguments of
-  `get_ged_evt_kwargs(l200, filekey)`.
+- Calibration and cut parameters as read by `read_hit_cal` with the parameter keywords of `get_ged_evt_kwargs(l200, filekey)`.
 - `dataprod_config(l200).psd(filekey).psd` of the first run of the partition, `default` merged with the detector
   section: `e_type`, `psd_classifiers` (per classifier name, a list of the A/E classifier, the high A/E cut and the LQ
   classifier), `psd_peaks`, `psd_peaks_names`, `psd_peaks_windows_left`, `psd_peaks_windows_right`,
@@ -51,8 +50,8 @@ function p_process_psd_efficiencies_cal(processing_config, l200::LegendData, per
     filekey = first(rinfo).cal.startkey
     @info "Found filekey $filekey"
 
-    chinfo_unfolded = channelinfo(l200, period, :cal; system = :geds, only_processable = true, explode_partitions = true) |>
-                      filterby(@pf $low_aoe_status in [:valid, :present])
+    chinfo_unfolded = channelinfo(l200, period, :cal; system = :geds, explode_partitions = true) |>
+                      detector_filter(processing_config, :p_process_psd_efficiencies_cal)
     @info "Loaded channel info with $(length(chinfo_unfolded)) detector-partitions"
 
     if reprocess
@@ -62,7 +61,8 @@ function p_process_psd_efficiencies_cal(processing_config, l200::LegendData, per
     end
 
     # create log line Tuple
-    log_nt_cut = NamedTuple{(:Detector, :usability, :Partition, :Status, Symbol("Classifier Type"), Symbol("Cut Value"), Symbol("SEP SF"),
+    log_nt_cut = NamedTuple{(:Detector, :usability, :psd_usability, :Partition, :Status, Symbol("Classifier Type"), Symbol("Cut Value"),
+                             Symbol("SEP SF"),
                              Symbol("FEP SF"), :CutError)}
 
     # get worker pool
@@ -109,7 +109,8 @@ function p_process_psd_efficiencies_cal(processing_config, l200::LegendData, per
         if (only_first_period && period != first(partinfo_det.period))
             @info "Only first period in partition $part for $period in $det ($ch)"
             for psd_classifier in psd_classifiers
-                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), part, process_skipped, psd_classifier, fill("-", 3)...,
+                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                       process_skipped, psd_classifier, fill("-", 3)...,
                                        "Only first periods --> skipped."))
                 # add results to dict
                 log_info_dict[psd_classifier] = log_info
@@ -122,7 +123,8 @@ function p_process_psd_efficiencies_cal(processing_config, l200::LegendData, per
             @debug "Detector $(det) already processed, check missing filters"
             for psd_classifier in psd_classifiers
                 if haskey(pars_db_det[det], psd_classifier)
-                    log_info = log_nt_cut((det, detector_status(chinfo_det.usability), part, ProcessStatus(1), psd_classifier,
+                    log_info = log_nt_cut((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                           ProcessStatus(1), psd_classifier,
                                            pars_db_det[det][psd_classifier].cuts.lowcut,
                                            pars_db_det[det][psd_classifier].peaks.ds[:Tl208SEP].sf,
                                            pars_db_det[det][psd_classifier].peaks.ds[:Tl208FEP].sf, "Already processed --> skipped."))
@@ -134,17 +136,12 @@ function p_process_psd_efficiencies_cal(processing_config, l200::LegendData, per
         end
 
         e_cal, hit_cal = @process_step "E data loading" begin
-            hpge_kwargs = get_ged_evt_kwargs(l200, filekey_det)
             if !all([haskey(processed_dict, psd_classifier) for psd_classifier in psd_classifiers])
-                hit_cal = fast_flatten([let
-                                            qc_mask = read_ldata(@pf($is_single_pulse && !$is_pulser), l200, :jlqcs, pinfo.cal.startkey,
-                                                                 det)
-                                            dsp = read_ldata(l200, :jldsp, :cal, pinfo.period, pinfo.run, det)[qc_mask]
-                                            @debug "Calibrating $(pinfo.period)-$(pinfo.run)"
-                                            calibrate_ged_detector_data(l200, pinfo.cal.startkey, det, dsp; keep_detdata = true,
-                                                                        hpge_kwargs...)
-                                        end
-                                        for pinfo in partinfo_det])
+                aoe_types = unique([Symbol(chopsuffix(string(c[1]), "_classifier")) for c in values(psd_classifiers_dict)])
+                lq_types = unique([Symbol(chopsuffix(string(c[3]), "_classifier")) for c in values(psd_classifiers_dict)])
+                # The calibration and cut parameters of the event tier.
+                hit_cal = read_hit_cal(l200, det, zip(partinfo_det.period, partinfo_det.run), [e_type], String[], aoe_types, lq_types;
+                                       cuts = true, get_ged_evt_kwargs(l200, filekey_det)...)
                 collect(getproperty(hit_cal, e_type)), hit_cal
             else
                 nothing, nothing
@@ -300,7 +297,8 @@ function p_process_psd_efficiencies_cal(processing_config, l200::LegendData, per
                                 qbb = (low = qbb_result_low, high = qbb_result_high, ds = qbb_result_ds, low_lq = qbb_result_low_lq,
                                        lq_ds = qbb_result_lq_ds)))
 
-                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), part, ProcessStatus(1), psd_classifier, NaN,
+                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                       ProcessStatus(1), psd_classifier, NaN,
                                        result.peaks.ds[:Tl208SEP].sf, result.peaks.ds[:Tl208FEP].sf, "-"))
 
                 # add results to dict
@@ -308,11 +306,11 @@ function p_process_psd_efficiencies_cal(processing_config, l200::LegendData, per
                 log_info_dict[psd_classifier] = log_info
                 processed_dict[psd_classifier] = true
 
-                GC.gc()
             catch e
                 # a failed `@process_step` has logged its error already
                 e isa ProcessStepError || @error "Error in $psd_classifier cut generation: $(truncate_error(e))"
-                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), part, ProcessStatus(0), psd_classifier, "-", "-", "-",
+                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                       ProcessStatus(0), psd_classifier, "-", "-", "-",
                                        truncate_error(e)))
 
                 # add results to dict
@@ -346,7 +344,8 @@ function p_process_psd_efficiencies_cal(processing_config, l200::LegendData, per
 
     report = lreport()
     lreport!(report, "# Main Log")
-    lreport!(report, StructArray(var"Processor Status" = [master_status(result_psd)]))
+    lreport!(report,
+             StructArray(var"Processor Status" = [master_status(processing_config, :p_process_psd_efficiencies_cal, result_psd)]))
     lreport!(report, "Date of processing: $(utc_timestamp())")
     lreport!(report, "Total Processing time: $(canonicalize(now() - start_time))")
     lreport!(report, psd_efficiencies_log_text)

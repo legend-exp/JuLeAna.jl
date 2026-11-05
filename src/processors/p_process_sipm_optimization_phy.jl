@@ -50,7 +50,8 @@ function p_process_sipm_optimization_phy(processing_config, l200::LegendData, pe
     filekey = first(rinfo).phy.startkey
     @info "Found filekey $filekey"
 
-    chinfo_unfolded = channelinfo(l200, period, :phy; system = :spms, only_processable = true, explode_partitions = true)
+    chinfo_unfolded = channelinfo(l200, period, :phy; system = :spms, explode_partitions = true) |>
+                      detector_filter(processing_config, :p_process_sipm_optimization_phy)
     @info "Loaded channel info with $(length(chinfo_unfolded)) detector-partitions"
 
     if reprocess
@@ -265,7 +266,6 @@ function p_process_sipm_optimization_phy(processing_config, l200::LegendData, pe
                 processed_dict[filter_type] = true
 
                 # call garbage collector
-                GC.gc()
             catch e
                 e isa ProcessStepError || @error "Error in processing detector $det: $(truncate_error(e))"
                 log_info = log_nt((det, detector_status(chinfo_det.usability), part, ProcessStatus(0), filter_type, "-", "-", "-", "-",
@@ -302,7 +302,9 @@ function p_process_sipm_optimization_phy(processing_config, l200::LegendData, pe
 
     report = lreport()
     lreport!(report, "# Main Log")
-    lreport!(report, StructArray(var"Processor Status" = [master_status(result_sipm_optimization)]))
+    lreport!(report,
+             StructArray(var"Processor Status" = [master_status(processing_config, :p_process_sipm_optimization_phy,
+                                                                result_sipm_optimization)]))
     lreport!(report, "Date of processing: $(utc_timestamp())")
     lreport!(report, "Total Processing time: $(canonicalize(now() - start_time))")
     lreport!(report, sipm_optimization_log_text)

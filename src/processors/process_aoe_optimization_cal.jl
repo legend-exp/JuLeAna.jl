@@ -43,8 +43,7 @@ function process_aoe_optimization_cal(processing_config, l200::LegendData, perio
     filekey = start_filekey(l200, (period, run, :cal))
     @info "Found filekey $filekey"
 
-    chinfo = channelinfo(l200, filekey; system = :geds, only_processable = true) |>
-             filterby(@pf $usability == :on && $low_aoe_status in [:valid, :present])
+    chinfo = channelinfo(l200, filekey; system = :geds) |> detector_filter(processing_config, :process_aoe_optimization_cal)
     @info "Loaded channel info with $(length(chinfo)) detectors"
 
     dsp_config_pd = dataprod_config(l200).dsp(filekey)
@@ -71,7 +70,8 @@ function process_aoe_optimization_cal(processing_config, l200::LegendData, perio
     end
 
     # create log line Tuple
-    log_nt = NamedTuple{(:Detector, :usability, :Status, Symbol("Filter Type"), Symbol("Window length"), Symbol("Survival Fraction"),
+    log_nt = NamedTuple{(:Detector, :usability, :psd_usability, :Status, Symbol("Filter Type"), Symbol("Window length"),
+                         Symbol("Survival Fraction"),
                          Symbol("Number of DEP"), Symbol("Number of SEP"), :Error)}
 
     # get worker pool
@@ -100,7 +100,8 @@ function process_aoe_optimization_cal(processing_config, l200::LegendData, perio
             @debug "Detector $(det) already processed, check missing filters"
             for filter_type in aoe_filter
                 if haskey(pars_db[det], filter_type)
-                    log_info = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(1), filter_type,
+                    log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability),
+                                       ProcessStatus(1), filter_type,
                                        pars_db[det][filter_type].wl, pars_db[det][filter_type].sf, pars_db[det][filter_type].n_dep,
                                        pars_db[det][filter_type].n_sep, "Already processed --> skipped."))
                     # add results to dict
@@ -185,9 +186,6 @@ function process_aoe_optimization_cal(processing_config, l200::LegendData, perio
                     (dep = dsp_dep[ljl_propfunc(qc_string).(dsp_dep)], sep = dsp_sep[ljl_propfunc(qc_string).(dsp_sep)])
                 end
 
-                # free memory
-                GC.gc()
-
                 plot_dep_sep_distributions() = begin
                     fig = Makie.Figure(size = (900, 700))
                     Makie.Label(fig[0, 1:2], get_plottitle(filekey, det, "DEP and SEP"; additional_type = string(filter_type)))
@@ -219,19 +217,19 @@ function process_aoe_optimization_cal(processing_config, l200::LegendData, perio
                 @info """Found optimal window length at $(result_wl.wl) with survival fraction $(round(u"percent", result_wl.sf, digits=2)) for detector $det ($ch)"""
 
                 # write log
-                log_info = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(1), filter_type, result_wl.wl, result_wl.sf,
+                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), ProcessStatus(1),
+                                   filter_type, result_wl.wl, result_wl.sf,
                                    result_wl.n_dep, result_wl.n_sep, "-"))
 
                 log_info_dict[filter_type] = log_info
                 processed_dict[filter_type] = true
                 result_wl_dict[filter_type] = result_wl
 
-                # free memory
-                GC.gc()
                 yield()
             catch e
                 e isa ProcessStepError || @error "Filter: $filter_type filter optimization: $(truncate_error(e))"
-                log_info = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(0), filter_type, "-", "-", "-", "-",
+                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), ProcessStatus(0),
+                                   filter_type, "-", "-", "-", "-",
                                    "$(truncate_error(e))"))
                 # add results to dict
                 log_info_dict[filter_type] = log_info
@@ -258,7 +256,8 @@ function process_aoe_optimization_cal(processing_config, l200::LegendData, perio
 
     report = lreport()
     lreport!(report, "# Main Log")
-    lreport!(report, StructArray(var"Processor Status" = [master_status(result_sg)]))
+    lreport!(report,
+             StructArray(var"Processor Status" = [master_status(processing_config, :process_aoe_optimization_cal, result_sg)]))
     lreport!(report, "Date of processing: $(utc_timestamp())")
     lreport!(report, "Total Processing time: $(canonicalize(now() - start_time))")
     lreport!(report, sg_filter_optimization_log_text)

@@ -4,15 +4,16 @@ config:
   runmode_settings:
     slurm:
       flags:
-        - "--time=01:00:00"
+        - "--time=02:00:00"
         - "--mem-bind=local"
         - "--threads-per-core=1"
         - "--cpu-bind=cores"
         - "--nodes=1"
-        - "--ntasks-per-node=32"
-        - "--cpus-per-task=4"
+        - "--ntasks-per-node=64"
+        - "--cpus-per-task=2"
         - "--mem=480GB"
       julia_settings: []
+      worker_memory: shared
     local:
       n: 64
       julia_settings: []
@@ -22,6 +23,12 @@ config:
     JULIA_WORKER_TIMEOUT: "240"
   log_level: info
   idle_timeout_minutes: 20
+  worker_restart_delay_seconds: 30
+  worker_heartbeat_timeout_minutes: 5
+  item_time_estimate: median
+  item_time_minimum_items: 100
+  item_timeout_factor: 2
+  item_timeout_minimum_minutes: 5
 
 processing:
   order: dependencies
@@ -33,6 +40,11 @@ processing:
 
 processors:
   process_daq_energy_calibration_cal:
+    detectors: "processable"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: cal
     log_level: info
@@ -40,10 +52,15 @@ processors:
     rank: 1
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies: []
 
   process_peak_split_cal:
+    detectors: "processable && usability == :on"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: cal
     log_level: info
@@ -51,12 +68,17 @@ processors:
     rank: 2
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
       use_cache: false
     dependencies:
       - process_daq_energy_calibration_cal
 
   process_decay_time_cal:
+    detectors: "processable && usability != :off"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: cal
     log_level: info
@@ -64,11 +86,16 @@ processors:
     rank: 3
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_peak_split_cal
 
   process_filter_optimization_cal:
+    detectors: "processable && usability == :on"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: cal
     log_level: info
@@ -76,11 +103,16 @@ processors:
     rank: 4
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_decay_time_cal
 
   process_aoe_optimization_cal:
+    detectors: "processable && usability == :on && (low_aoe_status == :valid || low_aoe_status == :present)"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: cal
     log_level: info
@@ -88,11 +120,16 @@ processors:
     rank: 5
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_filter_optimization_cal
 
   process_dsp_cal:
+    detectors: "processable"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: cal
     log_level: info
@@ -101,14 +138,18 @@ processors:
     kwargs:
       reprocess: false
       max_wvfs: 1000
-      timeout: 0
+      timeout: auto
       use_cache: true
-      use_partition_pars: true
     dependencies:
       - p_process_aoe_optimization_cal
       - process_aoe_optimization_cal
 
   process_qcs_cal:
+    detectors: "processable"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: cal
     log_level: info
@@ -116,12 +157,17 @@ processors:
     rank: 7
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
       use_cache: true
     dependencies:
       - process_dsp_cal
 
   process_ct_correction_cal:
+    detectors: "processable && usability == :on"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: cal
     log_level: info
@@ -129,11 +175,16 @@ processors:
     rank: 8
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_qcs_cal
 
   process_energy_calibration_cal:
+    detectors: "processable"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: cal
     log_level: info
@@ -141,11 +192,16 @@ processors:
     rank: 9
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_ct_correction_cal
 
   process_aoe_calibration_cut_cal:
+    detectors: "processable && usability == :on && (low_aoe_status == :valid || low_aoe_status == :present)"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: cal
     log_level: info
@@ -153,11 +209,16 @@ processors:
     rank: 10
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_energy_calibration_cal
 
   process_lq_calibration_cut_cal:
+    detectors: "processable && usability == :on && (lq_status == :valid || lq_status == :present)"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: cal
     log_level: info
@@ -165,11 +226,16 @@ processors:
     rank: 11
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_energy_calibration_cal
 
   process_psd_efficiencies_cal:
+    detectors: "processable && usability == :on"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: cal
     log_level: info
@@ -177,7 +243,7 @@ processors:
     rank: 12
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
       use_partition_pars: true
     dependencies:
       - p_process_aoe_calibration_cut_cal
@@ -187,6 +253,11 @@ processors:
       - process_lq_calibration_cut_cal
 
   process_peak_split_phy:
+    detectors: "processable && usability == :on"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: phy
     log_level: info
@@ -194,12 +265,17 @@ processors:
     rank: 13
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
       use_cache: false
     dependencies:
       - process_daq_energy_calibration_cal
 
   process_dsp_aux_phy:
+    detectors: "true"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: phy
     log_level: info
@@ -207,11 +283,16 @@ processors:
     rank: 14
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
       use_cache: true
     dependencies: []
 
   process_sipm_optimization_phy:
+    detectors: "processable"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: phy
     log_level: info
@@ -219,11 +300,16 @@ processors:
     rank: 15
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_dsp_aux_phy
 
   process_dsp_phy:
+    detectors: "processable"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: phy
     log_level: info
@@ -231,10 +317,9 @@ processors:
     rank: 16
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
       use_cache: true
       max_wvfs: 1000
-      use_partition_pars: true
     dependencies:
       - p_process_aoe_optimization_cal
       - process_aoe_optimization_cal
@@ -242,6 +327,11 @@ processors:
       - p_process_sipm_optimization_phy
 
   process_qcs_phy:
+    detectors: "processable"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: phy
     log_level: info
@@ -249,12 +339,17 @@ processors:
     rank: 17
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
       use_cache: true
     dependencies:
       - process_dsp_phy
 
   process_sipm_calibration_phy:
+    detectors: "processable"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: phy
     log_level: info
@@ -262,11 +357,16 @@ processors:
     rank: 18
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_dsp_phy
+      - process_dsp_aux_phy
 
   process_evt_phy:
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: phy
     log_level: info
@@ -274,7 +374,7 @@ processors:
     rank: 19
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
       use_cache: true
     dependencies:
       - process_energy_calibration_cal
@@ -288,6 +388,11 @@ processors:
       - process_sipm_calibration_phy
 
   process_stability_plots_phy:
+    detectors: "processable && usability != :off"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: phy
     log_level: info
@@ -295,12 +400,17 @@ processors:
     rank: 20
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_evt_phy
 
 p_processors:
   p_process_decay_time_cal:
+    detectors: "processable && usability != :off"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: cal
     log_level: info
@@ -308,11 +418,16 @@ p_processors:
     rank: 1
     kwargs:
       reprocess: false
-      timeout: 180
+      timeout: auto
     dependencies:
       - process_peak_split_cal
 
   p_process_filter_optimization_cal:
+    detectors: "processable && usability == :on"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: cal
     log_level: info
@@ -320,11 +435,16 @@ p_processors:
     rank: 2
     kwargs:
       reprocess: false
-      timeout: 3000
+      timeout: auto
     dependencies:
       - p_process_decay_time_cal
 
   p_process_aoe_optimization_cal:
+    detectors: "processable && usability == :on && (low_aoe_status == :valid || low_aoe_status == :present)"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: cal
     log_level: info
@@ -332,12 +452,17 @@ p_processors:
     rank: 3
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
       max_wvfs: 35000
     dependencies:
       - p_process_filter_optimization_cal
 
   p_process_energy_cal:
+    detectors: "processable && usability == :on"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: cal
     log_level: info
@@ -345,11 +470,16 @@ p_processors:
     rank: 4
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_energy_calibration_cal
 
   p_process_aoe_calibration_cut_cal:
+    detectors: "processable && usability == :on && (low_aoe_status == :valid || low_aoe_status == :present)"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: cal
     log_level: info
@@ -357,11 +487,16 @@ p_processors:
     rank: 5
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_energy_calibration_cal
 
   p_process_aoe_cut_cal:
+    detectors: "processable && usability == :on && (low_aoe_status == :valid || low_aoe_status == :present)"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: cal
     log_level: info
@@ -369,12 +504,17 @@ p_processors:
     rank: 6
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_aoe_calibration_cut_cal
       - p_process_aoe_calibration_cut_cal
 
   p_process_lq_calibration_cut_cal:
+    detectors: "processable && usability == :on && (lq_status == :valid || lq_status == :present)"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: cal
     log_level: info
@@ -382,12 +522,17 @@ p_processors:
     rank: 7
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_energy_calibration_cal
       - p_process_energy_cal
 
   p_process_psd_efficiencies_cal:
+    detectors: "processable && usability == :on"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: cal
     log_level: info
@@ -395,13 +540,18 @@ p_processors:
     rank: 8
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - p_process_lq_calibration_cut_cal
       - p_process_aoe_calibration_cut_cal
       - p_process_aoe_cut_cal
 
   p_process_sipm_optimization_phy:
+    detectors: "processable"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: phy
     log_level: info
@@ -409,11 +559,16 @@ p_processors:
     rank: 9
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_dsp_aux_phy
 
   p_process_sipm_calibration_phy:
+    detectors: "processable"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: phy
     log_level: info
@@ -421,11 +576,17 @@ p_processors:
     rank: 10
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - process_dsp_phy
+      - process_dsp_aux_phy
 
   p_process_skm_phy:
+    detectors: "true"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: phy
     log_level: info
@@ -433,12 +594,17 @@ p_processors:
     rank: 11
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
       use_cache: true
     dependencies:
       - process_evt_phy
 
   p_process_stability_plots_phy:
+    detectors: "processable && usability != :off"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
     enabled: false
     category: phy
     log_level: info
@@ -446,6 +612,6 @@ p_processors:
     rank: 12
     kwargs:
       reprocess: false
-      timeout: 0
+      timeout: auto
     dependencies:
       - p_process_skm_phy

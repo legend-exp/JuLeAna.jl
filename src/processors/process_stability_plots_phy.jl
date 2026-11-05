@@ -6,17 +6,20 @@ Plot the stability of the HPGe detectors (`geds`) over one run from `phy` data.
 
 For each processable detector, the following time-dependent quantities are plotted: baseline,
 baseline sigma, the `e_10410` energy estimator, the pulser rate, and the gain stability. The
-gain stability compares the relative change of `e_10410` of the pulser channel and of the
+gain stability compares the relative change of the pulser energy and of `e_10410` of the
 detector for pulser-triggered events, scaled to keV at `Qbb`. Each plot is made and logged
 separately; a failing plot does not stop the others.
 
 # Inputs
 - `dsp` tier (`DataTier(:jldsp)`) of the `phy` data of the run, per detector, fields `timestamp`,
   `blmean`, `blsigma` and `e_10410`; events with non-finite values are dropped.
-- `jlaux` tier fields `e_10410` and `aux_trig` of the pulser channel named by
-  `dataprod_config(l200).qc(filekey).pulser.puls_detector`.
+- `jlaux` tier fields `aux_trig` and the pulser energy (`stability_plots.puls_e_type`) of the
+  pulser channel `stability_plots.puls_detector`. This is not `pulser.puls_detector`, the
+  channel used for pulser tagging.
 - `dataprod_config(l200).qc(filekey).stability_plots`: `n_ref` (number of events for the
-  reference value), `n_smooth` (smoothing window of `20 * n_smooth` seconds) and `Qbb`.
+  reference value), `n_smooth` (smoothing window of `20 * n_smooth` seconds), `Qbb`,
+  `puls_detector` (the pulser channel, e.g. `PULS01ANA`) and `puls_e_type` (the `jlaux` field
+  of the pulser energy, e.g. `e_10410`).
 
 # Outputs
 - Plots per detector: `stability_time_vs_bl`, `stability_time_vs_blsigma`,
@@ -42,7 +45,7 @@ function process_stability_plots_phy(processing_config, l200::LegendData, period
     filekey = start_filekey(l200, (period, run, :phy))
     @info "Found filekey $filekey"
 
-    chinfo = channelinfo(l200, filekey; system = :geds, only_processable = true)
+    chinfo = channelinfo(l200, filekey; system = :geds) |> detector_filter(processing_config, :process_stability_plots_phy)
     @info "Loaded channel info with $(length(chinfo)) detectors"
 
     qc_config = dataprod_config(l200).qc(filekey)
@@ -51,9 +54,12 @@ function process_stability_plots_phy(processing_config, l200::LegendData, period
     n_ref = qc_config.stability_plots.n_ref
     n_smooth = qc_config.stability_plots.n_smooth
     Qbb = qc_config.stability_plots.Qbb
+    haskey(qc_config.stability_plots, :puls_e_type) || throw(ArgumentError("No stability_plots.puls_e_type in the QC config"))
+    haskey(qc_config.stability_plots, :puls_detector) || throw(ArgumentError("No stability_plots.puls_detector in the QC config"))
+    puls_e_type = Symbol(qc_config.stability_plots.puls_e_type)
     smooth_window = 20n_smooth * u"s"
 
-    chinfo_puls = channelinfo(l200, filekey, Symbol(qc_config.pulser.puls_detector))
+    chinfo_puls = channelinfo(l200, filekey, Symbol(qc_config.stability_plots.puls_detector))
     det_puls = chinfo_puls.detector
     @info "Loaded pulser channel info: $chinfo_puls"
 
@@ -61,12 +67,7 @@ function process_stability_plots_phy(processing_config, l200::LegendData, period
         @info "Reprocess all detectors"
     end
 
-    log_nt = NamedTuple{(:Detector, :usability, :Status, :Plot, :Error)}
-
-    @info "Loading pulser data for period $period and run $run"
-    puls = @process_step "pulser data loader" begin
-        read_ldata((:e_10410, :aux_trig), l200, DataTier(:jlaux), :phy, period, run, det_puls)
-    end
+    log_nt = NamedTuple{(:Detector, :usability, :psd_usability, :Status, :Plot, :Error)}
 
     start_time = now()
 
@@ -80,13 +81,18 @@ function process_stability_plots_phy(processing_config, l200::LegendData, period
             read_ldata((:timestamp, :blmean, :blsigma, :e_10410), l200, DataTier(:jldsp), :phy, period, run, det)
         end
 
-        timestamp, time_s, bl_f, σbl, e10410, puls_e10410, aux_trig = @process_step "finite event filter" begin
-            length(puls.e_10410) == length(data.timestamp) ||
-                throw(DimensionMismatch("pulser data of $det_puls ($(length(puls.e_10410)) events) does not match the data of $det ($(length(data.timestamp)) events)"))
+        puls = @process_step "pulser data loader" begin
+            read_ldata((puls_e_type, :aux_trig), l200, DataTier(:jlaux), :phy, period, run, det_puls)
+        end
+        puls_energy = getproperty(puls, puls_e_type)
+
+        timestamp, time_s, bl_f, σbl, e10410, puls_e, aux_trig = @process_step "finite event filter" begin
+            length(puls_energy) == length(data.timestamp) ||
+                throw(DimensionMismatch("pulser data of $det_puls ($(length(puls_energy)) events) does not match the data of $det ($(length(data.timestamp)) events)"))
             finite_data = isfinite.(data.timestamp) .&& isfinite.(data.blmean) .&& isfinite.(data.blsigma) .&& isfinite.(data.e_10410)
             timestamp = data.timestamp[finite_data]
             (timestamp, ustrip.(timestamp), float.(data.blmean[finite_data]), float.(data.blsigma[finite_data]),
-             float.(data.e_10410[finite_data]), puls.e_10410[finite_data], puls.aux_trig[finite_data])
+             float.(data.e_10410[finite_data]), puls_energy[finite_data], puls.aux_trig[finite_data])
         end
 
         log_info_dict = Dict{Symbol,NamedTuple}()
@@ -99,11 +105,13 @@ function process_stability_plots_phy(processing_config, l200::LegendData, period
                     p = make_plot()
                     save_plot(p, l200, filekey, det, plot_name)
                 end
-                log_info_dict[plot_name] = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(1), plot_name, ""))
+                log_info_dict[plot_name] = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability),
+                                                   ProcessStatus(1), plot_name, ""))
                 processed_dict[plot_name] = true
             catch e
                 e isa ProcessStepError || rethrow()
-                log_info_dict[plot_name] = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(0), plot_name,
+                log_info_dict[plot_name] = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability),
+                                                   ProcessStatus(0), plot_name,
                                                    "$(truncate_error(e.exception))"))
                 processed_dict[plot_name] = false
             end
@@ -155,10 +163,10 @@ function process_stability_plots_phy(processing_config, l200::LegendData, period
             end
         end
 
-        mask_gain = isfinite.(puls_e10410) .&& mask_trig
+        mask_gain = isfinite.(puls_e) .&& mask_trig
         if count(mask_gain) > n_ref
             run_plot(:stability_gain_stability) do
-                pulser_gain = smooth(relative(TimeEvolution(timestamp[mask_gain], puls_e10410[mask_gain]), n_ref), smooth_window)
+                pulser_gain = smooth(relative(TimeEvolution(timestamp[mask_gain], puls_e[mask_gain]), n_ref), smooth_window)
                 energy_gain = smooth(relative(TimeEvolution(timestamp[mask_gain], e10410[mask_gain]), n_ref), smooth_window)
                 pulser_gain = TimeEvolution(pulser_gain.time, pulser_gain.values .* (Qbb / 100))
                 energy_gain = TimeEvolution(energy_gain.time, energy_gain.values .* (Qbb / 100))
@@ -184,7 +192,8 @@ function process_stability_plots_phy(processing_config, l200::LegendData, period
 
     report = lreport()
     lreport!(report, "# Main Log")
-    lreport!(report, StructArray(var"Processor Status" = [master_status(result_stability)]))
+    lreport!(report,
+             StructArray(var"Processor Status" = [master_status(processing_config, :process_stability_plots_phy, result_stability)]))
     lreport!(report, "Date of processing: $(utc_timestamp())")
     lreport!(report, "Total Processing time: $(canonicalize(now() - start_time))")
     lreport!(report, "# Metadata")

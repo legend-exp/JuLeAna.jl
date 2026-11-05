@@ -34,6 +34,7 @@ JuLeAna.history_section
 JuLeAna.append_history
 JuLeAna.read_history
 JuLeAna.history_grid
+JuLeAna.latest_item_seconds
 JuLeAna.disk_counts
 JuLeAna.disk_state
 run_processing
@@ -44,71 +45,10 @@ JuLeAna.processors
 JuLeAna.StepOutput
 JuLeAna.@using_packages
 ProcessingStopped
+JuLeAna.WorkerQueue
+JuLeAna.resort!
 JuLeAna.partition_periods
 JuLeAna.rank_order_dependencies
-```
-
-## Controller
-
-```@docs
-DataflowController
-dispatch!
-snapshot
-wait(::DataflowController)
-progress
-busy_workers
-step_messages
-ProgressStore
-show_progress
-JuLeAna.effective_config
-ControllerCommand
-LoadSession
-ReloadConfig
-SelectPeriods
-SelectRuns
-SelectSteps
-SetReprocess
-SetProcessorLogLevel
-SetProcessorPlotLevel
-SetAnalysisRunsOnly
-SetRunmode
-SetRunmodeSettings
-SetCheckDependencies
-SetKwarg
-SetStepLevel
-ResetKwargs
-ResetDependencyGraph
-StartProcessing
-StopProcessing
-WriteConfig
-AddWorkers
-CancelAllocation
-CancelAll
-PostponeIdleCancel
-EditStartScript
-CreateProduction
-SelectProduction
-SelectDataset
-JuLeAna.check_idle!(::DataflowController)
-```
-
-## Workers
-
-```@docs
-JuLeAna.WorkerManager
-JuLeAna.WorkerAllocation
-JuLeAna.set_worker_config!
-JuLeAna.start_script!
-JuLeAna.edit_start_script!
-JuLeAna.add_workers!
-JuLeAna.update_job_ids!
-JuLeAna.cancel_allocation!
-JuLeAna.cancel_all!
-JuLeAna.allocations
-JuLeAna.mark_activity!
-JuLeAna.idle_deadline
-JuLeAna.check_idle!(::JuLeAna.WorkerManager)
-JuLeAna.workers_overview
 ```
 
 ## Data productions
@@ -138,6 +78,7 @@ topological_order
 required_processors
 dependent_processors
 waited_processors
+JuLeAna.waiting_chains
 layered_layout
 partition_steps
 check_processor_kwargs
@@ -146,6 +87,8 @@ JuLeAna.register_processor!
 JuLeAna.PROCESSOR_TRAITS
 JuLeAna.display_name
 JuLeAna.RENAMED_PROCESSORS
+JuLeAna.DEFAULT_REPORT_STATUS
+JuLeAna.detector_filter
 ```
 
 ## Helpers for processors
@@ -153,9 +96,7 @@ JuLeAna.RENAMED_PROCESSORS
 ```@docs
 parallel
 failure_log
-master_status
-JuLeAna.process_skipped
-detector_status
+JuLeAna.run_filekeys
 truncate_string
 truncate_error
 load_qc_evaluator
@@ -164,5 +105,4 @@ JuLeAna.detector_selected
 JuLeAna.write_pars
 JuLeAna.write_validity
 JuLeAna.make_par_dir
-JuLeAna.write_report
 ```

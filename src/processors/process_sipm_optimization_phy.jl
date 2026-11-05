@@ -50,7 +50,7 @@ function process_sipm_optimization_phy(processing_config, l200::LegendData, peri
     filekey = start_filekey(l200, (period, run, :phy))
     @info "Found filekey $filekey"
 
-    chinfo = channelinfo(l200, filekey; system = :spms, only_processable = true)
+    chinfo = channelinfo(l200, filekey; system = :spms) |> detector_filter(processing_config, :process_sipm_optimization_phy)
     @info "Loaded channel info with $(length(chinfo)) detectors"
 
     dsp_config = dataprod_config(l200).sipm(filekey)
@@ -238,7 +238,6 @@ function process_sipm_optimization_phy(processing_config, l200::LegendData, peri
                 processed_dict[filter_type] = true
 
                 # call garbage collector
-                GC.gc()
                 yield()
             catch e
                 e isa ProcessStepError || @error "Filter: $filter_type filter optimization: $(truncate_error(e))"
@@ -268,7 +267,9 @@ function process_sipm_optimization_phy(processing_config, l200::LegendData, peri
 
     report = lreport()
     lreport!(report, "# Main Log")
-    lreport!(report, StructArray(var"Processor Status" = [master_status(result_sipm_optimization)]))
+    lreport!(report,
+             StructArray(var"Processor Status" = [master_status(processing_config, :process_sipm_optimization_phy,
+                                                                result_sipm_optimization)]))
     lreport!(report, "Date of processing: $(utc_timestamp())")
     lreport!(report, "Total Processing time: $(canonicalize(now() - start_time))")
     lreport!(report, sipm_optimization_log_text)

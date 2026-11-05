@@ -7,7 +7,7 @@ Determine the charge-trapping correction for all processable HPGe detectors (`ge
 For each energy type in `energy_types` of the `ctc` section of the energy config, the energy is calibrated with a simple Th-228 calibration, and the correction parameters (polynomial in `qdrift` of order `ctc_order`) are optimized on the peak `peak` within the window (`left_window_size`, `right_window_size`). The FWHM of the peak before and after the correction is reported. Only single-pulse, non-pulser events passing the quality cuts are used.
 
 # Inputs
-- `jlqcs` tier of the start `cal` filekey (event mask `is_single_pulse && !is_pulser`) and `jldsp` tier of the `cal` run (energy types and `qdrift`), for each detector. A missing `jlqcs` file counts as a failure of that detector.
+- `jlqcs` tier (event mask `is_single_pulse && !is_pulser`) and `jldsp` tier of the `cal` run (energy types and `qdrift`), for each detector. A missing `jlqcs` file counts as a failure of that detector.
 - `dataprod_config(l200).energy(filekey)` (`default`, `ctc.default` and per-detector entries).
 - `l200.par.rpars.ctc[period, run]` (existing results, unless `reprocess` is set).
 
@@ -31,7 +31,7 @@ function process_ct_correction_cal(processing_config, l200::LegendData, period::
     filekey = start_filekey(l200, (period, run, :cal))
     @info "Found filekey $filekey"
 
-    chinfo = Table(channelinfo(l200, filekey; system = :geds, only_processable = true))
+    chinfo = Table(channelinfo(l200, filekey; system = :geds) |> detector_filter(processing_config, :process_ct_correction_cal))
     @info "Loaded channel info with $(length(chinfo)) detectors"
 
     energy_config = dataprod_config(l200).energy(filekey)
@@ -47,7 +47,7 @@ function process_ct_correction_cal(processing_config, l200::LegendData, period::
     end
 
     # create log line Tuple
-    log_nt = NamedTuple{(:Detector, :usability, :Status, Symbol("Energy Type"), Symbol("FCT/1E6"), Symbol("FWHM Before"),
+    log_nt = NamedTuple{(:Detector, :usability, :psd_usability, :Status, Symbol("Energy Type"), Symbol("FCT/1E6"), Symbol("FWHM Before"),
                          Symbol("FWHM After"), :Error)}
 
     # get worker pool
@@ -60,13 +60,6 @@ function process_ct_correction_cal(processing_config, l200::LegendData, period::
         det = chinfo_det.detector
 
         @debug "Processing detector $det ($ch)"
-
-        qcsfilename = l200.tier[:jlqcs, filekey, det]
-        # load data file
-        if !isfile(qcsfilename)
-            @error "QC file $qcsfilename not found"
-            throw(ErrorException("QC file not found"))
-        end
 
         result_dict = Dict{Symbol,NamedTuple}()
         log_info_dict = Dict{Symbol,NamedTuple}()
@@ -82,7 +75,8 @@ function process_ct_correction_cal(processing_config, l200::LegendData, period::
             for e_type in energy_types
                 if haskey(pars_db[det], e_type)
                     @debug "Filter $e_type already processed, skip"
-                    log_info = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(1), e_type, pars_db[det][e_type].fct*1e6,
+                    log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability),
+                                       ProcessStatus(1), e_type, pars_db[det][e_type].fct*1e6,
                                        pars_db[det][e_type].fwhm_before, pars_db[det][e_type].fwhm_after, "Already processed --> skipped."))
                     processed_dict[e_type] = false
                     log_info_dict[e_type] = log_info
@@ -95,8 +89,8 @@ function process_ct_correction_cal(processing_config, l200::LegendData, period::
         data_det_after_qc = @process_step "data loader" begin
             @debug "Load DSP data after QC"
             if !all([haskey(processed_dict, e_type) for e_type in energy_types])
-                qc_mask = read_ldata(@pf($is_single_pulse && !$is_pulser), l200, :jlqcs, filekey, det)
-                read_ldata((energy_types..., :qdrift), l200, :jldsp, :cal, period, run, det)[qc_mask]
+                read_ldata((energy_types..., :qdrift), l200, :jldsp, :cal, period, run, det;
+                           filterby = :jlqcs => @pf($is_single_pulse && !$is_pulser))
             end
         end
 
@@ -177,7 +171,8 @@ function process_ct_correction_cal(processing_config, l200::LegendData, period::
                 end
 
                 yield()
-                log_ch = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(1), "$e_type", result_ctc.fct*1e6,
+                log_ch = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), ProcessStatus(1),
+                                 "$e_type", result_ctc.fct*1e6,
                                  result_ctc.fwhm_before, result_ctc.fwhm_after, "-"))
 
                 # add results to dict
@@ -186,7 +181,8 @@ function process_ct_correction_cal(processing_config, l200::LegendData, period::
                 processed_dict[e_type] = true
             catch e
                 e isa ProcessStepError || @error "Error in $e_type CT correction: $(truncate_error(e))"
-                log_ch = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(0), "$e_type", "-", "-", "-",
+                log_ch = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), ProcessStatus(0),
+                                 "$e_type", "-", "-", "-",
                                  "$(truncate_error(e))"))
                 # add results to dict
                 log_info_dict[e_type] = log_ch
@@ -212,7 +208,8 @@ function process_ct_correction_cal(processing_config, l200::LegendData, period::
 
     report = lreport()
     lreport!(report, "# Main Log")
-    lreport!(report, StructArray(var"Processor Status" = [master_status(result_ctc)]))
+    lreport!(report,
+             StructArray(var"Processor Status" = [master_status(processing_config, :process_ct_correction_cal, result_ctc)]))
     lreport!(report, "Date of processing: $(utc_timestamp())")
     lreport!(report, "Total Processing time: $(canonicalize(now() - start_time))")
     lreport!(report, energy_ctc_log_text)

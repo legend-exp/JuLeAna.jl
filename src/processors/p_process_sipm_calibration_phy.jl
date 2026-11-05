@@ -9,17 +9,19 @@ The method is the same as in `process_sipm_calibration_phy`, but the data of all
 detector's partition are combined and the results are valid for the whole partition.
 
 # Inputs
-- `dsp` tier (`DataTier(:jldsp)`) of the `phy` data of all runs of each detector's partition.
-- `jlaux` tier fields `timestamp` and `aux_trig` of the pulser channel named by `dataprod_config(l200).qc(filekey).pulser.puls_detector`
-  over the same runs; events within `puls_ts_window` of a pulser trigger are excluded.
+- `jldsp` tier of the `phy` data of all runs of each detector's partition: per energy type its column,
+  for the events that pass its `qc` expression.
+- `jlaux` tier field `aux_trig_intime` of the pulser channel named by `dataprod_config(l200).qc(filekey).pulser.puls_detector`
+  over the same runs; the in-time pulser events are excluded row by row (the `phy` tiers are event aligned).
 - `dataprod_config(l200).sipm(filekey).calibration`, using the `p_default` section merged with the
   per-detector section `p`. It sets `energy_types` (each with `qc`, `simple.kwargs`, `fit.min_pe`,
   `fit.max_pe`, `fit.kwargs`) and `pol_order`.
 - `l200.par.ppars.sipmcal[det, part]` (existing results, unless `reprocess` is set).
 
 # Outputs
-- `l200.par.ppars.sipmcal[det, part]`: per energy type, the simple calibration constants, the
-  noise thresholds, the peak fit result (`fit`) and the calibration curve (`cal`), written for
+- `l200.par.ppars.sipmcal[det, part]`: per energy type, the simple calibration result (`simple`), the
+  noise and trigger thresholds in PE of the final calibration, the peak fit result (`fit`) and the calibration
+  curve (`cal`), written for
   each detector as soon as it is finished; the validity of all partitions is written once at
   the end.
 - Plots per detector, partition and energy type: `pe_uncalibrated_<energy type>`,
@@ -50,7 +52,8 @@ function p_process_sipm_calibration_phy(processing_config, l200::LegendData, per
     filekey = first(rinfo).phy.startkey
     @info "Found filekey $filekey"
 
-    chinfo_unfolded = channelinfo(l200, period, :phy; system = :spms, only_processable = true, explode_partitions = true)
+    chinfo_unfolded = channelinfo(l200, period, :phy; system = :spms, explode_partitions = true) |>
+                      detector_filter(processing_config, :p_process_sipm_calibration_phy)
     @info "Loaded channel info with $(length(chinfo_unfolded)) detector-partitions"
 
     if reprocess
@@ -96,8 +99,6 @@ function p_process_sipm_calibration_phy(processing_config, l200::LegendData, per
         @debug "Loaded calibration config: $(lstring(calibration_config_det))"
 
         qc_config = dataprod_config(l200).qc(filekey_det)
-        pulser_config_det = merge(qc_config.pulser.default, get(qc_config.pulser, det, PropDict()))
-        @debug "Loaded pulser config: $(lstring(pulser_config_det))"
 
         #  write out pulser events
         chinfo_puls = channelinfo(l200, filekey_det, Symbol(qc_config.pulser.puls_detector))
@@ -141,21 +142,11 @@ function p_process_sipm_calibration_phy(processing_config, l200::LegendData, per
         # get data
         data_dsp = @process_step "data loader" begin
             @debug "Load DSP data"
-            # load DSP data and apply QC cut
+            # the energy types and the columns of their QC expressions, without in-time pulser events (phy tiers are event aligned)
             if !all([haskey(processed_dict, e_type) for e_type in energy_types])
-                @debug "Load DSP data for detector $det"
-                read_ldata(l200, DataTier(:jldsp), :phy, partinfo_det, det)
-            end
-        end
-
-        is_pulser = @process_step "pulser tag" begin
-            @debug "Get Pulser tags"
-            if !all([haskey(processed_dict, e_type) for e_type in energy_types])
-                data_pulser = read_ldata((:timestamp, :aux_trig), l200, DataTier(:jlaux), :phy, partinfo_det, det_puls)
-                is_pulser = flag_coincidences(data_dsp.timestamp, data_pulser.timestamp[data_pulser.aux_trig],
-                                              ts_window = pulser_config_det.puls_ts_window)
-                @debug "Found $(count(is_pulser)) pulser events"
-                is_pulser
+                qc_funcs = [ljl_propfunc(calibration_config_det.energy_types[e_type].qc) for e_type in energy_types]
+                read_ldata(Tuple(union(energy_types, _input_columns(qc_funcs))), l200, DataTier(:jldsp), :phy, partinfo_det, det;
+                           filterby = :jlaux => ljl_propfunc("!$det_puls.aux_trig_intime"))
             end
         end
 
@@ -166,31 +157,13 @@ function p_process_sipm_calibration_phy(processing_config, l200::LegendData, per
 
             e_type_config = calibration_config_det.energy_types[e_type]
 
-            # get data after per-energy-type QC
-            data_det_after_qc = @process_step "$e_type data loader" begin
-                @debug "Load DSP data for $e_type"
-                data_dsp[findall(ljl_propfunc(e_type_config.qc).(data_dsp) .&& .!is_pulser)]
+            # the amplitudes of the events that pass the QC of the energy type
+            amplitudes = @process_step "$e_type data selection" begin
+                getproperty(data_dsp, e_type)[findall(ljl_propfunc(e_type_config.qc).(data_dsp))]
             end
 
             try
                 @debug "Calibrate $e_type"
-
-                # get data
-                e_uncal = @process_step "$e_type data extraction" begin
-                    @debug "Get $e_type data"
-                    # open hit data file
-                    filter(isfinite, reduce(vcat, getproperty(data_det_after_qc, e_type)))
-                end
-
-                @debug_plot @process_step "$e_type PE uncalibrated plot" begin
-                    p = LegendMakie.lplot(fit(Histogram, e_uncal,
-                                              e_type_config.simple.kwargs.initial_min_amp:0.1:e_type_config.simple.kwargs.initial_max_amp),
-                                          xlabel = "Peak Amplitudes (ADC)", ylabel = "Counts / 0.1", label = "Uncalibrated PE",
-                                          yscale = log10,
-                                          title = get_plottitle(filekey_det, part, det, "PE Uncalibrated";
-                                                                additional_type = string(e_type)))
-                    save_plot(p, l200, part, filekey_det, det, Symbol("pe_uncalibrated_$(e_type)"))
-                end
 
                 # get uncalibrated energy function
                 plot_one_pe_search_range() = begin
@@ -200,30 +173,37 @@ function p_process_sipm_calibration_phy(processing_config, l200::LegendData, per
                     ax = Makie.Axis(fig[1, 1];
                                     title = get_plottitle(filekey_det, part, det, "Uncalibrated PE"; additional_type = string(e_type)),
                                     xlabel = "Peak Amplitudes (ADC)", ylabel = "Counts")
-                    Makie.stephist!(ax, filter(x -> lo <= x <= hi, e_uncal); bins = range(lo, hi; length = 201))
+                    Makie.stephist!(ax, filter(x -> lo <= x <= hi, flatview(amplitudes)); bins = range(lo, hi; length = 201))
                     save_plot(fig, l200, part, filekey_det, det, Symbol("error_simple_calibration_$(e_type)"))
                 end
                 result_simple, report_simple = @process_step "$e_type simple calibration" on_error = plot_one_pe_search_range begin
                     @debug "Get $e_type simple calibration"
-                    sipm_simple_calibration(getproperty(data_det_after_qc, e_type); NamedTuple(e_type_config.simple.kwargs)...)
+                    sipm_simple_calibration(amplitudes; NamedTuple(e_type_config.simple.kwargs)...)
                 end
-                GC.gc()
 
                 # save plots for simple calibration for control
                 @debug_plot @process_step "$e_type simple calibration plot" begin
                     p = LegendMakie.lplot(report_simple, cal = true,
-                                          title = get_plottitle(filekey_det, part, det, "Simple Calibration";
+                                          title = get_plottitle(filekey_det, part, det, "Single Triggers";
                                                                 additional_type = string(e_type)))
                     save_plot(p, l200, part, filekey_det, det, Symbol("sipm_simple_calibration_$(e_type)"))
+                end
+                @debug_plot @process_step "$e_type PE uncalibrated plot" begin
+                    # all trigger amplitudes, with the noise and trigger cuts of the simple calibration
+                    p = LegendMakie.lplot(report_simple, cal = false,
+                                          h = fit(Histogram, filter(isfinite, flatview(amplitudes)),
+                                                  e_type_config.simple.kwargs.initial_min_amp:0.1:e_type_config.simple.kwargs.initial_max_amp),
+                                          title = get_plottitle(filekey_det, part, det, "All Triggers";
+                                                                additional_type = string(e_type)))
+                    save_plot(p, l200, part, filekey_det, det, Symbol("pe_uncalibrated_$(e_type)"))
                 end
                 yield()
 
                 result_fit, report_fit = @process_step "$e_type peak fitting" begin
                     @debug "Fit all $e_type peaks"
-                    fit_sipm_spectrum(result_simple.pe_simple_cal, e_type_config.fit.min_pe, e_type_config.fit.max_pe;
-                                      NamedTuple(e_type_config.fit.kwargs)..., f_uncal = result_simple.f_simple_uncal, uncertainty = true)
+                    fit_sipm_spectrum(report_simple.pe_simple_cal, e_type_config.fit.min_pe, e_type_config.fit.max_pe;
+                                      NamedTuple(e_type_config.fit.kwargs)..., f_uncal = report_simple.f_simple_uncal, uncertainty = true)
                 end
-                GC.gc()
 
                 @process_step "$e_type peak fits plot" begin
                     p = LegendMakie.lplot(report_fit, figsize = (700, 500), xerrscaling = 5,
@@ -253,8 +233,11 @@ function p_process_sipm_calibration_phy(processing_config, l200::LegendData, per
                 log_info = log_nt((det, detector_status(chinfo_det.usability), part, ProcessStatus(1), e_type, result_fit.positions[1],
                                    result_fit.resolutions_cal[1], result_calib.par[2], "-"))
 
-                result_energy = (m_cal_simple = result_simple.c, n_cal_simple = result_simple.offset,
-                                 noise_threshold = result_simple.noise_threshold, noise_threshold_cal = result_simple.noise_threshold_cal,
+                # the thresholds in PE with the final calibration, the one applied to the trigger amplitudes
+                f_cal = x -> mvalue(report_calib.f_fit(x)) * u"e_au"
+                result_energy = (simple = result_simple,
+                                 noise_threshold = f_cal(result_simple.noise_threshold),
+                                 trigger_threshold = f_cal(result_simple.trigger_threshold),
                                  cal = result_calib, fit = result_fit)
 
                 # add results to dict
@@ -262,7 +245,6 @@ function p_process_sipm_calibration_phy(processing_config, l200::LegendData, per
                 log_info_dict[e_type] = log_info
                 processed_dict[e_type] = true
 
-                GC.gc()
             catch e
                 e isa ProcessStepError || @error "Error in processing detector $det: $(truncate_error(e))"
                 log_info = log_nt((det, detector_status(chinfo_det.usability), part, ProcessStatus(0), e_type, "-", "-", "-",
@@ -299,7 +281,9 @@ function p_process_sipm_calibration_phy(processing_config, l200::LegendData, per
 
     report = lreport()
     lreport!(report, "# Main Log")
-    lreport!(report, StructArray(var"Processor Status" = [master_status(result_sipm_calibration)]))
+    lreport!(report,
+             StructArray(var"Processor Status" = [master_status(processing_config, :p_process_sipm_calibration_phy,
+                                                                result_sipm_calibration)]))
     lreport!(report, "Date of processing: $(utc_timestamp())")
     lreport!(report, "Total Processing time: $(canonicalize(now() - start_time))")
     lreport!(report, sipm_calibration_log_text)

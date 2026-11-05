@@ -2,12 +2,13 @@
     p_process_skm_phy(processing_config, l200::LegendData, period::DataPeriod;
         reprocess::Bool=false, timeout::Real=0, only_first_period::Bool=true)
 
-Create the skimmed event tier (`jlskm`) of the `phy` analysis runs of `period`, one file per run.
+Create the skimmed event tier (`jlskm`) of the `phy` runs of `period`, one file per run; with `analysis_runs_only` in the processing config, only of the analysis runs.
 
-For each run, all `jlevt` files of the run (except filekeys listed as bad) are read and only events that are neither pulser nor forced triggers are kept, and that have `ged_pmt.is_valid_muon`, `geds.is_valid_qc`, `geds.is_valid_trig`, `geds.is_valid_hit`, `geds.multiplicity == 1` and `geds.max_e_cusp_ctc_cal > 500.0u"keV"`. The report lists the fraction of the selected events that pass the PSD cut, the LAr cut, and both. The total exposure of the period is logged.
+For each run, all `jlevt` files of the run (except filekeys listed as bad) are read and only the events selected by the `skm_sel` expression of the skm config are kept. The report lists the fraction of the selected events that pass the PSD cut, the LAr cut, and both. The total exposure of the period is logged.
 
 # Inputs
-- `jlevt` tier of the `phy` filekeys listed in the runinfo for each analysis run in `period` (run info `phy.is_analysis_run`).
+- `jlevt` tier of the `phy` filekeys listed in the runinfo for each run in `period` (only the analysis runs, run info `phy.is_analysis_run`, with `analysis_runs_only`).
+- `dataprod_config(l200).skm(filekey).skm_sel`: the `ljl_propfunc` expression of the event selection.
 - Channel info of the `geds` system for the `phy` analysis runs of `period`, merged over the runs by `channelinfo(l200, period, :phy)`, and the bad-filekey list from `bad_filekeys(l200)`.
 
 # Outputs
@@ -27,13 +28,16 @@ function p_process_skm_phy(processing_config, l200::LegendData, period::DataPeri
                            only_first_period::Bool = true, use_cache::Bool = true)
     @info "Event skimmed tier for runs containing period $period"
 
-    rinfo = runinfo(l200, period) |> filterby(@pf $phy.is_analysis_run)
+    rinfo = runinfo(l200, period)
+    if processing_config.analysis_runs_only
+        rinfo = rinfo |> filterby(@pf $phy.is_analysis_run)
+    end
     @info "Loaded run info with $(length(rinfo)) runs"
 
     filekey = first(rinfo).phy.startkey
     @info "Found filekey $filekey"
 
-    chinfo = channelinfo(l200, period, :phy; system = :geds)
+    chinfo = channelinfo(l200, period, :phy; system = :geds) |> detector_filter(processing_config, :p_process_skm_phy)
     @info "Loaded channel info with $(length(chinfo)) detectors"
 
     exposure = get_exposure(l200, chinfo.detector, period; is_analysis_run = true,
@@ -89,14 +93,7 @@ function p_process_skm_phy(processing_config, l200::LegendData, period::DataPeri
             # open output file
             @timeit dsp_timer "Evt" begin
                 # generate evt level table
-                skm_sel_pf = @pf !$aux.pulser.aux_trig &&
-                                 !$aux.forcedtrigger.aux_trig &&
-                                 $ged_pmt.is_valid_muon &&
-                                 $geds.is_valid_qc &&
-                                 $geds.is_valid_trig &&
-                                 $geds.is_valid_hit &&
-                                 $geds.multiplicity == 1 &&
-                                 $geds.max_e_cusp_ctc_cal > 500.0u"keV"
+                skm_sel_pf = ljl_propfunc(dataprod_config(l200).skm(fk).skm_sel)
                 out_t = @process_step "event table loading of $fk" begin
                     read_ldata(l200, DataTier(:jlevt), filekeys; filterby = skm_sel_pf)
                 end
@@ -134,7 +131,8 @@ function p_process_skm_phy(processing_config, l200::LegendData, period::DataPeri
 
     report = lreport()
     lreport!(report, "# Main Log")
-    lreport!(report, StructArray(var"Processor Status" = [master_status(result_skm)]))
+    lreport!(report,
+             StructArray(var"Processor Status" = [master_status(processing_config, :p_process_skm_phy, result_skm)]))
     lreport!(report, "Date of processing: $(utc_timestamp())")
     lreport!(report, "Total Processing time: $(canonicalize(now() - start_time))")
     lreport!(report, skm_log_text)

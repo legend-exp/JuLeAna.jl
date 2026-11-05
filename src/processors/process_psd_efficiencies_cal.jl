@@ -47,8 +47,7 @@ function process_psd_efficiencies_cal(processing_config, l200::LegendData, perio
     filekey = start_filekey(l200, (period, run, :cal))
     @info "Found filekey $filekey"
 
-    chinfo = channelinfo(l200, filekey; system = :geds, only_processable = true) |>
-             filterby(@pf $usability == :on && $low_aoe_status in [:valid, :present])
+    chinfo = channelinfo(l200, filekey; system = :geds) |> detector_filter(processing_config, :process_psd_efficiencies_cal)
     @info "Loaded channel info with $(length(chinfo)) detectors"
 
     psd_config = dataprod_config(l200).psd(filekey).psd
@@ -73,7 +72,8 @@ function process_psd_efficiencies_cal(processing_config, l200::LegendData, perio
     end
 
     # create log line Tuple
-    log_nt_cut = NamedTuple{(:Detector, :usability, :Status, Symbol("Classifier Type"), Symbol("Cut Value"), Symbol("SEP SF"),
+    log_nt_cut = NamedTuple{(:Detector, :usability, :psd_usability, :Status, Symbol("Classifier Type"), Symbol("Cut Value"),
+                             Symbol("SEP SF"),
                              Symbol("FEP SF"), :CutError)}
 
     # get worker pool
@@ -103,7 +103,8 @@ function process_psd_efficiencies_cal(processing_config, l200::LegendData, perio
             @debug "Detector $(det) already processed, check missing energy types"
             for psd_classifier in psd_classifiers
                 if haskey(pars_db[det], psd_classifier)
-                    log_info = log_nt_cut((det, detector_status(chinfo_det.usability), ProcessStatus(1), psd_classifier,
+                    log_info = log_nt_cut((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability),
+                                           ProcessStatus(1), psd_classifier,
                                            pars_db[det][psd_classifier].cuts.lowcut, pars_db[det][psd_classifier].peaks.ds[:Tl208SEP].sf,
                                            pars_db[det][psd_classifier].peaks.ds[:Tl208FEP].sf, "Already processed --> skipped."))
                     # add results to dict
@@ -114,13 +115,12 @@ function process_psd_efficiencies_cal(processing_config, l200::LegendData, perio
         end
 
         e_cal, hit_cal = @process_step "hit data loader" begin
-            hit_cal = let e_type_cal=e_type, e_type=Symbol(first(split(string(e_type), "_cal")))
-
-                @debug "Reading from $(period)-$(run)"
-                cal_func = ljl_propfunc(l200.par.rpars.ecal[period, run][det][e_type].cal.func)
-                qc_mask = read_ldata(@pf($is_single_pulse && !$is_pulser), l200, :jlqcs, filekey, det)
-                read_ldata(row -> merge(NamedTuple{(e_type_cal,)}((cal_func(row),)), row), l200, :jldsp, :cal, period, run, det)[qc_mask]
-            end
+            # the A/E and LQ classifier functions of the PSD classifiers; a missing one fails its
+            # classifier below
+            classifier_names = [(pars, Symbol(first(split(string(psd_classifiers_dict[psd_classifier][i]), "_classifier"))))
+                                for psd_classifier in psd_classifiers for (pars, i) in ((pars_aoe, 1), (pars_lq, 3))]
+            classifier_funcs = [pars[det][name].func for (pars, name) in classifier_names if haskey(pars, det) && haskey(pars[det], name)]
+            hit_cal = read_hit_cal(l200, det, [(period, run)], [e_type], classifier_funcs)
             collect(getproperty(hit_cal, e_type)), hit_cal
         end
 
@@ -272,7 +272,8 @@ function process_psd_efficiencies_cal(processing_config, l200::LegendData, perio
                                          lq_ds = result_peaks_lq_ds),
                                 qbb = (low = qbb_result_low, ds = qbb_result_ds, low_lq = qbb_result_low_lq, lq_ds = qbb_result_lq_ds)))
 
-                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), ProcessStatus(1), psd_classifier, aoe_low_cut,
+                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability),
+                                       ProcessStatus(1), psd_classifier, aoe_low_cut,
                                        result.peaks.ds[:Tl208SEP].sf, result.peaks.ds[:Tl208FEP].sf, "-"))
 
                 # add results to dict
@@ -280,11 +281,11 @@ function process_psd_efficiencies_cal(processing_config, l200::LegendData, perio
                 log_info_dict[psd_classifier] = log_info
                 processed_dict[psd_classifier] = true
 
-                GC.gc()
             catch e
                 # a failed `@process_step` has logged its error already
                 e isa ProcessStepError || @error "Error in $psd_classifier cut generation: $(truncate_error(e))"
-                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), ProcessStatus(0), psd_classifier, "-", "-", "-",
+                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability),
+                                       ProcessStatus(0), psd_classifier, "-", "-", "-",
                                        truncate_error(e)))
 
                 # add results to dict
@@ -312,7 +313,8 @@ function process_psd_efficiencies_cal(processing_config, l200::LegendData, perio
 
     report = lreport()
     lreport!(report, "# Main Log")
-    lreport!(report, StructArray(var"Processor Status" = [master_status(result_psd)]))
+    lreport!(report,
+             StructArray(var"Processor Status" = [master_status(processing_config, :process_psd_efficiencies_cal, result_psd)]))
     lreport!(report, "Date of processing: $(utc_timestamp())")
     lreport!(report, "Total Processing time: $(canonicalize(now() - start_time))")
     lreport!(report, psd_efficiencies_log_text)

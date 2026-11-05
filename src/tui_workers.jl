@@ -166,7 +166,7 @@ end
 """
     JuLeAna.workers_selected_worker(page::WorkersPage)
 
-Return the selected worker of `page` (the first one if none was selected) as `(; pid, host)`, or
+Return the selected worker of `page` (the first one if none was selected) as `(; pid, attributes)`, or
 `nothing` if there is none.
 """
 function workers_selected_worker(page::WorkersPage)
@@ -390,10 +390,49 @@ function workers_allocation_spans(a, at)
     return spans
 end
 
-# Spans of the row of the worker `w` at the time `at`; `item` is its busy item or `nothing`.
-function workers_worker_spans(w, item, at)
+# Memory and peak memory of the job step `step` in GB, `–` for a value not reported.
+function workers_memory_text(step)
+    gb(bytes) = isnothing(bytes) ? "–" : Printf.@sprintf("%.1f", bytes / 1024^3)
+    return "$(gb(step.rss))/$(gb(step.max_rss)) GB"
+end
+
+# The job step of the worker `w` in `steps` (by ID), `nothing` for a worker outside SLURM or a step not reported.
+function workers_step(w, steps)
+    a = w.attributes
+    return isnothing(a) || ismissing(a) || isempty(a.job) ? nothing : get(steps, "$(a.job).$(a.step)", nothing)
+end
+
+# Text of the attributes of a worker after the title of its output, `""` while they are not known.
+function workers_attributes_text(a)
+    (isnothing(a) || ismissing(a)) && return ""
+    parts = [a.host]
+    isempty(a.job) || push!(parts, "step $(a.job).$(a.step)")
+    push!(parts, "$(a.threads) threads")
+    isempty(a.cpus) || push!(parts, "$(a.cpus) CPUs")
+    push!(parts, Printf.@sprintf("memory %.1f GB", a.memory / 1024^3))
+    isempty(a.gpus) || push!(parts, "GPUs $(a.gpus)")
+    return " │ " * join(parts, " │ ")
+end
+
+# Lines of the table of the running and pending job steps of `steps`, after an empty line; none without
+# such steps.
+function workers_steps_lines(steps)
+    steps = filter(s -> s.state in ("RUNNING", "PENDING"), steps)
+    isempty(steps) && return String[]
+    row(id, node, state, exit_code, elapsed, memory) = rpad(id, 14) * rpad(node, 12) * rpad(state, 15) * rpad(exit_code, 6) *
+                                                       rpad(elapsed, 12) *
+                                                       memory
+    return [""; row("STEP", "NODE", "STATE", "EXIT", "ELAPSED", "MEMORY/PEAK");
+            [row(s.id, s.node, s.state, s.exit_code, s.elapsed, workers_memory_text(s)) for s in steps]]
+end
+
+# Spans of the row of the worker `w` at the time `at`; `item` is its busy item or `nothing`, `step` the
+# `StepInfo` of its SLURM job step or `nothing`.
+function workers_worker_spans(w, item, step, at)
+    a = w.attributes
     spans = [(lpad(w.pid, 3) * " ", Tachikoma.tstyle(:text_bright)),
-             (rpad(isnothing(w.host) ? "…" : w.host, 12) * " ", Tachikoma.tstyle(:text))]
+             (rpad(isnothing(a) ? "…" : ismissing(a) ? "?" : a.host, 12) * " ", Tachikoma.tstyle(:text))]
+    isnothing(step) || push!(spans, (rpad(workers_memory_text(step), 14) * " ", Tachikoma.tstyle(:text_dim)))
     if isnothing(item)
         push!(spans, ("idle", Tachikoma.tstyle(:text_dim)))
     else
@@ -421,11 +460,13 @@ function workers_draw_list!(buf, inner, rows, selected, top, focused, reveal)
     return top
 end
 
-# Draw the output `lines` (`(text, style)` pairs) in a block titled `title` over `area`, the last line at the bottom
-# unless scrolled up by `back` lines. Return the clamped `back` and the area inside the block.
-function workers_draw_output!(buf, area, title, lines, back, focused)
+# Draw the output `lines` (`(text, style)` pairs) in a block titled `title`, followed by the scroll state and `details`,
+# over `area`, the last line at the bottom unless scrolled up by `back` lines. Return the clamped `back` and the area
+# inside the block.
+function workers_draw_output!(buf, area, title, lines, back, focused; details = "")
     back = clamp(back, 0, max(0, length(lines) - max(0, area.height - 2)))
-    inner = Tachikoma.render(pane_block(clip_text(title * (back > 0 ? "  (scrolled up $back)" : ""), max(0, area.width - 6)), focused),
+    inner = Tachikoma.render(pane_block(clip_text(title * (back > 0 ? "  (scrolled up $back)" : "") * details, max(0, area.width - 6)),
+                                        focused),
                              area, buf)
     if isempty(lines)
         Tachikoma.set_string!(buf, inner.x, inner.y, "No output.", Tachikoma.tstyle(:text_dim); max_x = Tachikoma.right(inner))
@@ -486,9 +527,12 @@ allocations (`idle cancel in mm:ss`, or `no idle cancel`). Two columns follow. T
 lists the allocations (number, backend, state, SLURM job name and job IDs, run time or the
 time it ran, the exit code of a failed one) with the output of the script of the selected
 allocation below, the newest line at the bottom. The right one lists the workers (process
-ID, host, the item a busy worker runs or `idle`) with the lines the selected worker wrote
-below; while that output is scrolled up, it stays on the same lines as new ones arrive. If the overview has SLURM output, the right pane can show it instead (`squeue`, then
-`sinfo -t idle`) over the whole column. The focused pane has the heavy border.
+ID, host, the memory and peak memory of a SLURM worker in GB, the item a busy worker runs or
+`idle`) with the lines the selected worker wrote below, under a title with its attributes;
+while that output is scrolled up, it stays on the same lines as new ones arrive. If the
+overview has SLURM output, the right pane can show it instead (`squeue`, `sinfo -t idle`,
+then the running and pending job steps) over the whole column. The focused pane has the
+heavy border.
 
 While the start script is edited the editor fills the whole area. A message about the
 start script, the form of the SLURM options and the question before a cancel are drawn
@@ -533,8 +577,8 @@ function render_workers(page::WorkersPage, snap, busy, messages, area::Tachikoma
     if slurm
         inner = Tachikoma.render(pane_block(tab_title, page.focus == 2), right, buf)
         page.worker_list = inner
-        text = [split(chomp(page.overview.slurm.queue), '\n'); "";
-                split(chomp(page.overview.slurm.idle), '\n')]
+        text = [split(chomp(page.overview.slurm.queue), '\n'); ""; split(chomp(page.overview.slurm.idle), '\n');
+                workers_steps_lines(page.overview.steps)]
         page.slurm_top = clamp(page.slurm_top, 1, max(1, length(text) - inner.height + 1))
         for (r, line) in enumerate(text[page.slurm_top:min(end, page.slurm_top + inner.height - 1)])
             Tachikoma.set_string!(buf, inner.x, inner.y + r - 1, replace(line, '\t' => " "), Tachikoma.tstyle(:text);
@@ -552,7 +596,8 @@ function render_workers(page::WorkersPage, snap, busy, messages, area::Tachikoma
         message(inner, "No workers.", :text_dim)
     else
         items = Dict(b.worker => b for b in busy)
-        rows = [workers_worker_spans(w, get(items, w.pid, nothing), at) for w in workers]
+        steps = Dict(s.id => s for s in page.overview.steps)
+        rows = [workers_worker_spans(w, get(items, w.pid, nothing), workers_step(w, steps), at) for w in workers]
         page.worker_top = workers_draw_list!(buf, inner, rows, workers_index(workers, :pid, page.worker_pid), page.worker_top,
                                              page.focus == 2, reveal && page.focus == 2)
     end
@@ -565,7 +610,8 @@ function render_workers(page::WorkersPage, snap, busy, messages, area::Tachikoma
     end
     page.worker_seen = (isnothing(worker) ? 0 : worker.pid, isempty(entries) ? 0 : last(entries).record)
     page.worker_back, page.worker_out = workers_draw_output!(buf, wbottom, title, workers_output_lines(entries), page.worker_back,
-                                                             page.focus == 2)
+                                                             page.focus == 2;
+                                                             details = isnothing(worker) ? "" : workers_attributes_text(worker.attributes))
     return workers_render_modals(page, snap, area, buf)
 end
 

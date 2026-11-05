@@ -34,7 +34,7 @@ function process_daq_energy_calibration_cal(processing_config, l200::LegendData,
     filekey = start_filekey(l200, (period, run, :cal))
     @info "Found filekey $filekey"
 
-    chinfo = channelinfo(l200, filekey; system = :geds, only_processable = true)
+    chinfo = channelinfo(l200, filekey; system = :geds) |> detector_filter(processing_config, :process_daq_energy_calibration_cal)
     @info "Loaded channel info with $(length(chinfo)) detectors"
 
     raw_config = dataprod_config(l200).raw(filekey)
@@ -54,7 +54,8 @@ function process_daq_energy_calibration_cal(processing_config, l200::LegendData,
     end
 
     # create log line Tuple
-    log_nt = NamedTuple{(:Detector, :usability, :Status, Symbol("Cal. Constant"), Symbol("Total Time"), Symbol("Total Allocated"), :Error)}
+    log_nt = NamedTuple{(:Detector, :usability, :psd_usability, :Status, Symbol("Cal. Constant"), Symbol("Total Time"),
+                         Symbol("Total Allocated"), :Error)}
 
     # flush stdout
     flush(stdout)
@@ -67,7 +68,8 @@ function process_daq_energy_calibration_cal(processing_config, l200::LegendData,
 
         if !reprocess && !redo_detector(det) && haskey(pars_db, det)
             @debug "Detector $det already processed, skip"
-            log_det = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(1), pars_db[det].c, "0", "0",
+            log_det = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), ProcessStatus(1),
+                              pars_db[det].c, "0", "0",
                               "Already processed --> skipped."))
             return (processed = false, log = log_det)
         end
@@ -111,16 +113,17 @@ function process_daq_energy_calibration_cal(processing_config, l200::LegendData,
                     LegendMakie.add_watermarks!(final = true)
                     save_plot(fig, l200, filekey, det, :daq_energy_failed)
                 end
-                log_det = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(0), "-", "-", "-", truncate_error(e.exception)))
+                log_det = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), ProcessStatus(0),
+                                  "-", "-", "-", truncate_error(e.exception)))
                 return (processed = false, log = log_det)
             end
         end
-        GC.gc()
 
         total_time = canonicalize(Dates.Nanosecond(TimerOutputs.tottime(calibration_timer)))
         total_allocated = Base.format_bytes(TimerOutputs.totallocated(calibration_timer))
         calibration = (c = result_autocal.c * u"keV", func = "$(repr(result_autocal.c)) * daqenergy * keV")
-        log_det = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(1), calibration.c, "$total_time", total_allocated, ""))
+        log_det = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), ProcessStatus(1),
+                          calibration.c, "$total_time", total_allocated, ""))
         @info "Finished processing detector $det ($ch) in $total_time"
 
         return (result = calibration, processed = true, log = log_det)
@@ -142,7 +145,8 @@ function process_daq_energy_calibration_cal(processing_config, l200::LegendData,
 
     report = lreport()
     lreport!(report, "# Main Log")
-    lreport!(report, StructArray(var"Processor Status" = [master_status(result_calib)]))
+    lreport!(report,
+             StructArray(var"Processor Status" = [master_status(processing_config, :process_daq_energy_calibration_cal, result_calib)]))
     lreport!(report, "Date of processing: $(utc_timestamp())")
     lreport!(report, "Total Processing time: $(canonicalize(now() - start_time))")
     lreport!(report, daq_energy_calibration_log_text)

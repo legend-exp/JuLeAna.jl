@@ -4,7 +4,7 @@
 
 Build the event tier (`jlevt`) of the `phy` run from the `jldsp` files, combining the listed subsystems.
 
-For each `phy` filekey of the run listed in the runinfo, the `jldsp` file must exist. The DSP data of the detectors of all `subsystems` are read, calibrated and combined into one event table by `calibrate_all`, including the cut flags. Per file the log counts forced triggers, pulser triggers and physical triggers (events with `geds.is_valid_qc` and more than one entry in `geds.trig_e_det`). If the PMT output is not empty and `:pmts` is in `subsystems`, a separate PMT file (`jlpmt` tier) is written.
+For each `phy` filekey of the run listed in the runinfo, the `jldsp` file must exist. The file is opened, and the DSP data of the detectors of all `subsystems` are calibrated and combined into one event table by `calibrate_all`, including the cut flags. Per file the log counts forced triggers, pulser triggers and physical triggers (events with `geds.is_valid_qc` and more than one entry in `geds.trig_e_det`). If the PMT output is not empty and `:pmts` is in `subsystems`, a separate PMT file (`jlpmt` tier) is written.
 
 # Inputs
 - `jldsp` tier of the `phy` filekeys of the run listed in the runinfo.
@@ -28,7 +28,7 @@ function process_evt_phy(processing_config, l200::LegendData, period::DataPeriod
                          subsystems::Vector{Symbol} = [:geds, :spms, :pmts, :aux], use_cache::Bool = true)
     @info "Process events for period $period and run $run"
 
-    filekeys = filter(!in(bad_filekeys(l200; load_key = :unprocessable)), only(runinfo(l200, (period, run, :phy)).keys))
+    filekeys = run_filekeys(l200, period, run, :phy)
 
     filekey = start_filekey(l200, (period, run, :phy))
     @info "Found start filekey $filekey"
@@ -66,7 +66,7 @@ function process_evt_phy(processing_config, l200::LegendData, period::DataPeriod
                 rm(evtfilename, force = true)
             elseif isfile(outfilename)
                 @info "File $(basename(evtfilename)) already exists, skip"
-                evt_counts = read_ldata((@pf (; is_forced = $aux.forcedtrigger.aux_trig, is_pulser = $aux.pulser.aux_trig,
+                evt_counts = read_ldata((@pf (; is_forced = $aux.forcedtrigger.aux_trig, is_pulser = $aux.pulser_wvf.aux_trig,
                                               is_valid_qc = $geds.is_valid_qc, trig_e_det = $geds.trig_e_det)), l200, DataTier(:jlevt), fk)
                 n_forced = count(evt_counts.is_forced)
                 n_pulser = count(evt_counts.is_pulser)
@@ -77,16 +77,14 @@ function process_evt_phy(processing_config, l200::LegendData, period::DataPeriod
 
             # open output file
             @timeit dsp_timer "Evt" begin
-                dsp_detectors = unique(reduce(vcat, [channelinfo(l200, fk; system).detector for system in subsystems]))
-                dsp_data = read_ldata(l200, DataTier(:jldsp), fk, dsp_detectors; ignore_missing = true)
-                # generate evt level table
+                # generate evt level table from the open jldsp file, the evt config selects the detectors of each subsystem
                 out_t, pmts_out_t = @process_step "event table calibration of $fk" begin
-                    calibrate_all(l200, fk, dsp_data; subsystems)
+                    lh5open(dsp_data -> calibrate_all(l200, fk, dsp_data; subsystems), dspfilename)
                 end
                 # get number of forced, physical and pulser triggers
                 n_forced = count(out_t.aux.forcedtrigger.aux_trig)
                 @debug "Number of forced triggers: $n_forced"
-                n_pulser = count(out_t.aux.pulser.aux_trig)
+                n_pulser = count(out_t.aux.pulser_wvf.aux_trig)
                 @debug "Number of pulser triggers: $n_pulser"
                 n_phy = count(out_t.geds.is_valid_qc .&& length.(out_t.geds.trig_e_det) .> 1)
                 @debug "Number of physical triggers: $n_phy"
@@ -132,7 +130,8 @@ function process_evt_phy(processing_config, l200::LegendData, period::DataPeriod
 
     report = lreport()
     lreport!(report, "# Main Log")
-    lreport!(report, StructArray(var"Processor Status" = [master_status(result_evt)]))
+    lreport!(report,
+             StructArray(var"Processor Status" = [master_status(processing_config, :process_evt_phy, result_evt)]))
     lreport!(report, "Date of processing: $(utc_timestamp())")
     lreport!(report, "Total Processing time: $(canonicalize(now() - start_time))")
     lreport!(report, evt_log_text)
@@ -141,9 +140,7 @@ function process_evt_phy(processing_config, l200::LegendData, period::DataPeriod
     lreport!(report, "# Results")
     lreport!(report, create_logtbl(result_evt))
     lreport!(report, "# Total Timing")
-    lreport!(report, "```")
-    lreport!(report, "$(get_totalTimer(result_evt))")
-    lreport!(report, "```")
+    lreport!(report, timing_table(result_evt))
 
     @info "Write log report"
     write_report(get_rreportfilename(l200, filekey, :evt_phy), report)
@@ -153,4 +150,5 @@ function process_evt_phy(processing_config, l200::LegendData, period::DataPeriod
     return flush(stdout)
 end
 
-register_processor!(process_evt_phy; output_tiers = [:jlevt, :jlpmt], detector_selection = false)
+register_processor!(process_evt_phy; output_tiers = [:jlevt, :jlpmt], detector_selection = false,
+                    items = (_, l200, period, run) -> run_filekeys(l200, period, run, :phy))

@@ -4,7 +4,7 @@ using JuLeAna
 using Test
 using Logging: Logging, ConsoleLogger, NullLogger, with_logger
 using Serialization: deserialize
-using Distributed: addprocs, myid, rmprocs, @everywhere
+using Distributed: Distributed, addprocs, myid, rmprocs, @everywhere
 using LegendDataManagement: LegendDataManagement, DataPeriod, DataRun, FileKey, LegendData, lreport
 using LegendDataManagement.LDMUtils: create_logtbl
 using ParallelProcessingTools: FlexWorkerPool, ppt_worker_pool, ppt_worker_pool!
@@ -306,6 +306,43 @@ const REPORT = """
                                                                                              stub_status([p3], runs, steps, Symbol[])...;
                                                                                              processors = stubs, max_parallel_steps = -1)
 
+        starts() = [(n, r) for (what, n, r) in events if what === :start]
+        # a longer chain of steps that wait goes first, before rank: y → z
+        empty!(events)
+        cfg_h = ProcessingConfig(; processors = Dict(:x => spec(:x, 1), :y => spec(:y, 2), :z => spec(:z, 3, [:y])),
+                                 p_processors = Dict{Symbol,ProcessorSpec}())
+        steps_h = [:x, :y, :z]
+        run_processing(cfg_h, FakeData(), [p3], steps_h, Symbol[], stub_status([p3], runs, steps_h, Symbol[])...;
+                       processors = Dict{Symbol,Any}(n => step(n) for n in steps_h), max_parallel_steps = 1)
+        @test starts() == [(:y, runs[1]), (:y, runs[2]), (:x, runs[1]), (:x, runs[2]), (:z, runs[1]), (:z, runs[2])]
+        # for equal chains, more steps that wait go first, before rank: u → t, w → v1 and v2
+        empty!(events)
+        cfg_m = ProcessingConfig(;
+                                 processors = Dict(:u => spec(:u, 1), :w => spec(:w, 2), :t => spec(:t, 4, [:u]),
+                                                   :v1 => spec(:v1, 3, [:w]), :v2 => spec(:v2, 3, [:w])),
+                                 p_processors = Dict{Symbol,ProcessorSpec}())
+        steps_m = [:u, :w, :t, :v1, :v2]
+        run_processing(cfg_m, FakeData(), [p3], steps_m, Symbol[], stub_status([p3], runs, steps_m, Symbol[])...;
+                       processors = Dict{Symbol,Any}(n => step(n) for n in steps_m), max_parallel_steps = 1)
+        @test starts()[1:4] == [(:w, runs[1]), (:w, runs[2]), (:u, runs[1]), (:u, runs[2])]
+        # when every step runs with reprocess and item times are known, the estimated time of the chain goes first:
+        # x takes 10 s, the chain y → z 2 s
+        timed_run(seconds; reprocess = true) = run_processing(cfg_h, FakeData(), [p3], steps_h, Symbol[],
+                                                              stub_status([p3], runs, steps_h, Symbol[])...;
+                                                              processors = Dict{Symbol,Any}(n => step(n) for n in steps_h),
+                                                              max_parallel_steps = 1, reprocess, recorded_item_seconds = seconds)
+        empty!(events)
+        timed_run(Dict(:x => 10.0, :y => 1.0, :z => 1.0))
+        @test starts()[1:2] == [(:x, runs[1]), (:x, runs[2])]
+        # a processor without a known time takes the median of the known ones: the chain y → z takes 20 s
+        empty!(events)
+        timed_run(Dict(:x => 10.0))
+        @test starts()[1:2] == [(:y, runs[1]), (:y, runs[2])]
+        # without reprocess the times are not used
+        empty!(events)
+        timed_run(Dict(:x => 10.0, :y => 1.0, :z => 1.0); reprocess = false)
+        @test starts()[1:2] == [(:y, runs[1]), (:y, runs[2])]
+
         # without dependency checks, a step still waits for its own level, but not for the other
         empty!(events)
         cfg_x = ProcessingConfig(; processors = Dict(:a => spec(:a, 1), :c => spec(:c, 2, [:a, :p])),
@@ -315,6 +352,173 @@ const REPORT = """
                        processors = Dict{Symbol,Any}(:a => step(:a), :c => step(:c), :p => p_stub), check_dependencies = false)
         @test position(:start, :c, runs[1]) > position(:end, :a, runs[1])
         @test position(:start, :c, runs[1]) < position(:end, :p, runs[1])
+    end
+
+    @testset "chain seconds" begin
+        a, b, c = ((DataPeriod(3), DataRun(r), :s) for r in 1:3)
+        dependents = Dict(a => [b, c], b => [c], c => JuLeAna.ProgressKey[])
+        # a step of 10 items on 4 workers takes 2.5 item times, the steps without counted items one
+        @test JuLeAna.chain_seconds([a, b, c], dependents, step -> 2.0, Dict(a => 10), 4) == Dict(a => 9.0, b => 4.0, c => 2.0)
+        # medians of the sorted durations of this run
+        store = JuLeAna.ProgressStore()
+        store.durations[:odd], store.durations[:even] = [1.0, 2.0, 4.0], [1.0, 3.0]
+        @test JuLeAna.measured_item_seconds(store; min_items = 1) == Dict(:odd => 2.0, :even => 2.0)
+        @test JuLeAna.measured_item_seconds(store, :max; min_items = 1) == Dict(:odd => 4.0, :even => 3.0)
+        @test JuLeAna.measured_item_seconds(store, :p95; min_items = 1)[:even] ≈ 2.9
+        # only the processors with at least `min_items` done items count
+        store.durations[:many] = collect(1.0:100.0)
+        @test JuLeAna.measured_item_seconds(store; min_items = 100) == Dict(:many => 50.5)
+        @test JuLeAna.measured_item_seconds(store, :p99; min_items = 100)[:many] ≈ 99.01
+        @test_throws "unknown statistic :p50" JuLeAna.measured_item_seconds(store, :p50; min_items = 1)
+        # the latest recorded statistic of every processor in a history; a missing 99th percentile is skipped
+        history = [(; timings = [(; process = :a, median = 1.0, p95 = 1.5, p99 = 1.9, max = 2.0)]),
+                   (;
+                    timings = [(; process = :a, median = 3.0, p95 = 3.5, p99 = nothing, max = 4.0),
+                               (; process = :b, median = 2.0, p95 = 2.5, p99 = 4.5, max = 5.0)]),
+                   (; timings = NamedTuple[])]
+        @test JuLeAna.latest_item_seconds(history) == Dict(:a => 3.0, :b => 2.0)
+        @test JuLeAna.latest_item_seconds(history, :max) == Dict(:a => 4.0, :b => 5.0)
+        @test JuLeAna.latest_item_seconds(history, :p99) == Dict(:a => 1.9, :b => 4.5)
+        @test_throws "unknown statistic :p50" JuLeAna.latest_item_seconds(history, :p50)
+    end
+
+    @testset "item timeouts" begin
+        original_pool = ppt_worker_pool()
+        ppt_worker_pool!(FlexWorkerPool(withmyid = true, label = "item timeout test"; maxoccupancy = 4))
+        try
+            Row = NamedTuple{(:Detector, :usability, :Status, :Error)}
+            runs = DataRun.(1:2)
+            timeouts = Dict{DataRun,Any}()
+            # a step of 100 short items that records its timeout
+            function timed_step(cfg, l200, period, run; reprocess::Bool = false, timeout::Real = 0)
+                timeouts[run] = timeout
+                parallel([(detector = Symbol(:V, i), usability = :on) for i in 1:100], Row; timeout) do itr
+                    (processed = true, log = Row((itr.detector, :on, 1, "")))
+                end
+                return nothing
+            end
+            config(timeout; item_time_minimum_items = 100) = ProcessingConfig(;
+                                                                              processors = Dict(:t =>
+                                                                                                    ProcessorSpec(; name = :t, level = :run,
+                                                                                                                  category = :cal, rank = 1,
+                                                                                                                  kwargs = Dict{Symbol,Any}(:timeout =>
+                                                                                                                                                timeout))),
+                                                                              p_processors = Dict{Symbol,ProcessorSpec}(),
+                                                                              item_time_minimum_items,
+                                                                              item_timeout_factor = 3, item_timeout_minimum_minutes = 1)
+            # the steps of runs 1 and 2 one after the other
+            run_t(cfg; kwargs...) = run_processing(cfg, FakeData(), [DataPeriod(3)], [:t], Symbol[],
+                                                   stub_status([DataPeriod(3)], runs, [:t], Symbol[])...;
+                                                   processors = Dict{Symbol,Any}(:t => timed_step), reprocess = true,
+                                                   max_parallel_steps = 1,
+                                                   kwargs...)
+            # without a known 99th percentile there is no timeout
+            @test_logs (:info, "Item timeout of t: none, no 99th percentile of its item times is known") match_mode = :any run_t(config("auto"))
+            @test timeouts == Dict(runs[1] => 0, runs[2] => 0)
+            # the factor times the recorded 99th percentile, at least the minimum
+            @test_logs (:info, "Item timeout of t: 300.0 s") match_mode = :any run_t(config("auto"); recorded_item_p99 = Dict(:t => 100.0))
+            @test timeouts == Dict(runs[1] => 300, runs[2] => 300)
+            run_t(config("auto"); recorded_item_p99 = Dict(:t => 10.0))
+            @test timeouts == Dict(runs[1] => 60, runs[2] => 60)
+            # once 100 items of this run have finished, their 99th percentile replaces the recorded one
+            run_t(config("auto"); recorded_item_p99 = Dict(:t => 100.0), progress_store = JuLeAna.ProgressStore())
+            @test timeouts == Dict(runs[1] => 300, runs[2] => 60)
+            # with `item_time_minimum_items` above them, the recorded one stays
+            run_t(config("auto"; item_time_minimum_items = 101); recorded_item_p99 = Dict(:t => 100.0),
+                  progress_store = JuLeAna.ProgressStore())
+            @test timeouts == Dict(runs[1] => 300, runs[2] => 300)
+            # a number is passed as it is
+            run_t(config(5); recorded_item_p99 = Dict(:t => 100.0))
+            @test timeouts == Dict(runs[1] => 5, runs[2] => 5)
+        finally
+            ppt_worker_pool!(original_pool)
+        end
+    end
+
+    @testset "worker queue" begin
+        waituntil(cond) = timedwait(cond, 30; pollint = 0.01) === :ok
+        pool = Distributed.WorkerPool([myid()])
+        queue = JuLeAna.WorkerQueue()
+        # the only worker is busy while the items queue up
+        held = take!(pool)
+        order = Int[]
+        order_lock = ReentrantLock()
+        item(key) = Threads.@spawn begin
+            worker = take!(JuLeAna.QueuedPool(pool, queue, key))
+            lock(() -> push!(order, key), order_lock)
+            put!(pool, worker)
+        end
+        tasks = map(item, [3, 1, 2])
+        @test waituntil(() -> length(queue.waiting) == 3)
+        put!(pool, held)
+        foreach(wait, tasks)
+        @test order == [1, 2, 3]
+        @test isempty(queue.waiting)
+
+        # a stop ends the wait of the queued items
+        stop = Threads.Atomic{Bool}(false)
+        held = take!(pool)
+        waiter = Threads.@spawn take!(JuLeAna.QueuedPool(JuLeAna.StoppablePool(pool, stop), queue, 1))
+        @test waituntil(() -> length(queue.waiting) == 1)
+        stop[] = true
+        err = try
+            fetch(waiter)
+        catch e
+            e
+        end
+        @test err isa TaskFailedException && err.task.exception isa ProcessingStopped
+        @test isempty(queue.waiting)
+
+        # the items wait by `order` of their keys; `resort!` and `refresh` apply a changed order
+        pool = Distributed.WorkerPool([myid()])
+        rank = Dict(1 => 1, 2 => 2, 3 => 3)
+        changed = Ref(false)
+        queue = JuLeAna.WorkerQueue(k -> rank[k], () -> changed[] ? false : (rank[3] = -1; changed[] = true))
+        held = take!(pool)
+        empty!(order)
+        tasks = map(item, [1, 2, 3])
+        @test waituntil(() -> length(queue.waiting) == 3)
+        rank[1] = 9
+        JuLeAna.resort!(queue)
+        @test [i.key for i in queue.waiting] == [2, 3, 1]
+        # `refresh` before the first handout puts 3 first
+        put!(pool, held)
+        foreach(wait, tasks)
+        @test order == [3, 2, 1]
+        put!(pool, held)
+
+        # in `run_processing`, the items of b (b → c) overtake the waiting items of a
+        original_pool = ppt_worker_pool()
+        ppt_worker_pool!(FlexWorkerPool(withmyid = true, label = "worker queue test"; maxoccupancy = 1))
+        try
+            Row = NamedTuple{(:Detector, :usability, :Status, :Error)}
+            started = Symbol[]
+            started_lock = ReentrantLock()
+            function items_step(name)
+                return function (cfg, l200, period, run; reprocess::Bool = false)
+                    # b queues its items while the first item of a runs and the other two wait
+                    name === :b && @assert waituntil(() -> !isempty(started) && length(JuLeAna.WORKER_QUEUE[].waiting) == 2)
+                    parallel([(detector = Symbol(name, i), usability = :on) for i in 1:3], Row) do itr
+                        lock(() -> push!(started, name), started_lock)
+                        sleep(0.3)
+                        (processed = true, log = Row((itr.detector, :on, 1, "")))
+                    end
+                    return nothing
+                end
+            end
+            spec(name, rank, deps = Symbol[]) = ProcessorSpec(; name, level = :run, category = :cal, rank, dependencies = deps)
+            cfg = ProcessingConfig(; processors = Dict(:a => spec(:a, 1), :b => spec(:b, 2), :c => spec(:c, 3, [:b])),
+                                   p_processors = Dict{Symbol,ProcessorSpec}())
+            steps = [:a, :b, :c]
+            processors = Dict{Symbol,Any}(:a => items_step(:a), :b => items_step(:b),
+                                          :c => (cfg, l200, period, run; reprocess = false) -> nothing)
+            run_processing(cfg, FakeData(), [DataPeriod(3)], steps, Symbol[],
+                           stub_status([DataPeriod(3)], [DataRun(1)], steps, Symbol[])...;
+                           processors)
+            @test started == [:a, :b, :b, :b, :a, :a]
+        finally
+            ppt_worker_pool!(original_pool)
+        end
     end
 
     @testset "stored_detectors" begin
@@ -604,6 +808,49 @@ const REPORT = """
         end
     end
 
+    @testset "timeout ends the worker" begin
+        Row = NamedTuple{(:Detector, :usability, :Status, :Error)}
+        original_pool = ppt_worker_pool()
+        pool = FlexWorkerPool(withmyid = false, label = "timeout test"; maxoccupancy = 1)
+        ppt_worker_pool!(pool)
+        pids = Int[]
+        try
+            push!(pids, only(addprocs(1; exeflags = "--project=$(Base.active_project())")))
+            @everywhere [pids[1]] using JuLeAna
+            push!(pool, pids[1])
+            t0 = time()
+            # the item computes without yielding, so its worker does not answer until the end
+            result = parallel([(detector = :V1, usability = :on)], Row; timeout = 3) do itr
+                t = time()
+                while time() - t < 120
+                end
+                (processed = true, log = Row((itr.detector, :on, 1, "")))
+            end
+            @test time() - t0 < 60
+            row = only(result)
+            @test !last(row).processed
+            @test occursin("ran longer than its timeout of 3.0 s on 1 worker, which was ended", last(row).log.Error)
+            @test pids[1] ∉ Distributed.workers()
+            # a new worker joins and takes the next items at once
+            push!(pids, only(addprocs(1; exeflags = "--project=$(Base.active_project())")))
+            @everywhere [pids[2]] using JuLeAna
+            push!(pool, pids[2])
+            result = parallel([(detector = :V2, usability = :on)], Row; timeout = 30) do itr
+                (processed = true, log = Row((itr.detector, :on, 1, "")), worker = myid())
+            end
+            @test last(only(result)).processed && last(only(result)).worker == pids[2]
+            # an item whose worker process ends fails instead of being tried on the next worker
+            result = parallel([(detector = :V3, usability = :on)], Row) do itr
+                return exit(1)
+            end
+            @test occursin("the process of the worker ended while it ran the item, 1 time", last(only(result)).log.Error)
+            @test pids[2] ∉ Distributed.workers()
+        finally
+            ppt_worker_pool!(original_pool)
+            rmprocs(filter(in(Distributed.workers()), pids))
+        end
+    end
+
     @testset "skipped runs" begin
         p3, r1 = DataPeriod(3), DataRun(1)
         run_a(cfg, l200, period, run; reprocess::Bool = false) = error("run_a must be skipped")
@@ -625,6 +872,66 @@ const REPORT = """
             # a skipped run counts as finished for the steps that depend on it
             @test run_status[p3][:run_a][r1] && partition_status[p3][:p_b]
             @test last(partition_calls) == p3
+        end
+    end
+
+    @testset "item counts" begin
+        # the items of a processor that registers an `items` function are counted at the start
+        p3, runs = DataPeriod(3), DataRun.(1:2)
+        seen = Dict{Tuple{Symbol,DataRun},Any}()
+        record(name) = (cfg, l200, period, run; reprocess::Bool = false) -> (seen[(name, run)] = JuLeAna.STEP_ITEMS[]; nothing)
+        spec(name, rank) = ProcessorSpec(; name, level = :run, category = :cal, rank)
+        cfg = ProcessingConfig(; processors = Dict(:counted => spec(:counted, 1), :uncounted => spec(:uncounted, 2)),
+                               p_processors = Dict{Symbol,ProcessorSpec}(), max_parallel_steps = 1)
+        steps = [:counted, :uncounted]
+        stubs = Dict{Symbol,Any}(name => record(name) for name in steps)
+        JuLeAna.PROCESSOR_TRAITS[:counted] = merge(JuLeAna.DEFAULT_TRAITS, (; items = (cfg, l200, period, run) -> 1:(run.no + 1)))
+        try
+            run_processing(cfg, FakeData(), [p3], steps, Symbol[], stub_status([p3], runs, steps, Symbol[])...; processors = stubs)
+            @test seen == Dict((:counted, DataRun(1)) => 2, (:counted, DataRun(2)) => 3, (:uncounted, DataRun(1)) => nothing,
+                               (:uncounted, DataRun(2)) => nothing)
+            # the runs that are skipped are not counted
+            JuLeAna.PROCESSOR_TRAITS[:counted] = merge(JuLeAna.DEFAULT_TRAITS,
+                                                       (; items = (cfg, l200, period, run) -> error("counted a skipped run")))
+            @test_logs (:warn, "p03-r001-cal is not in runinfo, skip counted") match_mode = :any run_processing(cfg, NoRunData(), [p3],
+                                                                                                                steps,
+                                                                                                                Symbol[],
+                                                                                                                stub_status([p3], runs,
+                                                                                                                            steps,
+                                                                                                                            Symbol[])...;
+                                                                                                                processors = stubs)
+        finally
+            delete!(JuLeAna.PROCESSOR_TRAITS, :counted)
+        end
+        @test JuLeAna.PROCESSOR_TRAITS[:process_evt_phy].items isa Function
+    end
+
+    @testset "item times" begin
+        original_pool = ppt_worker_pool()
+        ppt_worker_pool!(FlexWorkerPool(withmyid = true, label = "item times test"; maxoccupancy = 1))
+        try
+            Row = NamedTuple{(:Detector, :usability, :Status, :Error)}
+            function run_a(cfg, l200, period, run; reprocess::Bool = false)
+                parallel([(detector = Symbol(:V, i), usability = :on) for i in 1:2], Row) do itr
+                    sleep(0.2)
+                    (processed = true, log = Row((itr.detector, :on, 1, "")))
+                end
+                return nothing
+            end
+            cfg = ProcessingConfig(; processors = Dict(:run_a => ProcessorSpec(; name = :run_a, level = :run, category = :cal, rank = 1)),
+                                   p_processors = Dict{Symbol,ProcessorSpec}())
+            store = ProgressStore()
+            timed_run(; kwargs...) = run_processing(cfg, FakeData(), [DataPeriod(3)], [:run_a], Symbol[],
+                                                    stub_status([DataPeriod(3)], DataRun.(1:2), [:run_a], Symbol[])...;
+                                                    processors = Dict{Symbol,Any}(:run_a => run_a), progress_store = store, kwargs...)
+            timed_run(; reprocess = true)
+            t = only(JuLeAna.item_timings(store))
+            @test t.process === :run_a && t.items == 4 && t.min >= 0.2
+            # a step that keeps its outputs is not timed
+            @test_logs (:info, "Item times are not recorded: run_a run with reprocess = false") match_mode = :any timed_run()
+            @test isempty(JuLeAna.item_timings(store))
+        finally
+            ppt_worker_pool!(original_pool)
         end
     end
 

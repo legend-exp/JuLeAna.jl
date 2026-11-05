@@ -67,10 +67,12 @@ Messages logged on this process while a step runs are kept with the step (see
 The store also records the busy workers: every item that a worker runs, from the moment
 the item is handed to the worker until its call returns. This record is kept across
 processing runs, so that items whose run was stopped without waiting for them stay listed
-until their workers are free again.
+until their workers are free again. When [`run_processing`](@ref) times a processing run,
+the store keeps the duration of every item that ends done, per processor over all periods
+and runs.
 
-[`progress`](@ref) returns a copy of the current state with the aggregated progress and
-[`busy_workers`](@ref) the busy workers.
+[`progress`](@ref) returns a copy of the current state with the aggregated progress,
+[`busy_workers`](@ref) the busy workers and [`JuLeAna.item_timings`](@ref) the item durations.
 """
 mutable struct ProgressStore
     const lock::ReentrantLock
@@ -82,14 +84,20 @@ mutable struct ProgressStore
     next_item::Int
     started::Union{Nothing,DateTime}
     finished::Union{Nothing,DateTime}
+    # whether the durations of the items of the current run are recorded
+    timed::Bool
+    # processor => sorted seconds of its items of the current run that ended done
+    const durations::Dict{Symbol,Vector{Float64}}
 end
 
 function ProgressStore()
-    return ProgressStore(ReentrantLock(), ProgressKey[], Dict{ProgressKey,StepProgress}(), Dict{Int,BusyItem}(), 0, nothing, nothing)
+    return ProgressStore(ReentrantLock(), ProgressKey[], Dict{ProgressKey,StepProgress}(), Dict{Int,BusyItem}(), 0, nothing, nothing, true,
+                         Dict{Symbol,Vector{Float64}}())
 end
 
-# Start a new processing run with the steps `keys`, all waiting.
-function reset_progress!(store::ProgressStore, keys)
+# Start a new processing run with the steps `keys`, all waiting; with `timed`, the durations
+# of its items that end done are recorded.
+function reset_progress!(store::ProgressStore, keys; timed::Bool = true)
     @lock store.lock begin
         empty!(store.keys)
         empty!(store.steps)
@@ -99,6 +107,8 @@ function reset_progress!(store::ProgressStore, keys)
             store.steps[key] = StepProgress()
         end
         store.started, store.finished = now(UTC), nothing
+        store.timed = timed
+        empty!(store.durations)
     end
     return store
 end
@@ -183,17 +193,23 @@ function item_started!(store::ProgressStore, key::ProgressKey, id::Integer, work
 end
 
 # Item `id` of step `key` ended with `outcome`: `:done`, `:failed` or `:notrun`. An item
-# that was abandoned before (see `items_abandoned!`) only frees its worker.
+# that was abandoned before (see `items_abandoned!`) only frees its worker. The duration of
+# a done item runs from the moment its last worker got it.
 function item_finished!(store::ProgressStore, key::ProgressKey, id::Integer, outcome::Symbol)
     outcome in (:done, :failed, :notrun) || throw(ArgumentError("progress: unknown item outcome $(repr(outcome))"))
     @lock store.lock begin
-        delete!(store.busy, id)
+        busy = pop!(store.busy, id, nothing)
         step = get(store.steps, key, nothing)
         (isnothing(step) || !(id in step.pending)) && return nothing
         delete!(step.pending, id)
         delete!(step.running, id)
         if outcome === :done
             step.done += 1
+            if store.timed && !isnothing(busy)
+                durations = get!(Vector{Float64}, store.durations, key[3])
+                seconds = seconds_between(busy.since, now(UTC))
+                insert!(durations, searchsortedfirst(durations, seconds), seconds)
+            end
         elseif outcome === :failed
             step.failed += 1
         else
@@ -231,6 +247,36 @@ items of workers that have ended are left out: they wait for a retry on another 
 """
 function busy_workers(store::ProgressStore)
     @lock store.lock sort!(collect(values(store.busy)); by = b -> b.since)
+end
+
+"""
+    JuLeAna.item_timings(store::ProgressStore)
+
+Return the durations in seconds of the items of the current or last processing run that
+ended done, per processor over all periods and runs, as a vector of `(; process, items,
+min, median, p95, p99, max)` sorted by `process`, where `items` is the number of timed items,
+`p95` the 95th and `p99` the 99th percentile. A
+processor without a done item is left out, and so is every processor of a processing run
+that is not timed. The duration of an item runs from the moment its last worker got it
+until its call returned.
+"""
+function item_timings(store::ProgressStore)
+    @lock store.lock begin
+        return [(; process, items = length(d), min = first(d), median = median(d), p95 = quantile(d, 0.95; sorted = true),
+                 p99 = quantile(d, 0.99; sorted = true), max = last(d)) for (process, d) in sort!(collect(store.durations); by = first)]
+    end
+end
+
+# The `statistic` (`:median`, `:p95`, `:p99` or `:max`, as in `item_timings`) of the durations in
+# seconds of the done items per processor of the current processing run, for the processors
+# with at least `min_items` of them.
+function measured_item_seconds(store::ProgressStore, statistic::Symbol = :median; min_items::Integer)
+    statistic in (:median, :p95, :p99, :max) || throw(ArgumentError("measured_item_seconds: unknown statistic $(repr(statistic))"))
+    # the durations are sorted
+    value(d) = statistic === :max ? last(d) :
+               quantile(d, statistic === :p95 ? 0.95 : statistic === :p99 ? 0.99 : 0.5; sorted = true)
+    return @lock store.lock Dict{Symbol,Float64}(process => value(d)
+                                                 for (process, d) in store.durations if length(d) >= max(1, min_items))
 end
 
 # A running step counts its items plus one unit for the work after the last item, so it

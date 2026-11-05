@@ -1,7 +1,7 @@
-# API: steps, plots and logging
+# API: steps, plots, logging and reports
 
-Functions for the named steps of the processors and their debugging, for saving plots, and
-for the log files.
+Functions for the named steps of the processors and their debugging, for saving plots, for
+the log files, and for the reports of the processors.
 
 ## Steps and failures
 
@@ -36,4 +36,14 @@ JuLeAna.process_log_file
 JuLeAna.parse_log_level
 UnderscoreSafeLogger
 JuLeAna.escape_log_underscores
+```
+
+## Reports
+
+```@docs
+master_status
+JuLeAna.process_skipped
+detector_status
+JuLeAna.timing_table
+JuLeAna.write_report
 ```

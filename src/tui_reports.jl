@@ -280,12 +280,15 @@ if the read failed. The value of an `:index` request is the rows of
 `report_index(ctrl)` or the entries of `report_overview(ctrl)` (see [`report_index`](@ref)), that of a `:failures`
 request the rows `(; process, period, run, failures)` of its reports, and that of an `:open`
 request the viewer of the file's text, or `nothing` if there is no such file. The answer to an
-`:index` request also has the field `history`, the path of the processing history file
-([`JuLeAna.history_path`](@ref)) or `nothing` if the file does not exist. The viewer is built here,
+`:index` request also has the fields `history`, the path of the processing history file
+([`JuLeAna.history_path`](@ref)) or `nothing` if the file does not exist, and `timings`, a `Dict`
+from the key `(name, level, category)` of a group of reports to the latest item times of its
+processor in the history (see [`JuLeAna.read_history`](@ref)). The viewer is built here,
 so that converting the text does not hold up the interface.
 """
 function read_reports(ctrl::DataflowController, request)
     history = nothing
+    timings = Dict{Any,Any}()
     value = try
         if request.kind === :index
             rows = request.source === :run ? report_index(ctrl) : report_overview(ctrl)
@@ -293,6 +296,9 @@ function read_reports(ctrl::DataflowController, request)
             isnothing(session) && throw(ArgumentError("history_path: no session is loaded"))
             path = history_path(session.l200)
             history = isfile(path) ? path : nothing
+            for entry in read_history(path), t in entry.timings
+                timings[(report_name(t.process), t.level, string(t.category))] = t
+            end
             rows
         elseif request.kind === :failures
             [(; process = request.group, period, run, read_report(path).failures) for (period, run, path) in request.reports]
@@ -302,7 +308,7 @@ function read_reports(ctrl::DataflowController, request)
     catch e
         return (; request, error = first(split(sprint(showerror, e), '\n')))
     end
-    request.kind === :index && return (; request, value, history)
+    request.kind === :index && return (; request, value, history, timings)
     return (; request, value)
 end
 
@@ -335,7 +341,8 @@ function reports_result!(page::ReportsPage, answer)
         page.error = failed ? answer.error : nothing
         failed && return nothing
         page.history = answer.history
-        page.groups = request.source === :run ? run_groups(answer.value) : overview_groups(answer.value)
+        groups = request.source === :run ? run_groups(answer.value) : overview_groups(answer.value)
+        page.groups = Any[merge(g, (; timing = get(answer.timings, g.key, nothing))) for g in groups]
         page.loaded = true
         request_failures!(page)
     elseif request.kind === :failures
@@ -526,11 +533,18 @@ function report_group_spans(g, name_width, unfolded, with_missing)
              ("ok $(c.ok)", Tachikoma.tstyle(REPORT_COLORS.ok)), ("  warn $(c.warning)", Tachikoma.tstyle(REPORT_COLORS.warning)),
              ("  fail $(c.failed)", Tachikoma.tstyle(REPORT_COLORS.failed))]
     with_missing && push!(spans, ("  miss $(c.missing)", Tachikoma.tstyle(REPORT_COLORS.missing)))
+    isnothing(g.timing) || push!(spans, ("  " * item_time_text(g.timing), Tachikoma.tstyle(:text_dim)))
     return spans
 end
 
 function report_counts_text(c, with_missing)
     return "ok $(c.ok)  warn $(c.warning)  fail $(c.failed)" * (with_missing ? "  miss $(c.missing)" : "")
+end
+
+# Item times of a processor, an entry of the `timings` of `read_history`.
+function item_time_text(t)
+    return isnothing(t.p99) ? "min/med/95%/max $(t.min)/$(t.median)/$(t.p95)/$(t.max) s" :
+           "min/med/95%/99%/max $(t.min)/$(t.median)/$(t.p95)/$(t.p99)/$(t.max) s"
 end
 
 function history_spans()
@@ -549,10 +563,11 @@ function report_spans(r, label_width)
     return spans
 end
 
-# Widths of the name and the counts of the group rows.
+# Widths of the name, the counts and the item times of the group rows.
 function report_columns(page::ReportsPage)
     return (; name = maximum(textwidth(g.name) for g in page.groups),
-            counts = maximum(textwidth(report_counts_text(g.counts, page.source === :run)) for g in page.groups))
+            counts = maximum(textwidth(report_counts_text(g.counts, page.source === :run)) for g in page.groups),
+            timing = maximum((2 + textwidth(item_time_text(g.timing)) for g in page.groups if !isnothing(g.timing)); init = 0))
 end
 
 function render_report_list(page::ReportsPage, area, buf)
@@ -671,7 +686,9 @@ end
 
 Draw the Reports page into `area` of `buf`. The left block, about 45% of the width, lists the
 reports grouped by processor: a group row shows the fold arrow, the name, the level, the
-category and the number of reports that are ok, have warnings, failed and (for the current run) are missing; the
+category, the number of reports that are ok, have warnings, failed and (for the current run) are missing
+and the minimum, median, 95th percentile and maximum item time in seconds of the processor's latest
+processing run in the history that timed its items; the
 rows of an unfolded group show the period and run, the state and the processing date in UTC. The
 right block shows the failures of the processor under the cursor, per detector the runs it
 failed in and its distinct errors. The block with the focus has a heavy border. While a read is
@@ -685,12 +702,13 @@ function render_reports(page::ReportsPage, area::Tachikoma.Rect, buf::Tachikoma.
         render_viewer(page, area, buf)
         return nothing
     end
-    # 45% of the width, more (up to 60%) if the group rows need it
+    # 45% of the width, more (up to 60%) if the group rows need it; the item times are cut
+    # where the rows do not fit
     left_width = round(Int, 0.45 * area.width)
     if page.loaded && isnothing(page.error) && !isempty(page.groups)
         cols = report_columns(page)
-        left_width = clamp(2 + 2 + cols.name + 1 + REPORT_LEVEL_WIDTH + 2 + REPORT_CATEGORY_WIDTH + 2 + cols.counts + 2, left_width,
-                           round(Int, 0.6 * area.width))
+        left_width = clamp(2 + 2 + cols.name + 1 + REPORT_LEVEL_WIDTH + 2 + REPORT_CATEGORY_WIDTH + 2 + cols.counts + cols.timing + 2,
+                           left_width, round(Int, 0.6 * area.width))
     end
     render_report_list(page, Tachikoma.Rect(area.x, area.y, left_width, area.height), buf)
     render_failures(page, Tachikoma.Rect(area.x + left_width, area.y, area.width - left_width, area.height), buf)

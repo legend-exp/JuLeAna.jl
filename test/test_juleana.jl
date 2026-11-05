@@ -134,6 +134,37 @@ end
         @test master_status([det(:on) => row(JuLeAna.process_skipped), det(:ac) => row(process_succeeded)]) == process_succeeded
         @test master_status(nothing, [det(:on) => row(process_succeeded)]) == process_succeeded
         @test master_status(Pair[]) == process_failed
+
+        # per-processor report_status
+        rules = Dict(:on => Dict(:warning => :success, :failure => :warning), :ac => Dict(:warning => :failure, :failure => :failure),
+                     :off => Dict(:warning => :success, :failure => :success))
+        @test master_status([det(:on) => row(process_warning)]; report_status = rules) == process_succeeded
+        @test master_status([det(:on) => row(process_failed)]; report_status = rules) == process_warning
+        @test master_status([det(:ac) => row(process_warning)]; report_status = rules) == process_failed
+        @test master_status([det(:off) => row(process_failed)]; report_status = rules) == process_succeeded
+        @test master_status([det(:off) => row(process_failed), det(:on) => row(process_failed)]; report_status = rules) == process_warning
+        # a usability other than on, ac and off counts as on
+        @test master_status([det(:unknown) => row(process_warning)]) == process_failed
+    end
+
+    @testset "timing_table" begin
+        function item_timer(seconds)
+            to = JuLeAna.TimerOutputs.TimerOutput()
+            JuLeAna.TimerOutputs.@timeit to "Startup" nothing
+            JuLeAna.TimerOutputs.@timeit to "DSP" begin
+                JuLeAna.TimerOutputs.@timeit to "V00048B" sleep(seconds)
+                JuLeAna.TimerOutputs.@timeit to "V00050A" nothing
+            end
+            return to
+        end
+        # the failed item has no timer
+        tbl = JuLeAna.timing_table([1 => (timer = item_timer(0.2), processed = true), 2 => (timer = item_timer(0.001), processed = true),
+                                    3 => (processed = false,)])
+        @test tbl.Section == ["DSP", "DSP / V00048B", "DSP / V00050A", "Startup"]
+        @test tbl.Calls == [2, 2, 2, 2]
+        @test tbl[2][Symbol("Time (s)")] >= 0.2
+        @test tbl[2][Symbol("Average (s)")] ≈ tbl[2][Symbol("Time (s)")] / 2 atol = 0.001
+        @test JuLeAna.timing_table([3 => (processed = false,)]).Section == ["No timing"]
     end
 
     fk = FileKey("l200-p03-r000-cal-20230311T235840Z")
@@ -158,6 +189,28 @@ end
         @test r.X == "-"
 
         @test_throws "needs `detector` and `usability` fields" failure_log(DetLog, (channel = 1,), "boom")
+
+        PsdLog = NamedTuple{(:Detector, :usability, :psd_usability, :Partition, :Status, :X, :Error)}
+        r = failure_log(PsdLog, (; det..., psd_usability = :off, partition = :p1), "boom")
+        @test keys(r) == fieldnames(PsdLog)
+        @test (r.Partition, r.Status, r.X, r.Error) == (:p1, ProcessStatus(0), "-", "boom")
+        @test r.psd_usability == JuLeAna.detector_status(:off)
+        @test_throws "psd_usability" failure_log(PsdLog, (; det..., partition = :p1), "boom")
+    end
+
+    @testset "report columns of processors" begin
+        # The report rows of the processors for HPGe detectors list psd_usability right after usability, those of the other systems do not.
+        dir = joinpath(pkgdir(JuLeAna), "src", "processors")
+        n_geds = 0
+        for file in filter(endswith(".jl"), readdir(dir; join = true))
+            code = read(file, String)
+            for m in eachmatch(r"NamedTuple\{\(:Detector, :usability(, :psd_usability)?,", code)
+                geds = occursin("system = :geds", code)
+                @test (m.captures[1] !== nothing) == geds
+                n_geds += geds
+            end
+        end
+        @test n_geds > 0
     end
 
     @testset "parallel" begin
@@ -171,6 +224,12 @@ end
         @test only(failed).second.log == FkLog((fk, ProcessStatus(0), "-", "-", "ErrorException(\"item failed\")"))
 
         @test_throws "no failure_log method for items of type Int64" parallel(identity, [1, 2], FkLog)
+
+        # a step of `run_processing` that hands over another number of items than counted at the start
+        one_item() = parallel(k -> (processed = true, log = FkLog((k, ProcessStatus(1), "a", "b", ""))), [fk], FkLog)
+        @test_logs (:debug, "parallel: 1 items, 2 counted when the processing run started") min_level = Logging.Debug match_mode = :any with(one_item,
+                                                                                                                                             JuLeAna.STEP_ITEMS =>
+                                                                                                                                                 2)
 
         viaDo = parallel([fk], FkLog; process_name = "do-block") do k
             (processed = true, log = FkLog((k, ProcessStatus(1), "a", "b", "")))
@@ -209,10 +268,9 @@ end
         e = only(JuLeAna.progress(store).steps)
         @test (e.done, e.failed, e.notrun) == (1, 0, 1)
 
-        # Without workers the item runs on the main process, which onworker does not terminate.
-        slow = parallel(k -> (sleep(5); (processed = true,)), [fk], FkLog; timeout = 0.2)
-        @test !only(slow).second.processed
-        @test only(slow).second.log.Status == ProcessStatus(0)
+        # Without workers the item runs on the main process, which a timeout never ends.
+        slow = parallel(k -> (sleep(1); (processed = true,)), [fk], FkLog; timeout = 0.2)
+        @test only(slow).second.processed
 
         finished = Threads.Atomic{Int}(0)
         staggered = [Threads.@spawn sleep(0.05 * k) for k in 1:4]

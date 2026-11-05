@@ -48,8 +48,8 @@ function p_process_aoe_calibration_cut_cal(processing_config, l200::LegendData, 
     filekey = first(rinfo).cal.startkey
     @info "Found filekey $filekey"
 
-    chinfo_unfolded = channelinfo(l200, period, :cal; system = :geds, only_processable = true, explode_partitions = true) |>
-                      filterby(@pf $low_aoe_status in [:valid, :present])
+    chinfo_unfolded = channelinfo(l200, period, :cal; system = :geds, explode_partitions = true) |>
+                      detector_filter(processing_config, :p_process_aoe_calibration_cut_cal)
     @info "Loaded channel info with $(length(chinfo_unfolded)) detector-partitions"
 
     if reprocess
@@ -59,9 +59,10 @@ function p_process_aoe_calibration_cut_cal(processing_config, l200::LegendData, 
     end
 
     # create log line Tuple
-    log_nt_cal = NamedTuple{(:Detector, :usability, :Partition, :Status, Symbol("Filter Type"), Symbol("N Compt. Bands"),
+    log_nt_cal = NamedTuple{(:Detector, :usability, :psd_usability, :Partition, :Status, Symbol("Filter Type"), Symbol("N Compt. Bands"),
                              Symbol("Median norm. Resid."), Symbol("StD norm. Resid."), Symbol("FCT"), :CalError)}
-    log_nt_cut = NamedTuple{(:Detector, :usability, :Partition, :Status, Symbol("Classifier Type"), Symbol("Cut Value"), Symbol("SEP SF"),
+    log_nt_cut = NamedTuple{(:Detector, :usability, :psd_usability, :Partition, :Status, Symbol("Classifier Type"), Symbol("Cut Value"),
+                             Symbol("SEP SF"),
                              Symbol("FEP SF"), :CutError)}
 
     # get worker pool
@@ -116,14 +117,16 @@ function p_process_aoe_calibration_cut_cal(processing_config, l200::LegendData, 
         if (only_first_period && period != first(partinfo_det.period))
             @info "Only first period in partition $part for $period in $det ($ch)"
             for aoe_type in aoe_types
-                log_info = log_nt_cal((det, detector_status(chinfo_det.usability), part, process_skipped, aoe_type, fill("-", 4)...,
+                log_info = log_nt_cal((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                       process_skipped, aoe_type, fill("-", 4)...,
                                        "Only first periods --> skipped."))
                 # add results to dict
                 log_info_dict[aoe_type] = log_info
                 processed_dict[aoe_type] = false
             end
             for aoe_classifier in aoe_classifiers
-                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), part, process_skipped, aoe_classifier, fill("-", 3)...,
+                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                       process_skipped, aoe_classifier, fill("-", 3)...,
                                        "Only first periods --> skipped."))
                 # add results to dict
                 log_info_dict[aoe_classifier] = log_info
@@ -137,10 +140,13 @@ function p_process_aoe_calibration_cut_cal(processing_config, l200::LegendData, 
             for aoe_type in aoe_types
                 if haskey(pars_db_det[det], aoe_type)
                     pars_db_det_aoe_type = pars_db_det[det][aoe_type]
-                    log_info = log_nt_cal((det, detector_status(chinfo_det.usability), part, ProcessStatus(1), aoe_type,
-                                           length(pars_db_det_aoe_type.µ_compton.µ),
-                                           mean(pars_db_det_aoe_type.µ_compton.gof.residuals_norm),
-                                           mean(pars_db_det_aoe_type.σ_compton.gof.residuals_norm),
+                    # the Compton band fit is stored in `correction`, see `result` of a processed A/E type
+                    correction = pars_db_det_aoe_type.correction
+                    log_info = log_nt_cal((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                           ProcessStatus(1), aoe_type,
+                                           length(correction.compton_bands.e),
+                                           get(correction.gof, :median_residuals, NaN),
+                                           get(correction.gof, :std_residuals, NaN),
                                            get(pars_db_det_aoe_type.ctc, :fct, NaN), "Already processed --> skipped."))
                     processed_dict[aoe_type] = false
                     log_info_dict[aoe_type] = log_info
@@ -148,7 +154,8 @@ function p_process_aoe_calibration_cut_cal(processing_config, l200::LegendData, 
             end
             for aoe_classifier in aoe_classifiers
                 if haskey(pars_db_det[det], aoe_classifier)
-                    log_info = log_nt_cut((det, detector_status(chinfo_det.usability), part, ProcessStatus(1), aoe_classifier,
+                    log_info = log_nt_cut((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                           ProcessStatus(1), aoe_classifier,
                                            pars_db_det[det][aoe_classifier].lowcut, pars_db_det[det][aoe_classifier].peaks.ds[:Tl208SEP].sf,
                                            pars_db_det[det][aoe_classifier].peaks.ds[:Tl208FEP].sf, "Already processed --> skipped."))
                     # add results to dict
@@ -162,26 +169,8 @@ function p_process_aoe_calibration_cut_cal(processing_config, l200::LegendData, 
         e_cal, hit_cal, e_unit, ts = @process_step "hit data loading" begin
             if !all([haskey(processed_dict, aoe_type) for aoe_type in aoe_types]) ||
                !all([haskey(processed_dict, aoe_classifier) for aoe_classifier in aoe_classifiers])
-                e_type_uncal = Symbol(first(split(string(e_type), "_cal")))
-                cal_funcs = [ljl_propfunc(l200.par.rpars.ecal[pinfo.period, pinfo.run][det][e_type_uncal].cal.func)
-                             for pinfo in partinfo_det]
-                # read only the jldsp columns that the energy calibration, the A/E expressions and
-                # the drift time expression use; the calibrated energy `e_type` is computed here
-                dsp_pfs = vcat(cal_funcs, [ljl_propfunc(f) for f in values(aoe_funcs)],
-                               aoe_config_det.apply_ctc ? [ljl_propfunc(qdrift_expression)] : [])
-                dsp_columns = Tuple(setdiff(unique(vcat(:timestamp,
-                                                        [first(typeof(path).parameters[1])
-                                                         for pf in dsp_pfs for path in PropertyFunctions.input_property_paths(pf)])),
-                                            (e_type,)))
-                @debug "Reading jldsp columns $(dsp_columns)"
-                hit_cal = fast_flatten([begin
-                                            @debug "Reading from $(pinfo.period)-$(pinfo.run)"
-                                            qc_mask = read_ldata(@pf($is_single_pulse && !$is_pulser), l200, :jlqcs, pinfo.cal.startkey,
-                                                                 det)
-                                            dsp = Table(read_ldata(dsp_columns, l200, :jldsp, :cal, pinfo.period, pinfo.run, det))[qc_mask]
-                                            Table(merge(columns(dsp), NamedTuple{(e_type,)}((cal_func.(dsp),))))
-                                        end
-                                        for (pinfo, cal_func) in zip(partinfo_det, cal_funcs)])
+                hit_cal = read_hit_cal(l200, det, zip(partinfo_det.period, partinfo_det.run), [e_type],
+                                       vcat(collect(values(aoe_funcs)), aoe_config_det.apply_ctc ? [qdrift_expression] : []))
                 e_cal = collect(getproperty(hit_cal, e_type))
                 e_unit = unit(eltype(e_cal))
 
@@ -214,7 +203,6 @@ function p_process_aoe_calibration_cut_cal(processing_config, l200::LegendData, 
                     aoe ./= cuts_aoe.max
                     aoe, "$(aoe_funcs[aoe_type]) / $(cuts_aoe.max)"
                 end
-                GC.gc()
 
                 @debug_plot @process_step "$aoe_type uncalibrated A/E plot" begin
                     h_aoe_uncal = fit(Histogram, (ustrip.(e_unit, e_cal[isfinite.(aoe)]), aoe[isfinite.(aoe)]), (0:0.5:3000, 0.1:5e-3:1.8))
@@ -263,7 +251,6 @@ function p_process_aoe_calibration_cut_cal(processing_config, l200::LegendData, 
                                                                  uncertainty = true)
                     result_bands, report_bands, peakhists_bands
                 end
-                GC.gc()
 
                 qc_compton_bands = findall(band -> band in keys(result_fit) &&
                                                    result_fit[band].gof.converged &&
@@ -334,7 +321,8 @@ function p_process_aoe_calibration_cut_cal(processing_config, l200::LegendData, 
                 if aoe_config_det.apply_ctc
                     result_aoe_ctc, report_aoe_ctc = @process_step "$aoe_type charge trapping correction" begin
                         qdrift_e = ljl_propfunc(qdrift_expression).(hit_cal)
-                        LegendSpecFits.ctc_aoe(aoe_corr, e_cal, qdrift_e, compton_bands_qc, aoe_expression = result_correction.func,
+                        LegendSpecFits.ctc_aoe(aoe_corr, e_cal, qdrift_e, compton_bands_qc; compton_window,
+                                               aoe_expression = result_correction.func,
                                                qdrift_expression = qdrift_expression)
                     end
 
@@ -371,7 +359,8 @@ function p_process_aoe_calibration_cut_cal(processing_config, l200::LegendData, 
                     save_plot(p, l200, part, filekey_det, det, Symbol("aoe_normalized_$aoe_type"))
                 end
 
-                log_info = log_nt_cal((det, detector_status(chinfo_det.usability), part, ProcessStatus(1), aoe_type,
+                log_info = log_nt_cal((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                       ProcessStatus(1), aoe_type,
                                        length(compton_bands_qc), get(result_correction.gof, :median_residuals, NaN),
                                        get(result_correction.gof, :std_residuals, NaN), get(result_aoe_ctc, :fct, NaN), "-"))
 
@@ -383,11 +372,10 @@ function p_process_aoe_calibration_cut_cal(processing_config, l200::LegendData, 
                 log_info_dict[aoe_type] = log_info
                 processed_dict[aoe_type] = true
 
-                # free memory
-                GC.gc()
             catch e
                 e isa ProcessStepError || @error "Error in $aoe_type calibration: $(truncate_error(e))"
-                log_info = log_nt_cal((det, detector_status(chinfo_det.usability), part, ProcessStatus(0), aoe_type, fill("-", 4)...,
+                log_info = log_nt_cal((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                       ProcessStatus(0), aoe_type, fill("-", 4)...,
                                        truncate_error(e)))
                 # add results to dict
                 log_info_dict[aoe_type] = log_info
@@ -506,7 +494,8 @@ function p_process_aoe_calibration_cut_cal(processing_config, l200::LegendData, 
                 result = merge(result_cut,
                                (peaks = (low = result_peaks_low, ds = result_peaks_ds), qbb = (low = qbb_result_low, ds = qbb_result_ds)))
 
-                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), part, ProcessStatus(1), aoe_classifier,
+                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                       ProcessStatus(1), aoe_classifier,
                                        result_cut.lowcut, result.peaks.ds[:Tl208SEP].sf, result.peaks.ds[:Tl208FEP].sf, "-"))
 
                 # add results to dict
@@ -514,10 +503,10 @@ function p_process_aoe_calibration_cut_cal(processing_config, l200::LegendData, 
                 log_info_dict[aoe_classifier] = log_info
                 processed_dict[aoe_classifier] = true
 
-                GC.gc()
             catch e
                 e isa ProcessStepError || @error "Error in $aoe_classifier cut generation: $(truncate_error(e))"
-                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), part, ProcessStatus(0), aoe_classifier, "-", "-", "-",
+                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                       ProcessStatus(0), aoe_classifier, "-", "-", "-",
                                        truncate_error(e)))
 
                 # add results to dict
@@ -555,7 +544,8 @@ function p_process_aoe_calibration_cut_cal(processing_config, l200::LegendData, 
 
     report = lreport()
     lreport!(report, "# Main Log")
-    lreport!(report, StructArray(var"Processor Status" = [master_status(result_aoe)]))
+    lreport!(report,
+             StructArray(var"Processor Status" = [master_status(processing_config, :p_process_aoe_calibration_cut_cal, result_aoe)]))
     lreport!(report, "Date of processing: $(utc_timestamp())")
     lreport!(report, "Total Processing time: $(canonicalize(now() - start_time))")
     lreport!(report, aoe_partition_log_text)

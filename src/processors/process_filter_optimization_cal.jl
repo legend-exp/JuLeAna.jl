@@ -32,7 +32,7 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
     filekey = start_filekey(l200, (period, run, :cal))
     @info "Found filekey $filekey"
 
-    chinfo = channelinfo(l200, filekey; system = :geds, only_processable = true)
+    chinfo = channelinfo(l200, filekey; system = :geds) |> detector_filter(processing_config, :process_filter_optimization_cal)
     @info "Loaded channel info with $(length(chinfo)) detectors"
 
     dsp_config_pd = dataprod_config(l200).dsp(filekey)
@@ -58,7 +58,8 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
     f_evaluate_qc = load_qc_evaluator(l200, filekey)
 
     # create log line Tuple
-    log_nt = NamedTuple{(:Detector, :usability, :Status, Symbol("Filter Type"), Symbol("Rise Time"), Symbol("Flat-Top Time"),
+    log_nt = NamedTuple{(:Detector, :usability, :psd_usability, :Status, Symbol("Filter Type"), Symbol("Rise Time"),
+                         Symbol("Flat-Top Time"),
                          Symbol("Min. FWHM"), :Error)}
 
     # get worker pool
@@ -89,7 +90,8 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
             for filter_type in e_filter
                 if haskey(pars_db[det], filter_type)
                     @debug "Filter $filter_type already processed, skip"
-                    log_info = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(1), filter_type,
+                    log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability),
+                                       ProcessStatus(1), filter_type,
                                        pars_db[det][filter_type].rt, pars_db[det][filter_type].ft, pars_db[det][filter_type].min_fwhm,
                                        "Already processed --> skipped."))
                     # add results to dict
@@ -151,8 +153,6 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
             dsp_qdrift_flt_optimization(wvfs_det_wdw, blmean_wdw, dsp_config_det, pars_tau[det].τ)
         end
 
-        GC.gc()
-
         @debug_progress "Computing $det ..." for filter_type in e_filter
             if haskey(processed_dict, filter_type)
                 continue
@@ -175,7 +175,6 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
                                                                                                                             ft = optimization_config_flt.ft_fixed)
                 end
                 yield()
-                GC.gc()
                 result_rt, report_rt = @process_step "$filter_type rise time extraction" begin
                     fit_enc_sigmas(enc_grid, e_grid_rt, optimization_config_flt.min_enc, optimization_config_flt.max_enc,
                                    optimization_config_flt.nbins_enc_sigmas, optimization_config_flt.rel_cut_fit_enc_sigmas)
@@ -191,7 +190,6 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
 
                 # optimize FT
                 yield()
-                GC.gc()
                 e_grid = @process_step "$filter_type FT DSP for FEP" begin
                     @debug "Generate $filter_type FT energy grid"
                     legend_dsp_function("dsp_$(filter_type)_ft_optimization", "dsp.flt_optimization.e_filter.$filter_type")(wvfs_det_pre,
@@ -200,7 +198,6 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
                                                                                                                             mvalue(result_rt.rt))
                 end
                 yield()
-                GC.gc()
                 result_ft, report_ft = @process_step "$filter_type flat-top time extraction" begin
                     fit_fwhm_ft(e_grid, e_grid_ft, qdrift, result_rt.rt, optimization_config_flt.min_e_fep,
                                 optimization_config_flt.max_e_fep, optimization_config_flt.rel_cut_fit_e_fep,
@@ -217,7 +214,8 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
                     save_plot(p, l200, filekey, det, Symbol("fwhm_ft_scan_$(filter_type)"))
                 end
 
-                log_info = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(1), filter_type, result_rt.rt, result_ft.ft,
+                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), ProcessStatus(1),
+                                   filter_type, result_rt.rt, result_ft.ft,
                                    result_ft.min_fwhm, "-"))
 
                 # add results to dict
@@ -226,11 +224,11 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
                 processed_dict[filter_type] = true
 
                 # call garbage collector
-                GC.gc()
                 yield()
             catch e
                 e isa ProcessStepError || @error "Filter: $filter_type filter optimization: $(truncate_error(e))"
-                log_info = log_nt((det, detector_status(chinfo_det.usability), ProcessStatus(0), filter_type, "-", "-", "-",
+                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), ProcessStatus(0),
+                                   filter_type, "-", "-", "-",
                                    "$(truncate_error(e))"))
                 # add results to dict
                 log_info_dict[filter_type] = log_info
@@ -257,7 +255,8 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
 
     report = lreport()
     lreport!(report, "# Main Log")
-    lreport!(report, StructArray(var"Processor Status" = [master_status(result_flt)]))
+    lreport!(report,
+             StructArray(var"Processor Status" = [master_status(processing_config, :process_filter_optimization_cal, result_flt)]))
     lreport!(report, "Date of processing: $(utc_timestamp())")
     lreport!(report, "Total Processing time: $(canonicalize(now() - start_time))")
     lreport!(report, filter_optimization_log_text)

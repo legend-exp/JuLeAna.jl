@@ -46,8 +46,8 @@ function p_process_lq_calibration_cut_cal(processing_config, l200::LegendData, p
     filekey = first(rinfo).cal.startkey
     @info "Found filekey $filekey"
 
-    chinfo_unfolded = channelinfo(l200, period, :cal; system = :geds, only_processable = true, explode_partitions = true) |>
-                      filterby(@pf $lq_status in [:valid, :present])
+    chinfo_unfolded = channelinfo(l200, period, :cal; system = :geds, explode_partitions = true) |>
+                      detector_filter(processing_config, :p_process_lq_calibration_cut_cal)
     @info "Loaded channel info with $(length(chinfo_unfolded)) detector-partitions"
 
     if reprocess
@@ -57,9 +57,10 @@ function p_process_lq_calibration_cut_cal(processing_config, l200::LegendData, p
     end
 
     # create log line Tuple
-    log_nt_cal = NamedTuple{(:Detector, :usability, :Partition, :Status, Symbol("Classifier Type"), Symbol("DT Corr. Type"),
+    log_nt_cal = NamedTuple{(:Detector, :usability, :psd_usability, :Partition, :Status, Symbol("Classifier Type"), Symbol("DT Corr. Type"),
                              Symbol("Correction Slope"), :CalError)}
-    log_nt_cut = NamedTuple{(:Detector, :usability, :Partition, :Status, Symbol("Classifier Type"), Symbol("High Cut"), Symbol("DEP SF"),
+    log_nt_cut = NamedTuple{(:Detector, :usability, :psd_usability, :Partition, :Status, Symbol("Classifier Type"), Symbol("High Cut"),
+                             Symbol("DEP SF"),
                              Symbol("CC SF"), :CutError)}
 
     # get worker pool
@@ -138,14 +139,16 @@ function p_process_lq_calibration_cut_cal(processing_config, l200::LegendData, p
         if (only_first_period && period != first(partinfo_det.period))
             @info "Only first period in partition $part for $period in $det ($ch)"
             for lq_type in lq_types
-                log_info = log_nt_cal((det, detector_status(chinfo_det.usability), part, process_skipped, lq_type, fill("-", 2)...,
+                log_info = log_nt_cal((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                       process_skipped, lq_type, fill("-", 2)...,
                                        "Only first periods --> skipped."))
                 # add results to dict
                 log_info_dict[lq_type] = log_info
                 processed_dict[lq_type] = false
             end
             for lq_classifier in lq_classifiers
-                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), part, process_skipped, lq_classifier, fill("-", 3)...,
+                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                       process_skipped, lq_classifier, fill("-", 3)...,
                                        "Only first periods --> skipped."))
                 # add results to dict
                 log_info_dict[lq_classifier] = log_info
@@ -158,7 +161,8 @@ function p_process_lq_calibration_cut_cal(processing_config, l200::LegendData, p
             @debug "Detector $(det) already processed, check missing lq_classifiers"
             for lq_type in lq_types
                 if haskey(pars_db_det[det], lq_type)
-                    log_det = log_nt_cal((det, detector_status(chinfo_det.usability), part, ProcessStatus(1), lq_type,
+                    log_det = log_nt_cal((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                          ProcessStatus(1), lq_type,
                                           ctc_driftime_cutoff_method, pars_db_det[det][lq_type].drift_result.fit_result.par[1],
                                           "Already processed --> skipped."))
                     processed_dict[lq_type] = false
@@ -167,7 +171,8 @@ function p_process_lq_calibration_cut_cal(processing_config, l200::LegendData, p
             end
             for lq_classifier in lq_classifiers
                 if haskey(pars_db_det[det], lq_classifier)
-                    log_info = log_nt_cut((det, detector_status(chinfo_det.usability), part, ProcessStatus(1), lq_classifier,
+                    log_info = log_nt_cut((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                           ProcessStatus(1), lq_classifier,
                                            pars_db_det[det][lq_classifier].highcut, pars_db_det[det][lq_classifier].peaks[:Tl208DEP].sf,
                                            pars_db_det[det][lq_classifier].qbb.sf, "Already processed --> skipped."))
                     # add results to dict
@@ -181,16 +186,8 @@ function p_process_lq_calibration_cut_cal(processing_config, l200::LegendData, p
             @debug("Load data")
             if !all([haskey(processed_dict, lq_type) for lq_type in lq_types]) ||
                !all([haskey(processed_dict, lq_classifier) for lq_classifier in lq_classifiers])
-                hit_cal = fast_flatten([let e_type_cal=e_type, e_type=Symbol(first(split(string(e_type), "_cal")))
-
-                                            @debug "Reading from $(pinfo.period)-$(pinfo.run)"
-                                            cal_func = ljl_propfunc(l200.par.rpars.ecal[pinfo.period, pinfo.run][det][e_type].cal.func)
-                                            qc_mask = read_ldata(@pf($is_single_pulse && !$is_pulser), l200, :jlqcs, pinfo.cal.startkey,
-                                                                 det)
-                                            read_ldata(row -> merge(NamedTuple{(e_type_cal,)}((cal_func(row),)), row), l200, :jldsp, :cal,
-                                                       pinfo.period, pinfo.run, det)[qc_mask]
-                                        end
-                                        for pinfo in partinfo_det])
+                hit_cal = read_hit_cal(l200, det, zip(partinfo_det.period, partinfo_det.run), [e_type],
+                                       vcat(collect(values(lq_funcs)), [qdrift_expression]))
                 e_cal = collect(getproperty(hit_cal, e_type))
                 dep_σ = mvalue(pars_energy[det][Symbol(first(split(string(e_type), "_cal")))].fit.Tl208DEP.fwhm / (2 * sqrt(2 * log(2))))
                 hit_cal, e_cal, dep_σ
@@ -313,7 +310,8 @@ function p_process_lq_calibration_cut_cal(processing_config, l200::LegendData, p
                 end
 
                 # create log entry
-                log_info = log_nt_cal((det, detector_status(chinfo_det.usability), part, ProcessStatus(1), lq_type,
+                log_info = log_nt_cal((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                       ProcessStatus(1), lq_type,
                                        ctc_driftime_cutoff_method, drift_result.fit_result.par[1], "-"))
 
                 # add results to dict
@@ -322,12 +320,11 @@ function p_process_lq_calibration_cut_cal(processing_config, l200::LegendData, p
                 log_info_dict[lq_type] = log_info
                 processed_dict[lq_type] = true
 
-                # free memory
-                GC.gc()
             catch e
                 # a failed `@process_step` has logged its error already
                 e isa ProcessStepError || @error "$lq_type calibration failed for $det: $(truncate_error(e))"
-                log_info = log_nt_cal((det, detector_status(chinfo_det.usability), part, ProcessStatus(0), lq_type, "-", "-",
+                log_info = log_nt_cal((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                       ProcessStatus(0), lq_type, "-", "-",
                                        truncate_error(e)))
 
                 # add results to dict
@@ -411,7 +408,8 @@ function p_process_lq_calibration_cut_cal(processing_config, l200::LegendData, p
                 # save results
                 final_result = (highcut = high_cut_sigma, peaks = result_peaks, qbb = result_qbb)
 
-                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), part, ProcessStatus(1), lq_classifier,
+                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                       ProcessStatus(1), lq_classifier,
                                        final_result.highcut, final_result.peaks[:Tl208DEP].sf, final_result.qbb.sf, "-"))
 
                 # add results to dict
@@ -419,11 +417,11 @@ function p_process_lq_calibration_cut_cal(processing_config, l200::LegendData, p
                 log_info_dict[lq_classifier] = log_info
                 processed_dict[lq_classifier] = true
 
-                GC.gc()
             catch e
                 # a failed `@process_step` has logged its error already
                 e isa ProcessStepError || @error "lq cut generation of $lq_classifier failed for $det: $(truncate_error(e))"
-                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), part, ProcessStatus(0), lq_classifier, "-", "-", "-",
+                log_info = log_nt_cut((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                       ProcessStatus(0), lq_classifier, "-", "-", "-",
                                        truncate_error(e)))
 
                 # add results to dict
@@ -459,7 +457,8 @@ function p_process_lq_calibration_cut_cal(processing_config, l200::LegendData, p
 
     report = lreport()
     lreport!(report, "# Main Log")
-    lreport!(report, StructArray(var"Processor Status" = [master_status(result_lq)]))
+    lreport!(report,
+             StructArray(var"Processor Status" = [master_status(processing_config, :p_process_lq_calibration_cut_cal, result_lq)]))
     lreport!(report, "Date of processing: $(utc_timestamp())")
     lreport!(report, "Total Processing time: $(canonicalize(now() - start_time))")
     lreport!(report, lq_log_text)
