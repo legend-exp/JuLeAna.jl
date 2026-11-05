@@ -177,7 +177,7 @@ function process_dsp_aux_phy(processing_config, l200::LegendData, period::DataPe
     lreport!(report, "# Results")
     lreport!(report, create_logtbl(result_dsp_aux))
     lreport!(report, "# Filekeys")
-    lreport!(report, create_logtbl(result_filekeys))
+    lreport!(report, filekey_logtbl(l200, result_filekeys))
 
     @info "Write log report"
     write_report(get_rreportfilename(l200, filekey, :dsp_aux_phy), report)

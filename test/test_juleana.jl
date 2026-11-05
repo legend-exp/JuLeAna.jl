@@ -12,6 +12,13 @@ using Base.ScopedValues: with
 using Distributed: RemoteException, myid, remotecall_fetch
 using LegendDataManagement: FileKey, DetectorId, ProcessStatus, DataPeriod, DataRun, process_succeeded, process_warning, process_failed
 
+# Stands in for `LegendData` in `bad_filekeys`.
+struct BadKeysData
+    unprocessable::Set{FileKey}
+    removed::Set{FileKey}
+end
+JuLeAna.LegendDataManagement.bad_filekeys(data::BadKeysData; load_key::Symbol) = getfield(data, load_key)
+
 module UsingPackagesTest
 using JuLeAna
 JuLeAna.@using_packages
@@ -120,6 +127,17 @@ end
         @test occursin("color:yellow", detector_status(:ac))
         @test occursin("color:red", detector_status(:off))
         @test occursin("color:gray", detector_status(:unknown))
+    end
+
+    @testset "filekey_logtbl" begin
+        fks = FileKey.(["l200-p03-r000-phy-20230311T235840Z", "l200-p03-r000-phy-20230312T005840Z", "l200-p03-r000-phy-20230312T015840Z"])
+        Row = NamedTuple{(:Filekey, :Status, :Error)}
+        result = [fk => (processed = true, log = Row((fk, ProcessStatus(1), ""))) for fk in fks]
+        tbl = JuLeAna.filekey_logtbl(BadKeysData(Set([fks[1]]), Set(fks[1:2])), result)
+        @test propertynames(tbl) == (:Filekey, Symbol("Filekey Status"), :Status, :Error)
+        @test tbl.Filekey == fks
+        @test occursin.(["color:red\">unprocessable", "color:yellow\">removed", "color:green\">good"], tbl.var"Filekey Status") == trues(3)
+        @test propertynames(JuLeAna.filekey_logtbl(BadKeysData(Set(), Set()), Pair[])) == (:Status,)
     end
 
     @testset "master_status" begin

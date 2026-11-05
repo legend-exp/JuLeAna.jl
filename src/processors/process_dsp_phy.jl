@@ -328,7 +328,7 @@ function process_dsp_phy(processing_config, l200::LegendData, period::DataPeriod
     lreport!(report, "# Metadata")
     lreport!(report, create_metadatatbl(filekey))
     lreport!(report, "# Results")
-    lreport!(report, create_logtbl(result_dsp))
+    lreport!(report, filekey_logtbl(l200, result_dsp))
     lreport!(report, "# Total Timing")
     lreport!(report, timing_table(result_dsp))
 
