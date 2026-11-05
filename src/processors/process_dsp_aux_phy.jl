@@ -8,10 +8,11 @@ The auxiliary detectors are the channels selected by `get_aux_evt_detsel_propfun
 filekey, the raw fields listed under `raw_fields` for the DSP function of each auxiliary
 detector (`additional_detectors` in the DSP configuration) are read and processed with that
 function, and the result is extended by the auxiliary calibration property function. After all
-filekeys, each detector is summarized over the run: its number of events, a cross-check
+filekeys, each detector is summarized over the run without the filekeys in `bad_filekeys`
+(also the removed ones): its number of events, a cross-check
 histogram of the energy named in the `cal.aux_trig` condition of the event configuration with
-the trigger threshold marked, and, for DSP outputs with `e_max` and `t_max`, a 2D histogram of both with the time window
-of the `cal.aux_trig_intime` condition marked.
+the trigger threshold marked, and, for detectors with a `cal.aux_trig_intime` condition, a 2D histogram of that energy
+versus the time column of the condition (`t_max`, or `t50` for the pulser) with its time window marked.
 
 # Inputs
 - `raw` tier of the `phy` filekeys of the run listed in the runinfo, except the filekeys marked unprocessable
@@ -21,7 +22,7 @@ of the `cal.aux_trig_intime` condition marked.
 
 # Outputs
 - `jlaux` tier file for each filekey, with one table per auxiliary detector (DSP and calibrated columns)
-- plots `:dsp_aux_energy` and `:dsp_aux_energy_tmax` for each auxiliary detector (debug plot level)
+- plots `:dsp_aux_energy` and `:dsp_aux_energy_time` for each auxiliary detector (debug plot level)
 - run report `:dsp_aux_phy`, with one row per detector (status, number of events) and one row per filekey
 
 # Keywords
@@ -100,15 +101,16 @@ function process_dsp_aux_phy(processing_config, l200::LegendData, period::DataPe
         energy_type, threshold = Symbol(strip(energy_type)), parse(Float64, strip(threshold))
         # jlaux groups are LH5 structs, for which a single-column read returns the bare column.
         energy = @process_step "auxiliary energy loader" begin
-            ustrip.(read_ldata(energy_type, l200, DataTier(:jlaux), filekeys, det))
+            ustrip.(read_ldata(energy_type, l200, DataTier(:jlaux), :phy, period, run, det))
         end
         n_evts = length(energy)
+        valid = isfinite.(energy) .& (energy .> 0)
 
-        @debug_plot if !isempty(filter!(x -> isfinite(x) && x > 0, energy))
+        @debug_plot if any(valid)
             @process_step "auxiliary DSP cross-check plot" begin
-                log_min = floor(Int, log10(minimum(energy)))
-                log_max = max(log_min + 1, floor(Int, log10(max(maximum(energy), threshold))) + 1)
-                p = LegendMakie.lhist(fit(Histogram, energy, 10.0 .^ (log_min:0.05:log_max)); figsize = (700, 450),
+                log_min = floor(Int, log10(minimum(energy[valid])))
+                log_max = max(log_min + 1, floor(Int, log10(max(maximum(energy[valid]), threshold))) + 1)
+                p = LegendMakie.lhist(fit(Histogram, energy[valid], 10.0 .^ (log_min:0.05:log_max)); figsize = (700, 450),
                                       title = get_plottitle(filekey, det, "Auxiliary DSP cross-check"), xlabel = "$energy_type (ADC)",
                                       ylabel = "Counts / bin", yscale = log10, xticks = Makie.LogTicks(Makie.WilkinsonTicks(5; k_min = 3)),
                                       juleana_logo = false)
@@ -121,32 +123,27 @@ function process_dsp_aux_phy(processing_config, l200::LegendData, period::DataPe
             end
         end
 
-        # e_max and t_max exist only for some DSP functions.
-        @debug_plot if issubset((:e_max, :t_max), propertynames(read_ldata(l200, DataTier(:jlaux), first(filekeys), det)))
-            @process_step "auxiliary e_max versus t_max plot" begin
-                t_max = ustrip.(u"µs", read_ldata(:t_max, l200, DataTier(:jlaux), filekeys, det))
-                e_max = ustrip.(read_ldata(:e_max, l200, DataTier(:jlaux), filekeys, det))
-                valid = isfinite.(t_max) .& isfinite.(e_max) .& (e_max .> 0)
-                t_max, e_max = t_max[valid], e_max[valid]
-                log_min = floor(log10(minimum(e_max)))
-                log_max = max(log_min + 1, ceil(log10(maximum(e_max))))
+        # time bounds of the `cal.aux_trig_intime` condition, e.g. `e_10410 > 1000 && t50 >= 48u"µs" && t50 <= 50u"µs"`
+        intime = collect(eachmatch(r"(\w+)\s*[<>]=?\s*([\d.]+)\s*u\"([^\"]+)\"", get(evt_config_pd.aux[det].cal, :aux_trig_intime, "")))
+        @debug_plot if !isempty(intime) && any(valid)
+            @process_step "auxiliary energy versus time plot" begin
+                time_type = Symbol(first(intime)[1])
+                window = [ustrip(u"µs", parse(Float64, m[2]) * uparse(m[3])) for m in intime]
+                t = ustrip.(u"µs", read_ldata(time_type, l200, DataTier(:jlaux), :phy, period, run, det))
+                sel = valid .& isfinite.(t)
+                t, e = t[sel], energy[sel]
+                log_min = floor(log10(minimum(e)))
+                log_max = max(log_min + 1, ceil(log10(maximum(e))))
                 energy_bins = 10.0 .^ range(log_min, log_max; length = 201)
                 energy_bins[end] = nextfloat(last(energy_bins))
-                time_bins = first(fit(Histogram, t_max; nbins = 200).edges)
-                p = LegendMakie.lhist(fit(Histogram, (t_max, e_max), (time_bins, energy_bins)); figsize = (800, 500),
-                                      title = get_plottitle(filekey, det, "e_max vs. t_max"), xlabel = "t_max (µs)", ylabel = "e_max (ADC)",
-                                      yscale = log10, colorbarlabel = "Counts / bin", juleana_logo = false)
-                # time window bounds of the `cal.aux_trig_intime` condition, e.g. `t_max >= 48u"µs" && t_max <= 55u"µs"`
-                window = [ustrip(u"µs", parse(Float64, m[1]) * uparse(m[2]))
-                          for m in eachmatch(r"t_max\s*[<>]=?\s*([\d.]+)\s*u\"([^\"]+)\"",
-                                             get(evt_config_pd.aux[det].cal, :aux_trig_intime, ""))]
-                if !isempty(window)
-                    ax = Makie.current_axis()
-                    Makie.vlines!(ax, window; color = LegendMakie.BEGeOrange, linestyle = :dash, linewidth = 2,
-                                  label = "aux_trig_intime window")
-                    Makie.axislegend(ax; position = :rt)
-                end
-                save_plot(p, l200, filekey, det, :dsp_aux_energy_tmax)
+                time_bins = first(fit(Histogram, t; nbins = 200).edges)
+                p = LegendMakie.lhist(fit(Histogram, (t, e), (time_bins, energy_bins)); figsize = (800, 500),
+                                      title = get_plottitle(filekey, det, "$energy_type vs. $time_type"), xlabel = "$time_type (µs)",
+                                      ylabel = "$energy_type (ADC)", yscale = log10, colorbarlabel = "Counts / bin", juleana_logo = false)
+                ax = Makie.current_axis()
+                Makie.vlines!(ax, window; color = LegendMakie.BEGeOrange, linestyle = :dash, linewidth = 2, label = "aux_trig_intime window")
+                Makie.axislegend(ax; position = :rt)
+                save_plot(p, l200, filekey, det, :dsp_aux_energy_time)
             end
         end
 
