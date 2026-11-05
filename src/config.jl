@@ -24,7 +24,7 @@ Options (see `juleana --help` for the full text):
   `"default"` when not given.
 - `--log_path`, `-o`: log directory; `""` when not given.
 - `--theme`: name of the color theme of the interface; `nothing` when not given.
-- Flags, `false` when not given: `--no-tui`, `--new-production`, `--reprocess`, `--only_runs` (`--or`),
+- Flags, `false` when not given: `--no-tui`, `--new-production`, `--refresh-master-reports`, `--reprocess`, `--only_runs` (`--or`),
   `--only_partitions` (`--op`), `--submit_jobs`, `--ignore_config`,
   `--analysis_runs_only`.
 
@@ -72,6 +72,10 @@ function parse_commandline(args::AbstractVector{<:AbstractString})
         "--new-production", "--new_production"
         help = "open the terminal user interface on the creation of a new data production"
         dest_name = "new_production"
+        action = :store_true
+        "--refresh-master-reports", "--refresh_master_reports"
+        help = "rewrite the master reports of all processors from all reports in the jlrep tier and exit without processing"
+        dest_name = "refresh_master_reports"
         action = :store_true
         "--submit_jobs"
         help = "submit slurm jobs to the selected run mode"
