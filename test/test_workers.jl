@@ -230,43 +230,59 @@ state_of(mgr, id) = only(filter(a -> a.id == id, JuLeAna.allocations(mgr))).stat
                 4711|vipc1|RUNNING|0:0|00:05:00|
                 4711.batch|vipc1|RUNNING|0:0|00:05:00|
                 4711.extern|vipc1|RUNNING|0:0|00:05:00|
-                4711.0|vipc1|RUNNING|0:0|00:04:59|
+                4711.0|vipc1|RUNNING|0:0|00:05:00|
                 4711.1|vipc1|OUT_OF_MEMORY|0:125|00:00:03|36812K
                 4711.2|vipc2|CANCELLED by 2027|0:9|00:01:00|2.5G
                 """)
-            write(joinpath(dir, "sacct.sh"), "echo \"\$@\" >> $dir/sacct.args; cat $acct\n")
-            write(joinpath(dir, "sstat.sh"), """
-                echo "\$@" >> $dir/sstat.args
-                echo "4711.0|1048576K|2097152K"
-                echo "4711.batch|4K|8K"
+            stat = joinpath(dir, "stat.txt")
+            # as `sstat` prints it on viper, with an invalid CPU time of the `extern` step
+            write(stat, """
+                4711.extern|||213503982334-14:25:51
+                4711.batch|4K|8K|00:00:00
+                4711.0|1048576K|2097152K|00:10:00
                 """)
+            write(joinpath(dir, "sacct.sh"), "echo \"\$@\" >> $dir/sacct.args; cat $acct\n")
+            write(joinpath(dir, "sstat.sh"), "echo \"\$@\" >> $dir/sstat.args; cat $stat\n")
             mgr = JuLeAna.WorkerManager(; sacct = `bash $dir/sacct.sh`, sstat = `bash $dir/sstat.sh`)
             # a SLURM allocation whose job runs, as `update_job_ids!` leaves it
             alloc = JuLeAna.WorkerAllocation(1, :slurm, "julia-1-1", now(UTC), nothing, :running, nothing, nothing, ["4711"], String[])
             push!(mgr.allocations, alloc)
             JuLeAna.update_steps!(mgr; at = 100)
-            @test mgr.steps["4711"] == [(; id = "4711.0", node = "vipc1", state = "RUNNING", exit_code = "0:0", elapsed = "00:04:59",
-                                         rss = 2^30, max_rss = 2^31),
+            # the CPUs over the last minute only from the second query on
+            @test mgr.steps["4711"] == [(; id = "4711.0", node = "vipc1", state = "RUNNING", exit_code = "0:0", elapsed = "00:05:00",
+                                         rss = 2^30, max_rss = 2^31, cpu_load = nothing, cpu_mean = 2.0),
                                         (; id = "4711.1", node = "vipc1", state = "OUT_OF_MEMORY", exit_code = "0:125", elapsed = "00:00:03",
-                                         rss = nothing, max_rss = 36812 * 1024),
+                                         rss = nothing, max_rss = 36812 * 1024, cpu_load = nothing, cpu_mean = nothing),
                                         (; id = "4711.2", node = "vipc2", state = "CANCELLED", exit_code = "0:9", elapsed = "00:01:00",
-                                         rss = nothing, max_rss = round(Int, 2.5 * 2^30))]
+                                         rss = nothing, max_rss = round(Int, 2.5 * 2^30), cpu_load = nothing, cpu_mean = nothing)]
             @test occursin("--jobs=4711 ", read(joinpath(dir, "sacct.args"), String))
             @test occursin("--allsteps --jobs=4711 ", read(joinpath(dir, "sstat.args"), String))
             # no new query within ten seconds
             JuLeAna.update_steps!(mgr; at = 105)
             @test countlines(joinpath(dir, "sacct.args")) == 1
+            write(acct, "4711.0|vipc1|RUNNING|0:0|00:05:30|\n")
+            write(stat, "4711.0|1048576K|2097152K|00:10:45\n")
+            JuLeAna.update_steps!(mgr; at = 130)
+            @test only(mgr.steps["4711"]).cpu_load ≈ 1.5 && only(mgr.steps["4711"]).cpu_mean ≈ 645 / 330
+            # since the query at 130, the oldest of the last minute
+            write(stat, "4711.0|1048576K|2097152K|00:11:30\n")
+            JuLeAna.update_steps!(mgr; at = 175)
+            @test only(mgr.steps["4711"]).cpu_load ≈ 1.0
             # after the end of the allocation only `sacct`, until no step runs any more
             alloc.state = :ended
-            JuLeAna.update_steps!(mgr; at = 120)
-            @test countlines(joinpath(dir, "sacct.args")) == 2 && countlines(joinpath(dir, "sstat.args")) == 1
+            JuLeAna.update_steps!(mgr; at = 190)
+            @test countlines(joinpath(dir, "sacct.args")) == 4 && countlines(joinpath(dir, "sstat.args")) == 3
+            @test only(mgr.steps["4711"]).cpu_load === nothing && only(mgr.steps["4711"]).cpu_mean === nothing && isempty(mgr.cpu_samples)
             write(acct, "4711.0|vipc1|COMPLETED|0:0|00:05:30|3G\n")
-            JuLeAna.update_steps!(mgr; at = 140)
+            JuLeAna.update_steps!(mgr; at = 210)
             @test only(mgr.steps["4711"]).state == "COMPLETED" && only(mgr.steps["4711"]).max_rss == 3 * 2^30
-            JuLeAna.update_steps!(mgr; at = 160)
-            @test countlines(joinpath(dir, "sacct.args")) == 3
+            JuLeAna.update_steps!(mgr; at = 230)
+            @test countlines(joinpath(dir, "sacct.args")) == 5
             @test JuLeAna.slurm_bytes("12") == 12 && JuLeAna.slurm_bytes("") === nothing
             @test_throws "unexpected memory size \"12Q\"" JuLeAna.slurm_bytes("12Q")
+            @test JuLeAna.slurm_seconds("02:18.007") ≈ 138.007 && JuLeAna.slurm_seconds("01:02:03") == 3723
+            @test JuLeAna.slurm_seconds("1-01:02:03") == 90123 && JuLeAna.slurm_seconds("") === nothing
+            @test_throws "unexpected duration \"INVALID\"" JuLeAna.slurm_seconds("INVALID")
         end
 
         @testset "worker attributes" begin

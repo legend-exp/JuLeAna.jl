@@ -205,11 +205,12 @@ SLURM jobs that carry the job name of the allocation. Quitting `juleana` cancels
 allocations.
 
 The list of workers shows the host of each worker and, for SLURM workers, the memory of its
-job step and the peak memory in GB; the title of the output of the selected worker shows
+job step and the peak memory in GB, and the CPUs the step used over the last minute and, in
+parentheses, over its whole run; the title of the output of the selected worker shows
 its attributes (job step, threads, CPUs, the memory it may use, GPUs). SLURM measures the
 memory every few seconds, so a short peak can be missing. `s` switches the right column to
 the SLURM view: the output of `squeue` and `sinfo -t idle`, then the running and pending job
-steps of the allocations with node, state, exit code, run time and memory.
+steps of the allocations with node, state, exit code, run time, memory and CPUs.
 
 Idle allocations are cancelled after `idle_timeout_minutes` of the
 [config](@ref Configuration) (default 20, `0` disables) without processing. The status panel under the tabs

@@ -148,14 +148,25 @@ A SLURM job step of a worker allocation as `sacct` and `sstat` report it (see
 - `elapsed::String`: the run time as `sacct` prints it;
 - `rss`: the resident memory in bytes at the last sample, `nothing` once the step ended;
 - `max_rss`: the peak of the resident memory in bytes, `nothing` if not reported. SLURM
-  samples the memory every few seconds, so a short peak can be missing.
+  samples the memory every few seconds, so a short peak can be missing;
+- `cpu_load`: the CPUs the step used over the last minute, its CPU time since the oldest query
+  of the last minute divided by the time since then; `nothing` at its first query and once the
+  step ended;
+- `cpu_mean`: the CPUs the step used over its whole run, its CPU time divided by its run time;
+  `nothing` once the step ended.
+
+The CPU time is the `AveCPU` of `sstat`, the CPU time of the step's task, which is all of the
+step's CPU time for a worker step with its one task.
 """
 const StepInfo = @NamedTuple{id::String, node::String, state::String, exit_code::String, elapsed::String, rss::Union{Nothing,Int},
-                             max_rss::Union{Nothing,Int}}
+                             max_rss::Union{Nothing,Int}, cpu_load::Union{Nothing,Float64}, cpu_mean::Union{Nothing,Float64}}
 
 # Minimum time between two queries of the job steps; SLURM samples the memory of a step every
 # 10 s (viper) to 30 s (raven).
 const STEPS_READ_SECONDS = 10
+
+# Time over which `StepInfo.cpu_load` measures the CPUs a step uses.
+const CPU_LOAD_SECONDS = 60
 
 """
     WorkerManager(; squeue::Cmd = `squeue`, scancel::Cmd = `scancel`, sinfo::Cmd = `sinfo`,
@@ -192,6 +203,8 @@ mutable struct WorkerManager
     # job steps of the SLURM allocations by job ID, and the `time()` of their last query
     const steps::Dict{String,Vector{StepInfo}}
     steps_read::Float64
+    # `(time(), CPU seconds)` of the running job steps at the queries of the last minute, by step ID
+    const cpu_samples::Dict{String,Vector{Tuple{Float64,Float64}}}
     config::Union{Nothing,ProcessingConfig}
     script_path::Union{Nothing,String}
     script::Union{Nothing,String}
@@ -203,7 +216,8 @@ end
 
 function WorkerManager(; squeue::Cmd = `squeue`, scancel::Cmd = `scancel`, sinfo::Cmd = `sinfo`, sacct::Cmd = `sacct`, sstat::Cmd = `sstat`)
     return WorkerManager(ReentrantLock(), squeue, scancel, sinfo, sacct, sstat, Dict{Int,Union{Nothing,Missing,WorkerAttributes}}(),
-                         WorkerAllocation[], Dict{String,Vector{StepInfo}}(), -Inf, nothing, nothing, nothing, 0, now(UTC))
+                         WorkerAllocation[], Dict{String,Vector{StepInfo}}(), -Inf, Dict{String,Vector{Tuple{Float64,Float64}}}(), nothing,
+                         nothing, nothing, 0, now(UTC))
 end
 
 """
@@ -486,6 +500,16 @@ function slurm_bytes(text::AbstractString)
     return round(Int, parse(Float64, m[1]) * SLURM_MEMORY_UNITS[m[2]])
 end
 
+# Seconds of a duration as `sacct` and `sstat` print it, such as `02:18.007`, `01:02:03` or `1-01:02:03`; `nothing`
+# for an empty field.
+function slurm_seconds(text::AbstractString)
+    isempty(text) && return nothing
+    m = match(r"^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)$", text)
+    isnothing(m) && throw(ArgumentError("slurm_seconds: unexpected duration $(repr(text))"))
+    return ((parse(Int, something(m[1], "0")) * 24 + parse(Int, something(m[2], "0"))) * 60 + parse(Int, m[3])) * 60 +
+           parse(Float64, m[4])
+end
+
 """
     JuLeAna.update_steps!(mgr::WorkerManager; at::Real = time())
 
@@ -509,20 +533,33 @@ function update_steps!(mgr::WorkerManager; at::Real = time())
                 String)
     # `sstat` fails for a job without running steps
     stat = isempty(running) ? "" :
-           read(pipeline(ignorestatus(`$(mgr.sstat) --noheader --parsable2 --allsteps --jobs=$(join(running, ",")) --format=JobID,AveRSS,MaxRSS`);
+           read(pipeline(ignorestatus(`$(mgr.sstat) --noheader --parsable2 --allsteps --jobs=$(join(running, ",")) --format=JobID,AveRSS,MaxRSS,AveCPU`);
                          stderr = devnull), String)
-    live = Dict(String(f[1]) => (slurm_bytes(f[2]), slurm_bytes(f[3])) for f in split.(eachline(IOBuffer(stat)), '|') if length(f) == 3)
+    # the running worker steps; `sstat` reports an invalid CPU time for the `extern` step
+    live = Dict(String(f[1]) => (slurm_bytes(f[2]), slurm_bytes(f[3]), slurm_seconds(f[4]))
+                for f in split.(eachline(IOBuffer(stat)), '|') if length(f) == 4 && occursin(r"^\d+\.\d+$", f[1]))
     steps = Dict(id => StepInfo[] for id in jobs)
-    for f in split.(eachline(IOBuffer(acct)), '|')
-        length(f) == 6 && occursin(r"^\d+\.\d+$", f[1]) || continue
-        id = String(f[1])
-        rss, max_rss = get(live, id, (nothing, nothing))
-        # `CANCELLED by <user ID>`
-        push!(get!(steps, first(split(id, '.')), StepInfo[]),
-              (; id, node = String(f[2]), state = String(first(split(f[3]))), exit_code = String(f[4]), elapsed = String(f[5]), rss,
-               max_rss = something(max_rss, slurm_bytes(f[6]), Some(nothing))))
+    @lock mgr.lock begin
+        filter!(p -> haskey(live, first(p)), mgr.cpu_samples)
+        for f in split.(eachline(IOBuffer(acct)), '|')
+            length(f) == 6 && occursin(r"^\d+\.\d+$", f[1]) || continue
+            id = String(f[1])
+            rss, max_rss, cpu = get(live, id, (nothing, nothing, nothing))
+            cpu_load = cpu_mean = nothing
+            if !isnothing(cpu)
+                samples = filter!(s -> at - s[1] <= CPU_LOAD_SECONDS, push!(get!(mgr.cpu_samples, id, Tuple{Float64,Float64}[]), (at, cpu)))
+                since, cpu_since = first(samples)
+                since < at && (cpu_load = (cpu - cpu_since) / (at - since))
+                elapsed = slurm_seconds(f[5])
+                something(elapsed, 0.0) > 0 && (cpu_mean = cpu / elapsed)
+            end
+            # `CANCELLED by <user ID>`
+            push!(get!(steps, first(split(id, '.')), StepInfo[]),
+                  (; id, node = String(f[2]), state = String(first(split(f[3]))), exit_code = String(f[4]), elapsed = String(f[5]), rss,
+                   max_rss = something(max_rss, slurm_bytes(f[6]), Some(nothing)), cpu_load, cpu_mean))
+        end
+        merge!(mgr.steps, steps)
     end
-    @lock mgr.lock merge!(mgr.steps, steps)
     return mgr
 end
 

@@ -282,19 +282,22 @@ workers_screen(tb) = join((row_text(tb, r) for r in 1:tb.height), "\n")
         attributes = (; host = "vipc2329", os_pid = 101, threads = 2, memory = 120 * 2^30, job = "4711", step = "3", tasks = "1",
                       cpus = "2", gpus = "")
         steps = [(; id = "4711.2", node = "vipc2329", state = "OUT_OF_MEMORY", exit_code = "0:125", elapsed = "00:03:10", rss = nothing,
-                  max_rss = 2^30),
+                  max_rss = 2^30, cpu_load = nothing, cpu_mean = 0.5),
                  (; id = "4711.3", node = "vipc2329", state = "RUNNING", exit_code = "0:0", elapsed = "00:01:00", rss = 5 * 2^30,
-                  max_rss = 8 * 2^30)]
+                  max_rss = 8 * 2^30, cpu_load = 1.94, cpu_mean = 1.2)]
         page = loaded_page((; overview(; slurm)..., workers = [(; pid = 2, attributes)], steps))
         text = workers_screen(render_workers_page(page, snap; width = 200))
-        # the row shows the memory of the worker's step, the title of its output its attributes
-        @test occursin("vipc2329     5.0/8.0 GB", text)
+        # the row shows the memory and CPUs of the worker's step, the title of its output its attributes
+        @test occursin("vipc2329     5.0/8.0 GB     1.9 (1.2) CPUs", text)
+        @test JuLeAna.workers_cpu_text((; cpu_load = nothing, cpu_mean = 0.04)) == "– (0.0) CPUs"
         @test occursin("Output of worker 2 │ vipc2329 │ step 4711.3 │ 2 threads │ 2 CPUs │ memory 120.0 GB", text)
         press!(page, KeyEvent('s'))
         tb = render_workers_page(page, snap; width = 200)
         text = workers_screen(tb)
         # only the running and pending steps, below the queue and the idle nodes
-        @test occursin("4711.3        vipc2329    RUNNING        0:0   00:01:00    5.0/8.0 GB", text) && !occursin("4711.2", text)
+        @test occursin("ELAPSED     MEMORY/PEAK    CPUS MINUTE (RUN)", text)
+        @test occursin("4711.3        vipc2329    RUNNING        0:0   00:01:00    5.0/8.0 GB     1.9 (1.2) CPUs", text) &&
+              !occursin("4711.2", text)
         @test find_text(tb, "4711 debug").y < find_text(tb, "debug* up 3").y < find_text(tb, "4711.3").y
     end
 
