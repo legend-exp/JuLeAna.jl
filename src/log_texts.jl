@@ -11,6 +11,22 @@ function detector_status(usability::Symbol)
 end
 
 """
+    filekey_logtbl(l200, result)
+
+The report table of `result` from [`parallel`](@ref) over filekeys, as `create_logtbl` builds
+it, with a `Filekey Status` column after `Filekey`: the filekey's entry in `bad_filekeys` as
+an HTML `<span>` string, `unprocessable` in red, `removed` in yellow and `good` in green.
+"""
+function filekey_logtbl(l200, result)
+    tbl = create_logtbl(result)
+    isempty(result) && return tbl
+    unprocessable, removed = bad_filekeys(l200; load_key = :unprocessable), bad_filekeys(l200; load_key = :removed)
+    status(fk) = fk in unprocessable ? """<span style="color:red">unprocessable</span>""" :
+                 fk in removed ? """<span style="color:yellow">removed</span>""" : """<span style="color:green">good</span>"""
+    return StructArray([merge((Filekey = row.Filekey, var"Filekey Status" = status(row.Filekey)), row) for row in tbl])
+end
+
+"""
     process_skipped
 
 Report status of an item that a partition step leaves to the same step of the period in

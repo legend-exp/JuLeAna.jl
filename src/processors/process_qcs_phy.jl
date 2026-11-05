@@ -269,7 +269,7 @@ function process_qcs_phy(processing_config, l200::LegendData, period::DataPeriod
     lreport!(report, "\n# Results")
     lreport!(report, create_logtbl(result_qc))
     lreport!(report, "\n# Filekey Results")
-    lreport!(report, create_logtbl(result_filekeys))
+    lreport!(report, filekey_logtbl(l200, result_filekeys))
 
     report_filename = get_rreportfilename(l200, filekey, :qcs_phy)
 
