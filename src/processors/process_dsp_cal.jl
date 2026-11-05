@@ -45,7 +45,7 @@ function process_dsp_cal(processing_config, l200::LegendData, period::DataPeriod
                          max_wvfs::Int = 10000, use_cache::Bool = true)
     @info "Process DSP for period $period and run $run"
 
-    filekeys = filter(!in(bad_filekeys(l200; load_key = :unprocessable)), only(runinfo(l200, (period, run, :cal)).keys))
+    filekeys = run_filekeys(l200, period, run, :cal)
 
     filekey = start_filekey(l200, (period, run, :cal))
     @info "Found start filekey $filekey"
@@ -206,4 +206,5 @@ function process_dsp_cal(processing_config, l200::LegendData, period::DataPeriod
     return flush(stdout)
 end
 
-register_processor!(process_dsp_cal; output_tiers = [:jldsp])
+register_processor!(process_dsp_cal; output_tiers = [:jldsp],
+                    items = (_, l200, period, run) -> run_filekeys(l200, period, run, :cal))

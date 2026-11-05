@@ -17,8 +17,10 @@ makedocs(sitename = "JuLeAna", modules = [JuLeAna], checkdocs = :exports,
                   "Processors" => ["Overview" => "processors.md", "HPGe calibration" => "processors_hpge.md",
                                    "Pulse shape discrimination" => "processors_psd.md", "SiPMs, events and stability" => "processors_phy.md"],
                   "API" =>
-                      ["Dataflow" => "api.md", "Steps, plots, logging and reports" => "api_debug.md", "Terminal interface" => "api_tui.md"],
+                      ["Dataflow" => "api.md", "Controller and workers" => "api_controller.md",
+                       "Steps, plots, logging and reports" => "api_debug.md", "Terminal interface" => "api_tui.md"],
                   "LICENSE" => "LICENSE.md"], doctest = ("fixdoctests" in ARGS) ? :fix : true, linkcheck = !("nonstrict" in ARGS),
-         warnonly = ("nonstrict" in ARGS))
+         # answers to the CI runners can take longer than the default 10 s
+         linkcheck_timeout = 30, warnonly = ("nonstrict" in ARGS))
 
 deploydocs(repo = "github.com/legend-exp/JuLeAna.jl.git", forcepush = true, push_preview = true)

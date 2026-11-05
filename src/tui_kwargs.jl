@@ -128,7 +128,9 @@ function kwargs_key!(editor::KwargsEditor, evt::Tachikoma.KeyEvent, snap, send)
         if key == :enter
             name = first(rows[editor.cursor])
             try
-                value = parse_kwarg_value(editor.text, get(proc.kwargs, name, nothing))
+                # a timeout is "auto" or a number of seconds, whichever of them it is now
+                value = name === :timeout && strip(editor.text) == "auto" ? "auto" :
+                        parse_kwarg_value(editor.text, name === :timeout ? 0.0 : get(proc.kwargs, name, nothing))
                 send(SetKwarg(editor.step, name, value))
                 editor.text, editor.error = nothing, nothing
             catch e

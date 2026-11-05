@@ -139,6 +139,19 @@ waituntil(cond; timeout = 60) = timedwait(cond, timeout; pollint = 0.05) === :ok
         @test Set((s.process, s.level, s.category, s.period, s.run, s.outcome) for s in entry.steps) ==
               Set([(:process_energy_calibration_cal, :run, :cal, p2, DataRun(6), :done),
                    (:p_process_aoe_cut_cal, :partition, :cal, p2, nothing, :done)])
+        # the stubs hand no items to `parallel`, so the run has no item times
+        @test isempty(entry.timings)
+        # the item times of a run go to the log and to its history entry
+        key = (p2, DataRun(6), :process_energy_calibration_cal)
+        id = JuLeAna.items_queued!(ctrl.progress, key, 1)
+        JuLeAna.item_started!(ctrl.progress, key, id, 1, "V01")
+        JuLeAna.item_finished!(ctrl.progress, key, id, :done)
+        write_entry() = JuLeAna.write_history(ctrl, ctrl.session.config, l200, :finished, snap.finished)
+        @test_logs (:info,
+                    r"^Item times in seconds, min/median/95%/99%/max:\nprocess_energy_calibration_cal: [\d.]+/[\d.]+/[\d.]+/[\d.]+/[\d.]+ over 1 items$") match_mode = :any write_entry()
+        t = only(last(JuLeAna.read_history(JuLeAna.history_path(l200))).timings)
+        @test (t.process, t.level, t.category, t.items) == (:process_energy_calibration_cal, :run, :cal, 1) &&
+              t.min == t.median == t.p95 == t.p99 == t.max
 
         dispatch!(ctrl, ResetKwargs(:process_energy_calibration_cal))
         @test isempty(snapshot(ctrl).processors[1].overridden)

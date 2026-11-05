@@ -56,8 +56,9 @@ Fields:
   `p_processors`.
 - `enabled::Bool`: whether the processor is selected for execution by default.
 - `category::Symbol`: data category the processor acts on, `:cal` or `:phy`.
-- `rank::Int`: position in listings and tie rule: among processors that are ready to run,
-  lower ranks start first.
+- `rank::Int`: position in listings and tie rule: among processors that are ready to run
+  and have equally long chains and equally many selected processors after them, lower
+  ranks start first (see [`run_processing`](@ref)).
 - `dependencies::Vector{Symbol}`: processors of either level that must finish first.
 - `kwargs::Dict{Symbol,Any}`: keyword arguments passed to the processor function.
 - `error_plots::Bool`: whether a failed [`@process_step`](@ref) of the processor runs its
@@ -85,7 +86,8 @@ The positional constructor takes the fields in the order listed above,
 kwargs=Dict{Symbol,Any}(), error_plots=false, log_level=Logging.Info, plot_level=:info, detectors=nothing,
 report_status=Dict())` builds a spec from keywords; `report_status` is completed with [`DEFAULT_REPORT_STATUS`](@ref). Every constructor throws an `ArgumentError` when `level` is not `:run` or
 `:partition`, `category` is not `:cal` or `:phy`, the processor depends on itself, `detectors` is not a valid
-`ljl_propfunc` expression, or `report_status` has an unknown or missing entry.
+`ljl_propfunc` expression, the `timeout` in `kwargs` is neither `"auto"` nor a number of seconds
+that is zero or positive, or `report_status` has an unknown or missing entry.
 """
 struct ProcessorSpec
     name::Symbol
@@ -110,6 +112,10 @@ struct ProcessorSpec
         spec.category in (:cal, :phy) ||
             throw(ArgumentError("processing_config: key `$(path)category` must be \"cal\" or \"phy\", got $(repr(spec.category))"))
         spec.name in spec.dependencies && throw(ArgumentError("processing_config: key `$(path)dependencies` names the processor itself"))
+        timeout = get(spec.kwargs, :timeout, 0)
+        timeout == "auto" ||
+            timeout isa Real && timeout >= 0 ||
+            throw(ArgumentError("processing_config: key `$(path)kwargs.timeout` must be \"auto\" or a number of seconds that is zero or positive, got $(repr(timeout))"))
         if !isnothing(spec.detectors)
             try
                 ljl_propfunc(spec.detectors)
@@ -143,6 +149,8 @@ Fields:
 - `local_julia_settings::Vector{String}`: Julia flags for local workers.
 - `slurm_flags::Vector{String}`: SLURM flags for SLURM workers.
 - `slurm_julia_settings::Vector{String}`: Julia flags for SLURM workers.
+- `slurm_worker_memory::Symbol`: `:shared`, the SLURM workers of a job share its memory, or
+  `:fixed`, each worker gets the job's memory per node divided by its workers per node.
 - `env_variables::Dict{String,String}`: environment variables for the driver and workers.
 - `periods::Union{Nothing,Vector{DataPeriod}}`: selected periods; `nothing` selects all.
 - `runs::Union{Nothing,Vector{DataRun}}`: selected runs; `nothing` selects all.
@@ -163,6 +171,20 @@ Fields:
   versions.
 - `idle_timeout_minutes::Float64`: minutes without processing after which the worker
   allocations started by the interface are cancelled; `0` never cancels them.
+- `worker_restart_delay_seconds::Int`: seconds a worker slot of a start script waits before it
+  starts a new worker in place of one that ended.
+- `worker_heartbeat_timeout_minutes::Int`: minutes after which a start script takes the
+  interface as gone if it has not touched its heartbeat file, and ends its allocation.
+- `item_time_estimate::Symbol`: `:median`, `:p95` or `:max`, the statistic of the item
+  durations of a processor by which [`run_processing`](@ref) estimates the time of its steps.
+- `item_time_minimum_items::Int`: number of done items of a processor in the current
+  processing run from which their durations replace the recorded ones, for the estimates
+  and the item timeouts. Fewer items give an unreliable statistic, and the first items of a
+  run include the compilation.
+- `item_timeout_factor::Float64`: a processor with the keyword argument `timeout = "auto"`
+  gets this factor times the 99th percentile of its item durations as item timeout (see
+  [`run_processing`](@ref)).
+- `item_timeout_minimum_minutes::Float64`: the shortest such item timeout, in minutes.
 - `processors::Dict{Symbol,ProcessorSpec}`: run-level processors.
 - `p_processors::Dict{Symbol,ProcessorSpec}`: partition-level processors.
 
@@ -171,11 +193,18 @@ Besides the positional constructor and the config-file constructors documented b
 keywords named like the fields. Every field except the two processor tables has a
 default: empty flag and settings lists, no environment variables, `periods` and `runs`
 of `nothing`, all `Bool` fields `false`, `max_parallel_steps = 0`, `local_n = 1`, `log_path = ""`,
-`log_level = Logging.Info`, `processor_log_level = nothing`, `processor_plot_level = nothing`,
-`plot_formats = [:png]` and `idle_timeout_minutes = 20`. Every
+`slurm_worker_memory = :shared`, `log_level = Logging.Info`, `processor_log_level = nothing`, `processor_plot_level = nothing`,
+`plot_formats = [:png]`, `idle_timeout_minutes = 20`, `worker_restart_delay_seconds = 30`,
+`worker_heartbeat_timeout_minutes = 5`, `item_time_estimate = :median`, `item_time_minimum_items = 100`,
+`item_timeout_factor = 2` and
+`item_timeout_minimum_minutes = 5`. Every
 constructor throws an `ArgumentError` when `runmode` is not `:local` or `:slurm`,
+`slurm_worker_memory` is not `:shared` or `:fixed`,
 `processor_plot_level` is not `nothing`, `:info` or `:debug`, `plot_formats` is empty, repeats
-an entry or holds anything but `:png` and `:jls`, `local_n < 1`, `max_parallel_steps < 0`, `idle_timeout_minutes` is negative or not finite, both `only_runs` and `only_partitions` are set, a table key differs from
+an entry or holds anything but `:png` and `:jls`, `local_n < 1`, `max_parallel_steps < 0`, `idle_timeout_minutes` is negative or not finite, `worker_restart_delay_seconds` is negative,
+`worker_heartbeat_timeout_minutes < 2`, `item_time_estimate` is not `:median`, `:p95` or `:max`,
+`item_time_minimum_items < 1`, `item_timeout_factor` is not positive and finite, `item_timeout_minimum_minutes` is negative or not finite,
+both `only_runs` and `only_partitions` are set, a table key differs from
 its spec's name or level, a name appears in both tables, a dependency names an unknown
 processor, or the dependencies form a cycle (see [`processor_graph`](@ref)).
 
@@ -188,6 +217,7 @@ struct ProcessingConfig
     local_julia_settings::Vector{String}
     slurm_flags::Vector{String}
     slurm_julia_settings::Vector{String}
+    slurm_worker_memory::Symbol
     env_variables::Dict{String,String}
     periods::Union{Nothing,Vector{DataPeriod}}
     runs::Union{Nothing,Vector{DataRun}}
@@ -201,17 +231,31 @@ struct ProcessingConfig
     processor_plot_level::Union{Nothing,Symbol}
     plot_formats::Vector{Symbol}
     idle_timeout_minutes::Float64
+    worker_restart_delay_seconds::Int
+    worker_heartbeat_timeout_minutes::Int
+    item_time_estimate::Symbol
+    item_time_minimum_items::Int
+    item_timeout_factor::Float64
+    item_timeout_minimum_minutes::Float64
     processors::Dict{Symbol,ProcessorSpec}
     p_processors::Dict{Symbol,ProcessorSpec}
 
-    function ProcessingConfig(runmode, submit_jobs, local_n, local_julia_settings, slurm_flags, slurm_julia_settings, env_variables,
-                              periods, runs, analysis_runs_only, only_partitions, only_runs, max_parallel_steps, log_path, log_level,
-                              processor_log_level, processor_plot_level, plot_formats, idle_timeout_minutes, processors, p_processors)
-        cfg = new(runmode, submit_jobs, local_n, local_julia_settings, slurm_flags, slurm_julia_settings, env_variables, periods, runs,
-                  analysis_runs_only, only_partitions, only_runs, max_parallel_steps, log_path, log_level, processor_log_level,
-                  processor_plot_level, plot_formats, idle_timeout_minutes, processors, p_processors)
+    function ProcessingConfig(runmode, submit_jobs, local_n, local_julia_settings, slurm_flags, slurm_julia_settings, slurm_worker_memory,
+                              env_variables, periods, runs, analysis_runs_only, only_partitions, only_runs, max_parallel_steps, log_path,
+                              log_level, processor_log_level, processor_plot_level, plot_formats, idle_timeout_minutes,
+                              worker_restart_delay_seconds, worker_heartbeat_timeout_minutes, item_time_estimate,
+                              item_time_minimum_items, item_timeout_factor, item_timeout_minimum_minutes, processors, p_processors)
+        cfg = new(runmode, submit_jobs, local_n, local_julia_settings, slurm_flags, slurm_julia_settings, slurm_worker_memory,
+                  env_variables,
+                  periods, runs, analysis_runs_only, only_partitions, only_runs, max_parallel_steps, log_path, log_level,
+                  processor_log_level,
+                  processor_plot_level, plot_formats, idle_timeout_minutes, worker_restart_delay_seconds, worker_heartbeat_timeout_minutes,
+                  item_time_estimate, item_time_minimum_items, item_timeout_factor, item_timeout_minimum_minutes, processors,
+                  p_processors)
         cfg.runmode in (:local, :slurm) ||
             throw(ArgumentError("processing_config: runmode must be \"local\" or \"slurm\", got $(repr(cfg.runmode))"))
+        cfg.slurm_worker_memory in (:shared, :fixed) ||
+            throw(ArgumentError("processing_config: key `config.runmode_settings.slurm.worker_memory` must be \"shared\" or \"fixed\", got $(repr(cfg.slurm_worker_memory))"))
         isnothing(cfg.processor_plot_level) ||
             cfg.processor_plot_level in PLOT_LEVEL_VALUES ||
             throw(ArgumentError("processing_config: key `config.processor_plot_level` must be \"info\" or \"debug\", got $(repr(cfg.processor_plot_level))"))
@@ -227,6 +271,19 @@ struct ProcessingConfig
             throw(ArgumentError("processing_config: key `config.runmode_settings.local.n` must be positive, got $(cfg.local_n)"))
         isfinite(cfg.idle_timeout_minutes) && cfg.idle_timeout_minutes >= 0 ||
             throw(ArgumentError("processing_config: key `config.idle_timeout_minutes` must be zero or positive, got $(cfg.idle_timeout_minutes)"))
+        cfg.worker_restart_delay_seconds >= 0 ||
+            throw(ArgumentError("processing_config: key `config.worker_restart_delay_seconds` must be zero or positive, got $(cfg.worker_restart_delay_seconds)"))
+        # the interface touches its heartbeat file every minute
+        cfg.worker_heartbeat_timeout_minutes >= 2 ||
+            throw(ArgumentError("processing_config: key `config.worker_heartbeat_timeout_minutes` must be at least 2, got $(cfg.worker_heartbeat_timeout_minutes)"))
+        cfg.item_time_estimate in (:median, :p95, :max) ||
+            throw(ArgumentError("processing_config: key `config.item_time_estimate` must be \"median\", \"p95\" or \"max\", got $(repr(cfg.item_time_estimate))"))
+        cfg.item_time_minimum_items >= 1 ||
+            throw(ArgumentError("processing_config: key `config.item_time_minimum_items` must be at least 1, got $(cfg.item_time_minimum_items)"))
+        isfinite(cfg.item_timeout_factor) && cfg.item_timeout_factor > 0 ||
+            throw(ArgumentError("processing_config: key `config.item_timeout_factor` must be positive, got $(cfg.item_timeout_factor)"))
+        isfinite(cfg.item_timeout_minimum_minutes) && cfg.item_timeout_minimum_minutes >= 0 ||
+            throw(ArgumentError("processing_config: key `config.item_timeout_minimum_minutes` must be zero or positive, got $(cfg.item_timeout_minimum_minutes)"))
         cfg.only_runs &&
             cfg.only_partitions &&
             throw(ArgumentError("processing_config: only one of `only_partitions` or `only_runs` can be set"))
@@ -254,13 +311,18 @@ struct ProcessingConfig
 end
 
 function ProcessingConfig(; processors, p_processors, runmode = :local, submit_jobs = false, local_n = 1, local_julia_settings = String[],
-                          slurm_flags = String[], slurm_julia_settings = String[], env_variables = Dict{String,String}(), periods = nothing,
-                          runs = nothing, analysis_runs_only = false, only_partitions = false, only_runs = false, max_parallel_steps = 0,
+                          slurm_flags = String[], slurm_julia_settings = String[], slurm_worker_memory = :shared,
+                          env_variables = Dict{String,String}(), periods = nothing, runs = nothing, analysis_runs_only = false,
+                          only_partitions = false, only_runs = false, max_parallel_steps = 0,
                           log_path = "", log_level = Logging.Info, processor_log_level = nothing, processor_plot_level = nothing,
-                          plot_formats = [:png], idle_timeout_minutes = 20)
-    return ProcessingConfig(runmode, submit_jobs, local_n, local_julia_settings, slurm_flags, slurm_julia_settings, env_variables, periods,
-                            runs, analysis_runs_only, only_partitions, only_runs, max_parallel_steps, log_path, log_level,
-                            processor_log_level, processor_plot_level, plot_formats, idle_timeout_minutes, processors, p_processors)
+                          plot_formats = [:png], idle_timeout_minutes = 20, worker_restart_delay_seconds = 30,
+                          worker_heartbeat_timeout_minutes = 5, item_time_estimate = :median, item_time_minimum_items = 100,
+                          item_timeout_factor = 2, item_timeout_minimum_minutes = 5)
+    return ProcessingConfig(runmode, submit_jobs, local_n, local_julia_settings, slurm_flags, slurm_julia_settings, slurm_worker_memory,
+                            env_variables, periods, runs, analysis_runs_only, only_partitions, only_runs, max_parallel_steps, log_path,
+                            log_level, processor_log_level, processor_plot_level, plot_formats, idle_timeout_minutes,
+                            worker_restart_delay_seconds, worker_heartbeat_timeout_minutes, item_time_estimate, item_time_minimum_items,
+                            item_timeout_factor, item_timeout_minimum_minutes, processors, p_processors)
 end
 
 # Recursively convert nested dictionaries to `Dict{Symbol,Any}`.
@@ -433,11 +495,16 @@ The config must contain exactly these keys; a missing or unknown key throws an
 
 - `config`: `runmode` (`"local"` or `"slurm"`), `submit_jobs::Bool`,
   `runmode_settings.local.{n, julia_settings}`,
-  `runmode_settings.slurm.{flags, julia_settings}`, `env_variables`, `log_level`
+  `runmode_settings.slurm.{flags, julia_settings}` (and optionally
+  `runmode_settings.slurm.worker_memory`, `"shared"`, the default, or `"fixed"`), `env_variables`, `log_level`
   (`"debug"`, `"info"`, `"warn"` or `"error"`), and optionally `processor_log_level`
   (same values, default `nothing`), `processor_plot_level` (`"info"` or `"debug"`, default
-  `nothing`), `plot_formats` (a list of `"png"` and `"jls"`, default `["png"]`) and
-  `idle_timeout_minutes` (a number, default 20)
+  `nothing`), `plot_formats` (a list of `"png"` and `"jls"`, default `["png"]`),
+  `idle_timeout_minutes` (a number, default 20), `worker_restart_delay_seconds` (an `Int`,
+  default 30), `worker_heartbeat_timeout_minutes` (an `Int`, default 5), `item_time_estimate`
+  (`"median"`, the default, `"p95"` or `"max"`), `item_time_minimum_items` (an `Int`, default
+  100), `item_timeout_factor` (a number, default 2)
+  and `item_timeout_minimum_minutes` (a number, default 5)
 - `processing`: `periods` and `runs` (each `"all"` or a list), `analysis_runs_only`,
   `only_partitions`, `only_runs` (all `Bool`), and optionally `order` (`"rank"`, the
   default, or `"dependencies"`) and `max_parallel_steps` (an `Int`, default 0: no limit)
@@ -509,13 +576,16 @@ function ProcessingConfig(dict::AbstractDict; runmode::Union{Nothing,AbstractStr
     _check_keys(d, (:config, :processing, :processors, :p_processors), "")
     config = _typed(d, :config, AbstractDict, "")
     _check_keys(config, (:runmode, :submit_jobs, :runmode_settings, :env_variables, :log_level), "config.";
-                optional = (:idle_timeout_minutes, :processor_log_level, :processor_plot_level, :plot_formats))
+                optional = (:idle_timeout_minutes, :processor_log_level, :processor_plot_level, :plot_formats,
+                            :worker_restart_delay_seconds, :worker_heartbeat_timeout_minutes, :item_time_estimate, :item_time_minimum_items,
+                            :item_timeout_factor,
+                            :item_timeout_minimum_minutes))
     settings = _typed(config, :runmode_settings, AbstractDict, "config.")
     _check_keys(settings, (:local, :slurm), "config.runmode_settings.")
     local_settings = _typed(settings, :local, AbstractDict, "config.runmode_settings.")
     _check_keys(local_settings, (:n, :julia_settings), "config.runmode_settings.local.")
     slurm_settings = _typed(settings, :slurm, AbstractDict, "config.runmode_settings.")
-    _check_keys(slurm_settings, (:flags, :julia_settings), "config.runmode_settings.slurm.")
+    _check_keys(slurm_settings, (:flags, :julia_settings), "config.runmode_settings.slurm."; optional = (:worker_memory,))
     processing = _typed(d, :processing, AbstractDict, "")
     _check_keys(processing, (:periods, :runs, :analysis_runs_only, :only_partitions, :only_runs), "processing.";
                 optional = (:order, :max_parallel_steps))
@@ -560,15 +630,26 @@ function ProcessingConfig(dict::AbstractDict; runmode::Union{Nothing,AbstractStr
 
     return ProcessingConfig(sel_runmode, sel_submit_jobs, n, _strings(local_settings, :julia_settings, "config.runmode_settings.local."),
                             _strings(slurm_settings, :flags, "config.runmode_settings.slurm."),
-                            _strings(slurm_settings, :julia_settings, "config.runmode_settings.slurm."), env_variables, sel_periods,
-                            sel_runs, sel_analysis_runs_only, sel_only_partitions, sel_only_runs,
+                            _strings(slurm_settings, :julia_settings, "config.runmode_settings.slurm."),
+                            Symbol(haskey(slurm_settings, :worker_memory) ?
+                                   _typed(slurm_settings, :worker_memory, AbstractString, "config.runmode_settings.slurm.") : "shared"),
+                            env_variables, sel_periods, sel_runs, sel_analysis_runs_only, sel_only_partitions, sel_only_runs,
                             haskey(processing, :max_parallel_steps) ? _typed(processing, :max_parallel_steps, Int, "processing.") : 0,
                             log_path, parse_log_level(_typed(config, :log_level, AbstractString, "config.")),
                             haskey(config, :processor_log_level) ? _log_level(config, :processor_log_level, "config.") : nothing,
                             haskey(config, :processor_plot_level) ? _plot_level(config, :processor_plot_level, "config.") : nothing,
                             haskey(config, :plot_formats) ? Symbol.(_strings(config, :plot_formats, "config.")) : [:png],
-                            haskey(config, :idle_timeout_minutes) ? _typed(config, :idle_timeout_minutes, Real, "config.") : 20, processors,
-                            p_processors)
+                            haskey(config, :idle_timeout_minutes) ? _typed(config, :idle_timeout_minutes, Real, "config.") : 20,
+                            haskey(config, :worker_restart_delay_seconds) ? _typed(config, :worker_restart_delay_seconds, Int, "config.") :
+                            30,
+                            haskey(config, :worker_heartbeat_timeout_minutes) ?
+                            _typed(config, :worker_heartbeat_timeout_minutes, Int, "config.") : 5,
+                            Symbol(haskey(config, :item_time_estimate) ? _typed(config, :item_time_estimate, AbstractString, "config.") :
+                                   "median"),
+                            haskey(config, :item_time_minimum_items) ? _typed(config, :item_time_minimum_items, Int, "config.") : 100,
+                            haskey(config, :item_timeout_factor) ? _typed(config, :item_timeout_factor, Real, "config.") : 2,
+                            haskey(config, :item_timeout_minimum_minutes) ? _typed(config, :item_timeout_minimum_minutes, Real, "config.") :
+                            5, processors, p_processors)
 end
 
 function ProcessingConfig(filename::AbstractString; kwargs...)

@@ -139,6 +139,37 @@ function waited_processors(g::ProcessorGraph, selected)
 end
 
 """
+    JuLeAna.waiting_chains(waits::AbstractDict)
+
+For the processors of `waits`, a `Dict` like [`waited_processors`](@ref) returns, return a
+`Dict` that maps each processor to `(; chain, successors)`: `chain` is the number of
+processors in the longest chain of processors of `waits` that wait for it, one after the
+other, and `successors` the number of processors of `waits` that wait for it, directly or
+through other processors. Both are 0 for a processor that no processor waits for.
+"""
+function waiting_chains(waits::AbstractDict)
+    dependents = Dict{Symbol,Vector{Symbol}}(step => Symbol[] for step in keys(waits))
+    for (step, waited) in waits, (u, _) in waited
+
+        push!(dependents[u], step)
+    end
+    chain = Dict{Symbol,Int}()
+    function chain_of(step)
+        haskey(chain, step) && return chain[step]
+        return chain[step] = maximum((1 + chain_of(d) for d in dependents[step]); init = 0)
+    end
+    function successors(step)
+        seen, todo = Set{Symbol}(), copy(dependents[step])
+        while !isempty(todo)
+            d = pop!(todo)
+            d in seen || (push!(seen, d); append!(todo, dependents[d]))
+        end
+        return length(seen)
+    end
+    return Dict(step => (; chain = chain_of(step), successors = successors(step)) for step in keys(waits))
+end
+
+"""
     dependent_processors(g::ProcessorGraph, names)
 
 Return the set of the processors in `names` together with all processors that depend on

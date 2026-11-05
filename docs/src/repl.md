@@ -88,7 +88,9 @@ when they already have parameters. The other keywords are
 - `config`: another config file than the one of the data production.
 - `show_report`: whether to display the report at the end; `true` by default in an
   interactive session.
-- other keywords, such as `timeout = 0`, are keyword arguments of the processor.
+- other keywords, such as `timeout = 0`, are keyword arguments of the processor. A
+  `timeout` of `"auto"` takes the item timeout from the latest 99th percentile of the item
+  times of the processor in the history of the production.
 
 Each call appends its report to `reports/<step>.md` in the output directory: the report rows
 of the chosen detectors and, below them, the plots of each detector in the order they were

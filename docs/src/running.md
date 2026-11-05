@@ -192,11 +192,24 @@ session from the processing config; it holds the cookie and the address of the r
 process. The Workers page shows and edits the script (`e`, `Ctrl+S` saves); edits apply to
 the session.
 
-An allocation is a group of workers started by one run of the script, local or as SLURM
-jobs. An allocation runs in its own process group. `c` cancels the selected allocation and
+An allocation is a group of workers started by one run of the script, local or as a SLURM
+job. A worker that ends, for example after running out of memory or after being stopped,
+is started again in its place after `worker_restart_delay_seconds` (default 30), until the
+allocation is cancelled. While it has allocations, `juleana` touches the file
+`juleana-<host>-<pid>.alive` in the `setup/config` folder every minute. If a worker ends while
+that file has not been touched for `worker_heartbeat_timeout_minutes` (default 5), for
+example because `juleana` crashed, the allocation ends itself. Both are keys of the
+[config](@ref Configuration). An allocation runs in its own process group. `c` cancels the selected allocation and
 `C` all allocations, after a confirmation; a cancel ends the processes and cancels the
 SLURM jobs that carry the job name of the allocation. Quitting `juleana` cancels all
 allocations.
+
+The list of workers shows the host of each worker and, for SLURM workers, the memory of its
+job step and the peak memory in GB; the title of the output of the selected worker shows
+its attributes (job step, threads, CPUs, the memory it may use, GPUs). SLURM measures the
+memory every few seconds, so a short peak can be missing. `s` switches the right column to
+the SLURM view: the output of `squeue` and `sinfo -t idle`, then the running and pending job
+steps of the allocations with node, state, exit code, run time and memory.
 
 Idle allocations are cancelled after `idle_timeout_minutes` of the
 [config](@ref Configuration) (default 20, `0` disables) without processing. The status panel under the tabs
@@ -217,8 +230,11 @@ Detach with `Ctrl+b d` and attach again with `tmux attach -t juleana`.
 
 ### SLURM workers
 
-In the `slurm` run mode the start script submits SLURM jobs with the settings of
-`runmode_settings.slurm` in the config, such as the number of nodes. `o` on the Workers
+In the `slurm` run mode the start script submits one SLURM job with the settings of
+`runmode_settings.slurm` in the config, such as the number of nodes, and waits for it. The job
+runs every worker as its own job step; `--cpu-bind` applies to these steps. The output of
+the job, with the messages of SLURM and of the restarts of workers, goes to
+`julia-workers-<n>.out` in the log directory and to the Workers page. `o` on the Workers
 page opens a form of the common options: partition, time limit, nodes, workers per node
 (`--ntasks-per-node`), threads per worker (`--cpus-per-task`) and memory per node
 (`--mem`). `Enter` edits the option under the cursor, and an empty value removes it. The

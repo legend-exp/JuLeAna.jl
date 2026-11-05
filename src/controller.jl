@@ -521,11 +521,13 @@ function effective_config(ctrl::DataflowController)
     settings = ctrl.runmode_settings
     return ProcessingConfig(something(ctrl.runmode, cfg.runmode), cfg.submit_jobs, get(settings, :local_n, cfg.local_n),
                             get(settings, :local_julia_settings, cfg.local_julia_settings), get(settings, :slurm_flags, cfg.slurm_flags),
-                            get(settings, :slurm_julia_settings, cfg.slurm_julia_settings), cfg.env_variables, cfg.periods, cfg.runs,
-                            something(ctrl.analysis_runs_only, cfg.analysis_runs_only), cfg.only_partitions, cfg.only_runs,
-                            cfg.max_parallel_steps, cfg.log_path, cfg.log_level, cfg.processor_log_level, cfg.processor_plot_level,
-                            cfg.plot_formats, cfg.idle_timeout_minutes,
-                            with_overrides(cfg.processors, ctrl.kwarg_overrides, ctrl.level_overrides),
+                            get(settings, :slurm_julia_settings, cfg.slurm_julia_settings), cfg.slurm_worker_memory, cfg.env_variables,
+                            cfg.periods, cfg.runs, something(ctrl.analysis_runs_only, cfg.analysis_runs_only), cfg.only_partitions,
+                            cfg.only_runs, cfg.max_parallel_steps, cfg.log_path, cfg.log_level, cfg.processor_log_level,
+                            cfg.processor_plot_level, cfg.plot_formats, cfg.idle_timeout_minutes, cfg.worker_restart_delay_seconds,
+                            cfg.worker_heartbeat_timeout_minutes, cfg.item_time_estimate, cfg.item_time_minimum_items,
+                            cfg.item_timeout_factor,
+                            cfg.item_timeout_minimum_minutes, with_overrides(cfg.processors, ctrl.kwarg_overrides, ctrl.level_overrides),
                             with_overrides(cfg.p_processors, ctrl.kwarg_overrides, ctrl.level_overrides))
 end
 
@@ -765,9 +767,11 @@ function apply!(ctrl::DataflowController, cmd::StartProcessing)
                 isnothing(processing_config) || push!(configs, processing_config)
                 ctrl.record_metadata && (ctrl.metadata_record = record_metadata(production, data_path(l200, "metadata"); configs))
             end
+            history = read_history(history_path(l200))
             run_processing(cfg, l200, periods, steps, p_steps, run_status, partition_status; processors = ctrl.processors,
                            check_dependencies, reprocess, processor_log_level, processor_plot_level, ctrl.stop, ctrl.abandon,
-                           progress_store = ctrl.progress)
+                           progress_store = ctrl.progress, recorded_item_seconds = latest_item_seconds(history, cfg.item_time_estimate),
+                           recorded_item_p99 = latest_item_seconds(history, :p99))
             :finished, nothing
         catch e
             ctrl.stop[] ? (:stopped, nothing) : (:failed, e)
@@ -785,8 +789,9 @@ function apply!(ctrl::DataflowController, cmd::StartProcessing)
     return nothing
 end
 
-# Append the steps of the processing run that ended with `outcome` to the processing
-# history of `l200`; an error is logged and does not change the outcome.
+# Append the steps and the item times of the processing run that ended with `outcome` to the
+# processing history of `l200` and log the item times; an error is logged and does not change
+# the outcome.
 function write_history(ctrl::DataflowController, cfg::ProcessingConfig, l200, outcome::Symbol, finished::DateTime)
     try
         steps = map(progress(ctrl).steps) do e
@@ -794,10 +799,19 @@ function write_history(ctrl::DataflowController, cfg::ProcessingConfig, l200, ou
             return (; process = e.step, level, category, e.period, e.run, outcome = e.state, e.started, e.finished, e.done, e.failed,
                     e.notrun)
         end
+        timings = map(item_timings(ctrl.progress)) do t
+            (; level, category) = processor_spec(cfg, t.process)
+            return (; t.process, level, category, t.items, min = round(t.min; digits = 1), median = round(t.median; digits = 1),
+                    p95 = round(t.p95; digits = 1), p99 = round(t.p99; digits = 1), max = round(t.max; digits = 1))
+        end
+        isempty(timings) || @info "Item times in seconds, min/median/95%/99%/max:\n" *
+                                  join(("$(t.process): $(t.min)/$(t.median)/$(t.p95)/$(t.p99)/$(t.max) over $(t.items) items" for t in timings),
+                                       "\n")
         path = append_history(history_path(l200),
                               (; ctrl.started, finished, user = get(ENV, "USER", "unknown"), host = gethostname(), outcome, cfg.log_path,
                                software = software_version(ctrl.software_snapshot),
-                               metadata = isnothing(ctrl.metadata_record) ? nothing : "setup/metadata/$(ctrl.metadata_record)", steps))
+                               metadata = isnothing(ctrl.metadata_record) ? nothing : "setup/metadata/$(ctrl.metadata_record)", steps,
+                               timings))
         @info "Added the processing run to the history in $path"
     catch e
         @error "Writing the processing history failed" exception = (e, catch_backtrace())

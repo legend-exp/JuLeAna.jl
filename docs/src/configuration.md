@@ -12,7 +12,11 @@ exist, JuLeAna first copies the config shipped with JuLeAna there; a `processing
 current settings to that file and keeps the previous file as `processing_config.yaml.bak`.
 See [Running the dataflow](running.md). The
 file is loaded into a [`ProcessingConfig`](@ref); all keys of the `config` and
-`processing` sections are required except `idle_timeout_minutes`, `processor_log_level`, `processor_plot_level` and `plot_formats`, and a missing or
+`processing` sections are required except `idle_timeout_minutes`, `worker_restart_delay_seconds`,
+`worker_heartbeat_timeout_minutes`, `item_time_estimate`, `item_time_minimum_items`, `item_timeout_factor`,
+`item_timeout_minimum_minutes`,
+`processor_log_level`, `processor_plot_level`, `plot_formats` and
+`runmode_settings.slurm.worker_memory`, and a missing or
 unknown key stops the dataflow with an error that names the key.
 
 ## `config`
@@ -26,6 +30,12 @@ The run mode, the worker settings, environment variables and logging:
    - **`slurm.flags`**: options passed to SLURM, see the
      [SLURM documentation](https://slurm.schedmd.com) and the documentation of the
      cluster you use.
+   - **`slurm.worker_memory`** (optional): `"shared"` (the default) or `"fixed"`. Each
+     SLURM worker runs as its own job step. With `"shared"` the workers of a job share its
+     memory (`--mem`): a worker can use more than its part while others use less, and when
+     the job as a whole reaches its memory, the system ends the worker process that uses the
+     most. With `"fixed"` each worker gets the memory of the job per node divided by the
+     workers per node, and a worker that needs more is ended even if the others use less.
    - **`julia_settings`**: options passed to the `julia` processes of the workers, such
      as `--heap-size-hint`; see the
      [`julia` command line documentation](https://docs.julialang.org/en/v1/manual/command-line-interface/).
@@ -62,6 +72,30 @@ The run mode, the worker settings, environment variables and logging:
    are cancelled, so that idle workers do not hold a machine or a SLURM allocation. The
    time counts from the end of the last processing run, the start of the newest
    allocation or the last postponement, whichever is latest. `0` never cancels them.
+10. **`worker_restart_delay_seconds`** (optional, default `30`): the worker start script
+    starts a new worker whenever a worker ends, for example after a timeout or after
+    running out of memory, and waits this many seconds before it does. The pause keeps a
+    worker that cannot start from being started again and again in quick succession.
+11. **`worker_heartbeat_timeout_minutes`** (optional, default `5`, at least `2`): while it
+    has worker allocations, `juleana` touches a heartbeat file every minute. When a worker
+    ends and the file has not been touched for this many minutes, for example because
+    `juleana` crashed, the allocation ends itself instead of starting a new worker.
+12. **`item_time_estimate`** (optional, default `"median"`): `"median"`, `"p95"` (the 95th
+    percentile) or `"max"`, the statistic of the item times of a processor by which the
+    processing run estimates how long its steps take. When every selected step runs with
+    `reprocess = true`, the steps whose chain of waiting steps is expected to take longest
+    start first, and their items get free workers first. The item times of a processor come
+    from its items of the current run once `item_time_minimum_items` of them have finished,
+    before that from the latest run in the history of the production that recorded them.
+13. **`item_time_minimum_items`** (optional, default `100`, at least `1`): the number of
+    finished items of a processor in the current run from which their times replace the
+    recorded ones, for the estimates above and for `timeout: auto`. Fewer items give an
+    unreliable statistic, and the first items of a run include the compilation.
+14. **`item_timeout_factor`** (optional, default `2`): a processor with `timeout: auto` in
+    its `kwargs` (see below) gets this factor times the 99th percentile of its item times as
+    timeout per item.
+15. **`item_timeout_minimum_minutes`** (optional, default `5`): such a timeout is at least
+    this many minutes.
 
 ## `processing`
 
@@ -92,7 +126,9 @@ Two keys are optional:
   switch to `"dependencies"`.
 - **`max_parallel_steps`**: the maximum number of processor steps (one processor for
   one run, or for one period at partition level) that run at the same time; `0`, the
-  default, sets no limit. The steps share the workers either way.
+  default, sets no limit. The steps share the workers either way: a free worker goes to
+  the waiting item of the step with the longest chain of selected steps after it, then
+  with the most selected steps after it, then by rank.
 
 ## `processors` and `p_processors`
 
@@ -111,7 +147,7 @@ process_dsp_cal:
   kwargs:
     reprocess: true
     max_wvfs: 1000
-    timeout: 0
+    timeout: auto
   dependencies: [p_process_aoe_optimization_cal]
 ```
 
@@ -126,7 +162,15 @@ All fields are required:
    configured keywords, plus `reprocess` and, for partition processors,
    `only_first_period`, which the dataflow passes on its own. This is checked when the
    dataflow starts. The `--reprocess` command line flag sets `reprocess` to `true` for
-   every processor.
+   every processor. The keyword `timeout` of the processors that have one is the number of
+   seconds an item may run before its worker is ended, `0` for no limit, or `auto`. With
+   `auto`, each step of the processor gets `item_timeout_factor` times the 99th percentile
+   of the item times of the processor, at least `item_timeout_minimum_minutes`. The 99th
+   percentile comes from the current run once `item_time_minimum_items` items of the
+   processor have finished, before that from the latest run in the history of the
+   production that recorded it.
+   While neither is known, the step runs without a timeout. The timeout of a step is set
+   when it starts and is written to the log.
 5. **`dependencies`**: processors of either level that must finish first. A run
    processor waits for a run processor in the same run and for a partition processor in
    its period. A partition processor waits for a run processor in all runs of its period

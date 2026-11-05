@@ -37,7 +37,7 @@ const STUB_PROCESSORS = Dict{Symbol,Any}(:process_a => process_a, :p_process_b =
         @test spec.level === :run && spec.category === :cal && spec.rank == 6 && !spec.enabled
         @test spec.dependencies == [:p_process_aoe_optimization_cal, :process_aoe_optimization_cal]
         @test spec.kwargs ==
-              Dict{Symbol,Any}(:reprocess => false, :max_wvfs => 1000, :timeout => 0, :use_cache => true)
+              Dict{Symbol,Any}(:reprocess => false, :max_wvfs => 1000, :timeout => "auto", :use_cache => true)
         @test shipped.p_processors[:p_process_energy_cal].level === :partition
         @test shipped.p_processors[:p_process_energy_cal].category === :cal
         @test shipped.p_processors[:p_process_skm_phy].category === :phy
@@ -152,6 +152,43 @@ const STUB_PROCESSORS = Dict{Symbol,Any}(:process_a => process_a, :p_process_b =
         @test ProcessingConfig(edited(d -> d["config"]["idle_timeout_minutes"] = 2.5)).idle_timeout_minutes == 2.5
         @test_throws "`config.idle_timeout_minutes` must be zero or positive, got -1.0" ProcessingConfig(edited(d -> d["config"]["idle_timeout_minutes"] = -1))
         @test_throws "`config.idle_timeout_minutes` must be a Real" ProcessingConfig(edited(d -> d["config"]["idle_timeout_minutes"] = "20"))
+        @test shipped.slurm_worker_memory === :shared
+        @test (shipped.worker_restart_delay_seconds, shipped.worker_heartbeat_timeout_minutes) == (30, 5)
+        @test shipped.item_time_estimate === :median
+        @test ProcessingConfig(edited(d -> delete!(d["config"], "item_time_estimate"))).item_time_estimate === :median
+        @test ProcessingConfig(edited(d -> d["config"]["item_time_estimate"] = "max")).item_time_estimate === :max
+        @test_throws "`config.item_time_estimate` must be \"median\", \"p95\" or \"max\", got :p50" ProcessingConfig(edited(d -> d["config"]["item_time_estimate"] = "p50"))
+        @test (shipped.item_time_minimum_items, shipped.item_timeout_factor, shipped.item_timeout_minimum_minutes) == (100, 2, 5)
+        @test ProcessingConfig(edited(d -> delete!(d["config"], "item_time_minimum_items"))).item_time_minimum_items == 100
+        @test ProcessingConfig(edited(d -> d["config"]["item_time_minimum_items"] = 20)).item_time_minimum_items == 20
+        @test_throws "`config.item_time_minimum_items` must be at least 1, got 0" ProcessingConfig(edited(d -> d["config"]["item_time_minimum_items"] = 0))
+        @test_throws "`config.item_time_minimum_items` must be a Int64" ProcessingConfig(edited(d -> d["config"]["item_time_minimum_items"] = 2.5))
+        defaults = ProcessingConfig(edited(d -> foreach(k -> delete!(d["config"], k),
+                                                        ("item_timeout_factor", "item_timeout_minimum_minutes"))))
+        @test (defaults.item_timeout_factor, defaults.item_timeout_minimum_minutes) == (2, 5)
+        @test ProcessingConfig(edited(d -> d["config"]["item_timeout_factor"] = 1.5)).item_timeout_factor == 1.5
+        @test ProcessingConfig(edited(d -> d["config"]["item_timeout_minimum_minutes"] = 0)).item_timeout_minimum_minutes == 0
+        @test_throws "`config.item_timeout_factor` must be positive, got 0.0" ProcessingConfig(edited(d -> d["config"]["item_timeout_factor"] = 0))
+        @test_throws "`config.item_timeout_minimum_minutes` must be zero or positive, got -1.0" ProcessingConfig(edited(d -> d["config"]["item_timeout_minimum_minutes"] = -1))
+        @test_throws "`config.item_timeout_factor` must be a Real" ProcessingConfig(edited(d -> d["config"]["item_timeout_factor"] = "2"))
+        # a processor timeout is "auto" or a number of seconds
+        timeout(value) = ProcessingConfig(edited(d -> d["processors"]["process_dsp_cal"]["kwargs"]["timeout"] = value)).processors[:process_dsp_cal].kwargs[:timeout]
+        @test timeout("auto") == "auto"
+        @test timeout(600) == 600
+        @test_throws "`processors.process_dsp_cal.kwargs.timeout` must be \"auto\" or a number of seconds that is zero or positive, got \"never\"" timeout("never")
+        @test_throws "`processors.process_dsp_cal.kwargs.timeout` must be \"auto\" or a number of seconds that is zero or positive, got -1" timeout(-1)
+        defaults = ProcessingConfig(edited(d -> foreach(k -> delete!(d["config"], k),
+                                                        ("worker_restart_delay_seconds", "worker_heartbeat_timeout_minutes"))))
+        @test (defaults.worker_restart_delay_seconds, defaults.worker_heartbeat_timeout_minutes) == (30, 5)
+        @test ProcessingConfig(edited(d -> d["config"]["worker_restart_delay_seconds"] = 0)).worker_restart_delay_seconds == 0
+        @test_throws "`config.worker_restart_delay_seconds` must be zero or positive, got -1" ProcessingConfig(edited(d -> d["config"]["worker_restart_delay_seconds"] = -1))
+        @test_throws "`config.worker_heartbeat_timeout_minutes` must be at least 2, got 1" ProcessingConfig(edited(d -> d["config"]["worker_heartbeat_timeout_minutes"] = 1))
+        @test_throws "`config.worker_restart_delay_seconds` must be a Int64" ProcessingConfig(edited(d -> d["config"]["worker_restart_delay_seconds"] = 2.5))
+        @test ProcessingConfig(edited(d -> delete!(d["config"]["runmode_settings"]["slurm"], "worker_memory"))).slurm_worker_memory ===
+              :shared
+        @test ProcessingConfig(edited(d -> d["config"]["runmode_settings"]["slurm"]["worker_memory"] = "fixed")).slurm_worker_memory ===
+              :fixed
+        @test_throws "`config.runmode_settings.slurm.worker_memory` must be \"shared\" or \"fixed\", got :half" ProcessingConfig(edited(d -> d["config"]["runmode_settings"]["slurm"]["worker_memory"] = "half"))
         @test_throws "`p_processors.p_process_energy_cal.category` must be \"cal\" or \"phy\"" ProcessingConfig(edited(d -> d["p_processors"]["p_process_energy_cal"]["category"] = "physics"))
         @test_throws "`processors.process_dsp_cal.enabled` must be a Bool" ProcessingConfig(edited(d -> d["processors"]["process_dsp_cal"]["enabled"] = "yes"))
         @test_throws "`processors.process_dsp_cal.rank` must be a $Int" ProcessingConfig(edited(d -> d["processors"]["process_dsp_cal"]["rank"] = 5.5))
@@ -223,6 +260,7 @@ const STUB_PROCESSORS = Dict{Symbol,Any}(:process_a => process_a, :p_process_b =
         positional(; kw...) = ProcessingConfig(values(merge(fields, kw))...)
         @test_throws "runmode must be \"local\" or \"slurm\", got :cluster" positional(runmode = :cluster)
         @test_throws "`config.runmode_settings.local.n` must be positive" positional(local_n = 0)
+        @test_throws "`config.runmode_settings.slurm.worker_memory` must be \"shared\" or \"fixed\", got :half" positional(slurm_worker_memory = :half)
         @test_throws "only one of `only_partitions` or `only_runs`" positional(only_runs = true, only_partitions = true)
         @test_throws "`config.processor_plot_level` must be \"info\" or \"debug\"" positional(processor_plot_level = :verbose)
         @test_throws "`config.plot_formats` must list only" positional(plot_formats = [:gif])

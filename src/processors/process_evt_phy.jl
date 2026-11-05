@@ -28,7 +28,7 @@ function process_evt_phy(processing_config, l200::LegendData, period::DataPeriod
                          subsystems::Vector{Symbol} = [:geds, :spms, :pmts, :aux], use_cache::Bool = true)
     @info "Process events for period $period and run $run"
 
-    filekeys = filter(!in(bad_filekeys(l200; load_key = :unprocessable)), only(runinfo(l200, (period, run, :phy)).keys))
+    filekeys = run_filekeys(l200, period, run, :phy)
 
     filekey = start_filekey(l200, (period, run, :phy))
     @info "Found start filekey $filekey"
@@ -150,4 +150,5 @@ function process_evt_phy(processing_config, l200::LegendData, period::DataPeriod
     return flush(stdout)
 end
 
-register_processor!(process_evt_phy; output_tiers = [:jlevt, :jlpmt], detector_selection = false)
+register_processor!(process_evt_phy; output_tiers = [:jlevt, :jlpmt], detector_selection = false,
+                    items = (_, l200, period, run) -> run_filekeys(l200, period, run, :phy))

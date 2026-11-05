@@ -69,7 +69,10 @@ the processing config. To add one:
    only_first_period::Bool = true, kwargs...)`. Add explicit `using` imports to
    `src/JuLeAna.jl` for any new names it uses.
 2. Add `include("processors/process_xxx.jl")` to `src/JuLeAna.jl`.
-3. End the file with `register_processor!(process_xxx)`.
+3. End the file with `register_processor!(process_xxx)`. A processor whose items for
+   [`parallel`](@ref) follow from the metadata alone, such as the filekeys of a run from
+   [`JuLeAna.run_filekeys`](@ref), passes the function that returns them as `items`, so
+   that the dataflow counts them when it starts.
 4. Add an entry `process_xxx` to the `processors` (or `p_processors`) section of the
    processing config. A processor that selects detectors loads the channel info with
    only the `system` keyword and applies

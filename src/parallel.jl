@@ -54,6 +54,102 @@ end
 
 Base.put!(p::StoppablePool, worker::Int) = put!(p.pool, worker)
 
+# An item that waits in a `WorkerQueue`; `result` is the worker it gets or the exception
+# that ended the wait.
+mutable struct QueuedItem
+    const key::Any
+    const seq::Int
+    const ready::Threads.Event
+    result::Any
+end
+
+"""
+    JuLeAna.WorkerQueue(order = identity, refresh = () -> false)
+
+Order in which the waiting items of [`parallel`](@ref) get free workers. [`run_processing`](@ref)
+sets one queue for all steps of a run. A free worker goes to the waiting item with the
+smallest `order(key)`, and among equal ones to the item that came first. The key of an item
+is its step in `run_processing` followed by the item's position, and `order` puts the
+priority of the step first, so the items of a step get workers in their order. When the
+priorities change, [`JuLeAna.resort!`](@ref) sorts the waiting items again; `refresh()` is
+called before every handout and returns whether they changed.
+
+Every waiting item adds one task that takes a worker from the pool, and that task hands the
+worker to the item that is first at that moment. These tasks wait side by side, so the
+initialization of new workers, which happens when a worker is taken, also runs side by side.
+"""
+mutable struct WorkerQueue
+    const lock::ReentrantLock
+    # sorted by `(order(key), seq)`
+    const waiting::Vector{QueuedItem}
+    seq::Int
+    const order::Any
+    const refresh::Any
+end
+
+WorkerQueue(order = identity, refresh = () -> false) = WorkerQueue(ReentrantLock(), QueuedItem[], 0, order, refresh)
+
+"""
+    JuLeAna.resort!(q::WorkerQueue)
+
+Sort the waiting items of `q` by the current `order` of their keys.
+"""
+resort!(q::WorkerQueue) = @lock q.lock sort!(q.waiting; by = i -> (q.order(i.key), i.seq))
+
+# Worker queue of the current processing run, set by `run_processing`; `nothing` outside of it.
+const WORKER_QUEUE = ScopedValue{Union{Nothing,WorkerQueue}}(nothing)
+
+# The current processing step `(period, run, processor)`, under which the items of `parallel`
+# wait in the `WORKER_QUEUE`; set by `run_processing`.
+const QUEUE_STEP = ScopedValue{Any}(nothing)
+
+# Number of items of the current processing step counted when `run_processing` started;
+# `nothing` when the step's items are not counted.
+const STEP_ITEMS = ScopedValue{Union{Nothing,Int}}(nothing)
+
+# Worker pool of one item of `parallel` that gets its worker from `pool` through `queue`.
+struct QueuedPool{P<:AbstractWorkerPool} <: AbstractWorkerPool
+    pool::P
+    queue::WorkerQueue
+    key::Any
+end
+
+function Base.take!(p::QueuedPool)
+    q = p.queue
+    item = @lock q.lock begin
+        item = QueuedItem(p.key, q.seq += 1, Threads.Event(), nothing)
+        insert!(q.waiting, searchsortedfirst(q.waiting, item; by = i -> (q.order(i.key), i.seq)), item)
+        item
+    end
+    # The worker may go to another item, so the task must not report it as this item's.
+    errormonitor(Threads.@spawn with(() -> serve_first!(p), ITEM_STARTED => nothing))
+    wait(item.ready)
+    item.result isa Exception && throw(item.result)
+    started = ITEM_STARTED[]
+    isnothing(started) || started(item.result)
+    return item.result::Int
+end
+
+Base.put!(p::QueuedPool, worker::Int) = put!(p.pool, worker)
+
+# Take a worker from `p.pool`, or the exception that prevents it, and hand it to the first
+# item of `p.queue`. Each waiting item adds one call, so the queue is not empty when it ends.
+function serve_first!(p::QueuedPool)
+    result = try
+        take!(p.pool)
+    catch e
+        e
+    end
+    q = p.queue
+    item = @lock q.lock begin
+        q.refresh() && sort!(q.waiting; by = i -> (q.order(i.key), i.seq))
+        popfirst!(q.waiting)
+    end
+    item.result = result
+    notify(item.ready)
+    return nothing
+end
+
 """
     failure_log(log_nt, itr, message::AbstractString)
 
@@ -97,6 +193,62 @@ function watch_tasks(advance, tasks::AbstractArray{Task}; poll::Real = 2)
     return nothing
 end
 
+# Worker pool of one item of `parallel`. `onworker` does not count a worker whose process ends
+# while it runs the item as a try and tries the item again on another worker, which a start
+# script with a restart loop always provides; so an item that ends every worker, such as by
+# running out of memory, would be tried forever. This pool counts these ends and throws instead
+# of handing out a worker once there were `tries` of them. With `timeout > 0`, it also ends the
+# process of a worker other than the main process once the item has run for `timeout` seconds
+# on it (see `kill_worker`).
+mutable struct ItemPool{P<:AbstractWorkerPool} <: AbstractWorkerPool
+    const pool::P
+    const label::String
+    const timeout::Float64
+    const tries::Int
+    const timeouts::Threads.Atomic{Int}
+    ended::Int
+    timer::Union{Nothing,Timer}
+end
+
+function ItemPool(pool::AbstractWorkerPool, label::AbstractString, timeout::Real, tries::Integer)
+    return ItemPool(pool, String(label), Float64(timeout), Int(tries), Threads.Atomic{Int}(0), 0, nothing)
+end
+
+function Base.take!(p::ItemPool)
+    n, timeouts = p.ended, p.timeouts[]
+    if n >= p.tries
+        n == timeouts &&
+            error("the item ran longer than its timeout of $(p.timeout) s on $n worker$(n == 1 ? ", which was" : "s, which were") ended")
+        error("the process of the worker ended while it ran the item, $n time$(n == 1 ? "" : "s")" *
+              (timeouts > 0 ? ", $timeouts of them after the timeout of $(p.timeout) s" : ""))
+    end
+    worker = take!(p.pool)
+    (worker == myid() || p.timeout == 0) && return worker
+    try
+        # asked now, while the worker answers, so that it can be ended later
+        worker_attributes(worker)
+    catch e
+        @warn "The attributes of worker $worker are not known, so the timeout of item $(p.label) cannot end it" exception = e
+        return worker
+    end
+    p.timer = Timer(p.timeout) do _
+        Threads.atomic_add!(p.timeouts, 1)
+        @warn "Item $(p.label) ran longer than its timeout of $(p.timeout) s: ending worker $worker"
+        try
+            kill_worker(worker)
+        catch e
+            @error "Could not end worker $worker after the timeout of item $(p.label)" exception = (e, catch_backtrace())
+        end
+    end
+    return worker
+end
+
+function Base.put!(p::ItemPool, worker::Int)
+    isnothing(p.timer) || close(p.timer)
+    worker == myid() || worker in workers() || (p.ended += 1)
+    return put!(p.pool, worker)
+end
+
 """
     parallel(f, iterator::AbstractArray, log_nt; timeout::Real=0, retry::Bool=false, process_name::AbstractString="")
     parallel(iterator::AbstractArray, log_nt; kwargs...) do itr
@@ -119,9 +271,12 @@ left to the step of an earlier period, counts as not run in the progress.
 
 An item whose `f` throws, or exceeds `timeout` seconds when `timeout > 0`, does not abort
 the batch: its pair is `itr => (processed = false, log = failure_log(log_nt, itr, msg))`.
-A timed-out item's worker process is terminated and not replaced; an item on the main
-process keeps running in the background. With `retry = true`, each item gets up to three
-attempts after a worker loss or a timeout; an error thrown by `f` is not retried.
+When an item exceeds `timeout` on a worker, the process of that worker is ended at once with
+[`JuLeAna.kill_worker`](@ref), also while it computes; a worker started by a start script of
+[`JuLeAna.worker_start_script`](@ref) is then replaced. An item on the main process has no
+timeout. An item whose worker process ends while it runs, after the timeout or otherwise
+(such as for lack of memory), fails; with `retry = true` it is tried again on another worker,
+up to three times in all. An error thrown by `f` is not retried.
 
 Element types without a [`failure_log`](@ref) method for `log_nt` are rejected with an
 `ArgumentError` before any work starts.
@@ -139,7 +294,8 @@ Inside [`run_processing`](@ref), a stop of the processing run takes effect here:
 have not been handed to a worker are not run, items already running finish, and `parallel`
 then throws [`ProcessingStopped`](@ref) instead of returning. When the run is stopped without
 waiting for running items, `parallel` throws right away and the running items go on in
-the background; their workers return to the pool when the items end.
+the background; their workers return to the pool when the items end. The items of all
+running steps get free workers in the order of the run's [`JuLeAna.WorkerQueue`](@ref).
 
 # Examples
 ```julia
@@ -174,6 +330,11 @@ function parallel(f, iterator::AbstractArray, log_nt::Type{<:NamedTuple}; timeou
                          PROCESSOR_LOG_LEVEL => log_level, PLOT_LEVEL => plot_level, PLOT_FORMATS => plot_formats, CURRENT_ITEM => itr)
     stop = PROCESSING_STOP[]
     pool = isnothing(stop) ? ppt_worker_pool() : StoppablePool(ppt_worker_pool(), stop)
+    queue, queue_step = WORKER_QUEUE[], QUEUE_STEP[]
+    item_pool(id) = isnothing(queue) ? pool : QueuedPool(pool, queue, (queue_step, id))
+    counted = STEP_ITEMS[]
+    isnothing(counted) || counted == length(iterator) ||
+        @debug "parallel: $(length(iterator)) items, $counted counted when the processing run started"
     step = PROGRESS_STEP[]
     first_id = isnothing(step) ? 0 : items_queued!(step..., length(iterator))
     flush(stdout)
@@ -205,11 +366,11 @@ function parallel(f, iterator::AbstractArray, log_nt::Type{<:NamedTuple}; timeou
     tasks = broadcast(iterator, ids) do itr, id
         Threads.@spawn begin
             started = isnothing(step) ? nothing : worker -> item_started!(step..., id, worker, label(itr))
+            item_workers = ItemPool(item_pool(id), "$itr", timeout, retry ? 3 : 1)
             result, outcome = try
-                # Past `maxtime`, onworker terminates the worker (never the main process) and
-                # counts the timeout as a failed try; the last failure lands in the catch below.
+                # The last timeout or worker loss lands in the catch below.
                 with(ITEM_STARTED => started) do
-                    onworker(; pool, tries = retry ? 3 : 1, label = "$itr", maxtime = timeout) do
+                    onworker(; pool = item_workers, tries = retry ? 3 : 1, label = "$itr") do
                         try
                             res = run_item(itr)
                             return itr => res, item_outcome(res)

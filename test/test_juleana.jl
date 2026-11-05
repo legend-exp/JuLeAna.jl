@@ -225,6 +225,12 @@ end
 
         @test_throws "no failure_log method for items of type Int64" parallel(identity, [1, 2], FkLog)
 
+        # a step of `run_processing` that hands over another number of items than counted at the start
+        one_item() = parallel(k -> (processed = true, log = FkLog((k, ProcessStatus(1), "a", "b", ""))), [fk], FkLog)
+        @test_logs (:debug, "parallel: 1 items, 2 counted when the processing run started") min_level = Logging.Debug match_mode = :any with(one_item,
+                                                                                                                                             JuLeAna.STEP_ITEMS =>
+                                                                                                                                                 2)
+
         viaDo = parallel([fk], FkLog; process_name = "do-block") do k
             (processed = true, log = FkLog((k, ProcessStatus(1), "a", "b", "")))
         end
@@ -262,10 +268,9 @@ end
         e = only(JuLeAna.progress(store).steps)
         @test (e.done, e.failed, e.notrun) == (1, 0, 1)
 
-        # Without workers the item runs on the main process, which onworker does not terminate.
-        slow = parallel(k -> (sleep(5); (processed = true,)), [fk], FkLog; timeout = 0.2)
-        @test !only(slow).second.processed
-        @test only(slow).second.log.Status == ProcessStatus(0)
+        # Without workers the item runs on the main process, which a timeout never ends.
+        slow = parallel(k -> (sleep(1); (processed = true,)), [fk], FkLog; timeout = 0.2)
+        @test only(slow).second.processed
 
         finished = Threads.Atomic{Int}(0)
         staggered = [Threads.@spawn sleep(0.05 * k) for k in 1:4]

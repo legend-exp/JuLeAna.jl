@@ -147,6 +147,41 @@ waitfor(cond; timeout = 60) = timedwait(cond, timeout; pollint = 0.05) === :ok
         @test JuLeAna.items_queued!(store, a, 1) == first_id + 3
     end
 
+    @testset "item timings" begin
+        store = ProgressStore()
+        a, b, c = (p3, r1, :run_a), (p3, r2, :run_a), (p3, nothing, :p_part_b)
+        JuLeAna.reset_progress!(store, [a, b, c])
+        ia, ib, ic = JuLeAna.items_queued!(store, a, 3), JuLeAna.items_queued!(store, b, 1), JuLeAna.items_queued!(store, c, 2)
+        JuLeAna.item_started!(store, a, ia, 1, "fk1")
+        sleep(0.1)
+        JuLeAna.item_started!(store, b, ib, 2, "fk2")
+        sleep(0.05)
+        JuLeAna.item_finished!(store, a, ia, :done)
+        JuLeAna.item_finished!(store, b, ib, :done)
+        JuLeAna.item_started!(store, a, ia + 1, 1, "fk3")
+        JuLeAna.item_finished!(store, a, ia + 1, :done)
+        # failed and not run items are not timed
+        JuLeAna.item_started!(store, c, ic, 1, "V01")
+        JuLeAna.item_started!(store, c, ic + 1, 2, "V02")
+        JuLeAna.item_finished!(store, c, ic, :failed)
+        JuLeAna.item_finished!(store, c, ic + 1, :notrun)
+        # nor is an abandoned item that ends later
+        JuLeAna.item_started!(store, a, ia + 2, 1, "fk4")
+        JuLeAna.items_abandoned!(store, a)
+        JuLeAna.item_finished!(store, a, ia + 2, :done)
+        # the items of both runs are pooled per processor
+        t = only(JuLeAna.item_timings(store))
+        @test t.process === :run_a && t.items == 3
+        @test t.min < t.median < t.p95 < t.p99 < t.max && t.median >= 0.05 && t.max >= 0.15
+        # a new run starts without item times; an untimed run records none
+        JuLeAna.reset_progress!(store, [a]; timed = false)
+        @test isempty(JuLeAna.item_timings(store))
+        id = JuLeAna.items_queued!(store, a, 1)
+        JuLeAna.item_started!(store, a, id, 1, "fk5")
+        JuLeAna.item_finished!(store, a, id, :done)
+        @test isempty(JuLeAna.item_timings(store))
+    end
+
     @testset "busy workers of a controller" begin
         ctrl = DataflowController(Dict{String,Any}())
         a = (p3, r1, :run_a)

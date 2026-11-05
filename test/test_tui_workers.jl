@@ -36,9 +36,13 @@ workers_screen(tb) = join((row_text(tb, r) for r in 1:tb.height), "\n")
                    allocation(3, :failed; finished = t0 + Minute(1), exit_code = 3, output = ["boom"]),
                    allocation(4, :ended; finished = t0 + Minute(2), exit_code = 0)]
     script = (; path = "/prod/config/startjlworkers.sh", text = "#!/bin/bash\nsrun julia\n")
+    local_attributes = (; host = "cslg4", os_pid = 101, threads = 4, memory = 64 * 2^30, job = "", step = "", tasks = "", cpus = "",
+                        gpus = "")
     slurm = (; queue = "JOBID PARTITION NAME\n4711 debug julia-42-1\n", idle = "PARTITION AVAIL NODES\ndebug* up 3\n")
     overview(; slurm = nothing, script = script) = (; allocations, script,
-                                                    workers = [(; pid = 2, host = "cslg4"), (; pid = 3, host = nothing)], slurm)
+                                                    workers = [(; pid = 2, attributes = local_attributes),
+                                                               (; pid = 3, attributes = nothing)],
+                                                    steps = JuLeAna.StepInfo[], slurm)
     snap = (; nworkers = 2, idle_deadline = DateTime(2026, 10, 15, 12, 4, 12))
     busy = [JuLeAna.BusyItem((2, "item", DataPeriod(2), DataRun(6), :process_dsp_cal, t0, false))]
 
@@ -224,7 +228,7 @@ workers_screen(tb) = join((row_text(tb, r) for r in 1:tb.height), "\n")
 
     @testset "wheel over the worker list and the worker output" begin
         wheel(x, y, button) = Tachikoma.MouseEvent(x, y, button, Tachikoma.mouse_press, false, false, false)
-        many = [(; pid, host = "viper") for pid in 2:41]
+        many = [(; pid, attributes = (; local_attributes..., host = "viper")) for pid in 2:41]
         page = loaded_page((; overview()..., workers = many))
         press!(page, KeyEvent(:tab))
         render_workers_page(page, snap)
@@ -272,6 +276,26 @@ workers_screen(tb) = join((row_text(tb, r) for r in 1:tb.height), "\n")
         list = page.worker_list
         @test JuLeAna.workers_mouse!(page, click(list.x + 3, list.y + 1))
         @test JuLeAna.workers_selected_worker(page).pid == 3 && page.focus == 2
+    end
+
+    @testset "SLURM worker steps" begin
+        attributes = (; host = "vipc2329", os_pid = 101, threads = 2, memory = 120 * 2^30, job = "4711", step = "3", tasks = "1",
+                      cpus = "2", gpus = "")
+        steps = [(; id = "4711.2", node = "vipc2329", state = "OUT_OF_MEMORY", exit_code = "0:125", elapsed = "00:03:10", rss = nothing,
+                  max_rss = 2^30),
+                 (; id = "4711.3", node = "vipc2329", state = "RUNNING", exit_code = "0:0", elapsed = "00:01:00", rss = 5 * 2^30,
+                  max_rss = 8 * 2^30)]
+        page = loaded_page((; overview(; slurm)..., workers = [(; pid = 2, attributes)], steps))
+        text = workers_screen(render_workers_page(page, snap; width = 200))
+        # the row shows the memory of the worker's step, the title of its output its attributes
+        @test occursin("vipc2329     5.0/8.0 GB", text)
+        @test occursin("Output of worker 2 │ vipc2329 │ step 4711.3 │ 2 threads │ 2 CPUs │ memory 120.0 GB", text)
+        press!(page, KeyEvent('s'))
+        tb = render_workers_page(page, snap; width = 200)
+        text = workers_screen(tb)
+        # only the running and pending steps, below the queue and the idle nodes
+        @test occursin("4711.3        vipc2329    RUNNING        0:0   00:01:00    5.0/8.0 GB", text) && !occursin("4711.2", text)
+        @test find_text(tb, "4711 debug").y < find_text(tb, "debug* up 3").y < find_text(tb, "4711.3").y
     end
 
     @testset "SLURM pane" begin

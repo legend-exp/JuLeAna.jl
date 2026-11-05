@@ -61,7 +61,7 @@ press!(m, keys...) = foreach(k -> Tachikoma.update!(m, KeyEvent(k)), keys)
     end
     run_stub(cfg, l200, period, run; reprocess = false) = nothing
     part_stub(cfg, l200, period; reprocess = false, only_first_period = false) = false
-    energy_stub(cfg, l200, period, run; reprocess = false, max_wvfs = 10, channels = Symbol[]) = nothing
+    energy_stub(cfg, l200, period, run; reprocess = false, max_wvfs = 10, channels = Symbol[], timeout = 0) = nothing
     processors = Dict{Symbol,Any}(:process_energy_calibration_cal => energy_stub, :process_dsp_cal => run_stub,
                                   :p_process_aoe_cut_cal => part_stub)
     new_tui(session = new_session()) = JuLeAna.JuLeAnaTUI(DataflowController(session; processors, record_software = false,
@@ -350,6 +350,19 @@ press!(m, keys...) = foreach(k -> Tachikoma.update!(m, KeyEvent(k)), keys)
         press!(m, 'U')
         @test setup_refreshed!(m)
         @test isempty(only(filter(p -> p.name === :process_energy_calibration_cal, m.snap.processors)).overridden)
+
+        # a timeout is "auto" or a number of seconds, whichever of them it is now
+        timeout() = only(filter(p -> p.name === :process_energy_calibration_cal, m.snap.processors)).kwargs[:timeout]
+        press!(m, :down, :down, :enter, 'a', 'u', 't', 'o', :enter)
+        @test setup_refreshed!(m)
+        @test timeout() == "auto"
+        press!(m, :enter, :backspace, :backspace, :backspace, :backspace, '9', '0', :enter)
+        @test setup_refreshed!(m)
+        @test timeout() === 90.0
+        press!(m, :enter, :backspace, :backspace, :backspace, :backspace, 'x', :enter)
+        @test m.setup.editor.error == "expected a number, got `x`"
+        press!(m, :escape, 'U')
+        @test setup_refreshed!(m)
         press!(m, :escape)
         @test isnothing(m.setup.editor)
         @test isnothing(m.command_error)
