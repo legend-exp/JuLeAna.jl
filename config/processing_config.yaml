@@ -362,6 +362,22 @@ processors:
       - process_dsp_phy
       - process_dsp_aux_phy
 
+  process_pmts_calibration_cal:
+    detectors: "processable && usability == :on"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
+    enabled: false
+    category: cal
+    log_level: info
+    plot_level: info
+    rank: 19
+    kwargs:
+      reprocess: false
+      timeout: auto
+    dependencies: []
+
   process_evt_phy:
     report_status:
       on: {warning: failure, failure: failure}
@@ -371,7 +387,7 @@ processors:
     category: phy
     log_level: info
     plot_level: info
-    rank: 19
+    rank: 20
     kwargs:
       reprocess: false
       timeout: auto
@@ -386,6 +402,7 @@ processors:
       - p_process_lq_calibration_cut_cal
       - p_process_sipm_calibration_phy
       - process_sipm_calibration_phy
+      - process_pmts_calibration_cal
 
   process_stability_plots_phy:
     detectors: "processable && usability != :off"
@@ -397,7 +414,7 @@ processors:
     category: phy
     log_level: info
     plot_level: info
-    rank: 20
+    rank: 21
     kwargs:
       reprocess: false
       timeout: auto
