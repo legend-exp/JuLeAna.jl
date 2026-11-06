@@ -197,9 +197,11 @@ end
 # while it runs the item as a try and tries the item again on another worker, which a start
 # script with a restart loop always provides; so an item that ends every worker, such as by
 # running out of memory, would be tried forever. This pool counts these ends and throws instead
-# of handing out a worker once there were `tries` of them. With `timeout > 0`, it also ends the
-# process of a worker other than the main process once the item has run for `timeout` seconds
-# on it (see `kill_worker`).
+# of handing out a worker once there were `tries` of them. An end of the worker with its SLURM
+# job (see `worker_job_ended`), at the job's time limit or cancelled, does not count: the item
+# runs again on the next free worker, at most `JOB_END_TRIES` times, so that an item that runs
+# longer than the time limit fails. With `timeout > 0`, it also ends the process of a worker
+# other than the main process once the item has run for `timeout` seconds on it (see `kill_worker`).
 mutable struct ItemPool{P<:AbstractWorkerPool} <: AbstractWorkerPool
     const pool::P
     const label::String
@@ -207,11 +209,15 @@ mutable struct ItemPool{P<:AbstractWorkerPool} <: AbstractWorkerPool
     const tries::Int
     const timeouts::Threads.Atomic{Int}
     ended::Int
+    # ends of the worker with its SLURM job
+    job_ends::Int
     timer::Union{Nothing,Timer}
 end
 
+const JOB_END_TRIES = 3
+
 function ItemPool(pool::AbstractWorkerPool, label::AbstractString, timeout::Real, tries::Integer)
-    return ItemPool(pool, String(label), Float64(timeout), Int(tries), Threads.Atomic{Int}(0), 0, nothing)
+    return ItemPool(pool, String(label), Float64(timeout), Int(tries), Threads.Atomic{Int}(0), 0, 0, nothing)
 end
 
 function Base.take!(p::ItemPool)
@@ -222,15 +228,19 @@ function Base.take!(p::ItemPool)
         error("the process of the worker ended while it ran the item, $n time$(n == 1 ? "" : "s")" *
               (timeouts > 0 ? ", $timeouts of them after the timeout of $(p.timeout) s" : ""))
     end
+    p.job_ends >= JOB_END_TRIES && error("the SLURM job of the worker ended while it ran the item, $(p.job_ends) times")
     worker = take!(p.pool)
-    (worker == myid() || p.timeout == 0) && return worker
+    worker == myid() && return worker
     try
-        # asked now, while the worker answers, so that it can be ended later
+        # asked now, while the worker answers: they tell whether a later end of the worker is the
+        # end of its SLURM job, and the timeout needs them to end the worker
         worker_attributes(worker)
     catch e
-        @warn "The attributes of worker $worker are not known, so the timeout of item $(p.label) cannot end it" exception = e
+        @warn "The attributes of worker $worker are not known, so its end counts as a try of item $(p.label)" *
+              (p.timeout == 0 ? "" : " and the timeout cannot end it") exception = e
         return worker
     end
+    p.timeout == 0 && return worker
     p.timer = Timer(p.timeout) do _
         Threads.atomic_add!(p.timeouts, 1)
         @warn "Item $(p.label) ran longer than its timeout of $(p.timeout) s: ending worker $worker"
@@ -245,7 +255,16 @@ end
 
 function Base.put!(p::ItemPool, worker::Int)
     isnothing(p.timer) || close(p.timer)
-    worker == myid() || worker in workers() || (p.ended += 1)
+    if worker != myid() && worker ∉ workers()
+        if worker_job_ended(worker)
+            p.job_ends += 1
+            @warn "The SLURM job of worker $worker ended while it ran item $(p.label): " *
+                  (p.job_ends < JOB_END_TRIES ? "the item runs again on the next free worker" :
+                   "the item fails after $(p.job_ends) such ends")
+        else
+            p.ended += 1
+        end
+    end
     return put!(p.pool, worker)
 end
 
@@ -276,7 +295,10 @@ When an item exceeds `timeout` on a worker, the process of that worker is ended 
 [`JuLeAna.worker_start_script`](@ref) is then replaced. An item on the main process has no
 timeout. An item whose worker process ends while it runs, after the timeout or otherwise
 (such as for lack of memory), fails; with `retry = true` it is tried again on another worker,
-up to three times in all. An error thrown by `f` is not retried.
+up to three times in all. A worker that ends with its SLURM job, at the job's time limit or
+cancelled (see [`JuLeAna.worker_job_ended`](@ref)), does not count: the item runs again on the
+next free worker, waiting for one if none is left, and fails after three such ends. An error
+thrown by `f` is not retried.
 
 Element types without a [`failure_log`](@ref) method for `log_nt` are rejected with an
 `ArgumentError` before any work starts.

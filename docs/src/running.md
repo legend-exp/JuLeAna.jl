@@ -195,7 +195,10 @@ the session.
 An allocation is a group of workers started by one run of the script, local or as a SLURM
 job. A worker that ends, for example after running out of memory or after being stopped,
 is started again in its place after `worker_restart_delay_seconds` (default 30), until the
-allocation is cancelled. While it has allocations, `juleana` touches the file
+allocation is cancelled. The item it ran fails, unless its processor tries items again. An item
+whose worker ended with its SLURM job, at the job's time limit or cancelled, runs again on the
+next free worker, waiting for one if no allocation is left, and fails only after the third such
+end. While it has allocations, `juleana` touches the file
 `juleana-<host>-<pid>.alive` in the `setup/config` folder every minute. If a worker ends while
 that file has not been touched for `worker_heartbeat_timeout_minutes` (default 5), for
 example because `juleana` crashed, the allocation ends itself. Both are keys of the
@@ -205,11 +208,12 @@ SLURM jobs that carry the job name of the allocation. Quitting `juleana` cancels
 allocations.
 
 The list of workers shows the host of each worker and, for SLURM workers, the memory of its
-job step and the peak memory in GB; the title of the output of the selected worker shows
+job step and the peak memory in GB, and the CPUs the step used over the last minute and, in
+parentheses, over its whole run; the title of the output of the selected worker shows
 its attributes (job step, threads, CPUs, the memory it may use, GPUs). SLURM measures the
 memory every few seconds, so a short peak can be missing. `s` switches the right column to
 the SLURM view: the output of `squeue` and `sinfo -t idle`, then the running and pending job
-steps of the allocations with node, state, exit code, run time and memory.
+steps of the allocations with node, state, exit code, run time, memory and CPUs.
 
 Idle allocations are cancelled after `idle_timeout_minutes` of the
 [config](@ref Configuration) (default 20, `0` disables) without processing. The status panel under the tabs
@@ -234,7 +238,13 @@ In the `slurm` run mode the start script submits one SLURM job with the settings
 `runmode_settings.slurm` in the config, such as the number of nodes, and waits for it. The job
 runs every worker as its own job step; `--cpu-bind` applies to these steps. The output of
 the job, with the messages of SLURM and of the restarts of workers, goes to
-`julia-workers-<n>.out` in the log directory and to the Workers page. `o` on the Workers
+`julia-workers-<n>.out` in the log directory and to the Workers page. Each end of a worker
+is logged with its run time and exit code. The Workers page shows for each allocation how
+many of its workers ended with an error (an exit code other than 0); the first of them and
+the 10th, 100th and so on are warnings. Started workers connect to `juleana` and wait until
+it adds them. The top line of the Workers page shows how many wait, and a warning comes
+when workers have waited for a minute: a worker that is not added within
+`JULIA_WORKER_TIMEOUT` ends with exit code 1. `o` on the Workers
 page opens a form of the common options: partition, time limit, nodes, workers per node
 (`--ntasks-per-node`), threads per worker (`--cpus-per-task`) and memory per node
 (`--mem`). `Enter` edits the option under the cursor, and an empty value removes it. The

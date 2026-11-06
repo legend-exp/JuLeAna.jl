@@ -60,7 +60,7 @@ function loaded_page(rows = INDEX_ROWS; source = :run)
     JuLeAna.reports_visit!(page, nothing)
     page.source = source
     request = only(JuLeAna.take_requests!(page))
-    JuLeAna.reports_result!(page, (; request = merge(request, (; source)), value = rows, history = nothing, timings = Dict()))
+    JuLeAna.reports_result!(page, (; request = merge(request, (; source)), value = rows, history = nothing))
     return page
 end
 
@@ -194,19 +194,13 @@ press(page, key) = JuLeAna.reports_key!(page, KeyEvent(key))
         # an answer to an older read is dropped
         JuLeAna.reports_result!(page,
                                 (; request = merge(request, (; generation = request.generation - 1)), value = OVERVIEW_ROWS,
-                                 history = nothing, timings = Dict()))
+                                 history = nothing))
         @test !page.loaded && page.reading
-        timing = (; process = :process_dsp_cal, level = :run, category = :cal, items = 3, min = 0.5, median = 1.2, p95 = 3.9, p99 = 4.0,
-                  max = 4.0)
-        JuLeAna.reports_result!(page,
-                                (; request, value = OVERVIEW_ROWS, history = nothing, timings = Dict(("dsp_cal", :run, "cal") => timing)))
+        JuLeAna.reports_result!(page, (; request, value = OVERVIEW_ROWS, history = nothing))
         @test page.loaded && !page.reading
         @test [g.name for g in page.groups] == ["dsp", "energy_calibration"]
-        @test page.groups[1].timing == timing && isnothing(page.groups[2].timing)
         tb = render_reports_page(page)
         @test find_text(tb, "ok 1  warn 0  fail 0") !== nothing && find_text(tb, "miss") === nothing
-        # the item times of the processor follow its counts
-        @test find_text(render_reports_page(page, 180), "fail 0  min/med/95%/99%/max 0.5/1.2/3.9/4.0/4.0 s") !== nothing
         # `r` reads again and keeps the source
         @test press(page, 'r')
         request = only(JuLeAna.take_requests!(page))
@@ -370,7 +364,7 @@ press(page, key) = JuLeAna.reports_key!(page, KeyEvent(key))
         JuLeAna.reports_visit!(page, nothing)
         request = only(JuLeAna.take_requests!(page))
         path = joinpath(mktempdir(), "history.md")
-        JuLeAna.reports_result!(page, (; request, value = OVERVIEW_ROWS, history = path, timings = Dict()))
+        JuLeAna.reports_result!(page, (; request, value = OVERVIEW_ROWS, history = path))
         rows = JuLeAna.reports_rows(page)
         @test rows[1].key == (:history,) && rows[1].report && isnothing(rows[1].group)
         @test rows[2].group.name == "dsp"
@@ -386,8 +380,7 @@ press(page, key) = JuLeAna.reports_key!(page, KeyEvent(key))
         # no history file, no entry
         JuLeAna.close_viewer!(page)
         JuLeAna.reports_result!(page,
-                                (; request = merge(request, (; generation = page.generation)), value = OVERVIEW_ROWS, history = nothing,
-                                 timings = Dict()))
+                                (; request = merge(request, (; generation = page.generation)), value = OVERVIEW_ROWS, history = nothing))
         @test isnothing(page.history) && !any(r -> r.key == (:history,), JuLeAna.reports_rows(page))
     end
 

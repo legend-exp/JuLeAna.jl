@@ -378,14 +378,17 @@ function workers_busy_text(b, at)
            format_duration(seconds_between(b.since, at))
 end
 
-# Spans of the row of the allocation `a` at the time `at`.
+# Spans of the row of the allocation `a` at the time `at`. The number of its workers that ended with an error comes
+# before the job, so that a narrow pane cuts the job instead.
 function workers_allocation_spans(a, at)
     color = WORKERS_STATE_COLORS[a.state]
     duration = format_duration(((something(a.finished, at)) - a.started) / Millisecond(1000))
     job = isnothing(a.job_name) ? "" : a.job_name * (isempty(a.job_ids) ? "" : " (" * join(a.job_ids, ",") * ")") * "  "
     spans = [(lpad(a.id, 2) * " ", Tachikoma.tstyle(:text_bright)), (rpad(a.backend, 6) * " ", Tachikoma.tstyle(:text)),
-             (rpad(a.state, 9) * " ", Tachikoma.tstyle(color, bold = a.state === :running)), (job, Tachikoma.tstyle(:text_dim)),
-             ((a.state === :running ? duration : "ended after " * duration), Tachikoma.tstyle(:text))]
+             (rpad(a.state, 9) * " ", Tachikoma.tstyle(color, bold = a.state === :running))]
+    a.worker_errors > 0 && push!(spans, ("$(a.worker_errors) worker error$(a.worker_errors == 1 ? "" : "s")  ", Tachikoma.tstyle(:error)))
+    push!(spans, (job, Tachikoma.tstyle(:text_dim)),
+          ((a.state === :running ? duration : "ended after " * duration), Tachikoma.tstyle(:text)))
     a.state === :failed && push!(spans, ("  exit $(a.exit_code)", Tachikoma.tstyle(:error)))
     return spans
 end
@@ -394,6 +397,13 @@ end
 function workers_memory_text(step)
     gb(bytes) = isnothing(bytes) ? "–" : Printf.@sprintf("%.1f", bytes / 1024^3)
     return "$(gb(step.rss))/$(gb(step.max_rss)) GB"
+end
+
+# CPUs used by the job step `step` over the last minute and, in parentheses, over its whole run, `–` for a value
+# not reported.
+function workers_cpu_text(step)
+    cpus(n) = isnothing(n) ? "–" : Printf.@sprintf("%.1f", n)
+    return "$(cpus(step.cpu_load)) ($(cpus(step.cpu_mean))) CPUs"
 end
 
 # The job step of the worker `w` in `steps` (by ID), `nothing` for a worker outside SLURM or a step not reported.
@@ -419,11 +429,10 @@ end
 function workers_steps_lines(steps)
     steps = filter(s -> s.state in ("RUNNING", "PENDING"), steps)
     isempty(steps) && return String[]
-    row(id, node, state, exit_code, elapsed, memory) = rpad(id, 14) * rpad(node, 12) * rpad(state, 15) * rpad(exit_code, 6) *
-                                                       rpad(elapsed, 12) *
-                                                       memory
-    return [""; row("STEP", "NODE", "STATE", "EXIT", "ELAPSED", "MEMORY/PEAK");
-            [row(s.id, s.node, s.state, s.exit_code, s.elapsed, workers_memory_text(s)) for s in steps]]
+    row(id, node, state, exit_code, elapsed, memory, cpu) = rpad(id, 14) * rpad(node, 12) * rpad(state, 15) * rpad(exit_code, 6) *
+                                                            rpad(elapsed, 12) * rpad(memory, 15) * cpu
+    return [""; row("STEP", "NODE", "STATE", "EXIT", "ELAPSED", "MEMORY/PEAK", "CPUS MINUTE (RUN)");
+            [row(s.id, s.node, s.state, s.exit_code, s.elapsed, workers_memory_text(s), workers_cpu_text(s)) for s in steps]]
 end
 
 # Spans of the row of the worker `w` at the time `at`; `item` is its busy item or `nothing`, `step` the
@@ -432,7 +441,8 @@ function workers_worker_spans(w, item, step, at)
     a = w.attributes
     spans = [(lpad(w.pid, 3) * " ", Tachikoma.tstyle(:text_bright)),
              (rpad(isnothing(a) ? "…" : ismissing(a) ? "?" : a.host, 12) * " ", Tachikoma.tstyle(:text))]
-    isnothing(step) || push!(spans, (rpad(workers_memory_text(step), 14) * " ", Tachikoma.tstyle(:text_dim)))
+    isnothing(step) || push!(spans, (rpad(workers_memory_text(step), 14) * " " * rpad(workers_cpu_text(step), 14) * " ",
+                                     Tachikoma.tstyle(:text_dim)))
     if isnothing(item)
         push!(spans, ("idle", Tachikoma.tstyle(:text_dim)))
     else
@@ -488,11 +498,14 @@ function workers_output_lines(entries)
     end
 end
 
-# Spans of the information line: workers, busy workers and the countdown to the cancel of idle allocations.
+# Spans of the information line: workers, busy workers, workers that wait to join and the countdown to the cancel of
+# idle allocations.
 function workers_info_spans(page::WorkersPage, snap, busy, at)
     n = isnothing(snap) ? length(workers_list(page)) : snap.nworkers
     spans = [(" workers $n", Tachikoma.tstyle(:primary))]
     isempty(busy) || push!(spans, (", $(length(busy)) busy", Tachikoma.tstyle(:secondary)))
+    joining = isnothing(page.overview) ? 0 : page.overview.joining
+    joining > 0 && push!(spans, (", $joining waiting to join", Tachikoma.tstyle(:warning)))
     push!(spans, ("  · ", Tachikoma.tstyle(:border)))
     if isnothing(snap) || isnothing(snap.idle_deadline)
         push!(spans, ("no idle cancel", Tachikoma.tstyle(:text_dim)))
@@ -522,13 +535,15 @@ Draw the Workers page into `area` of `buf`. `snap` is the controller snapshot (o
 `busy` the busy workers (see `busy_workers`), `messages` the message buffer that keeps the
 output of the workers (see [`JuLeAna.worker_output`](@ref)) and `at` the current UTC time.
 
-A line at the top shows the number of workers and the countdown to the cancel of idle
+A line at the top shows the number of workers, the workers that wait to join (see
+[`JuLeAna.joining_workers`](@ref)) and the countdown to the cancel of idle
 allocations (`idle cancel in mm:ss`, or `no idle cancel`). Two columns follow. The left one
-lists the allocations (number, backend, state, SLURM job name and job IDs, run time or the
-time it ran, the exit code of a failed one) with the output of the script of the selected
+lists the allocations (number, backend, state, the number of its workers that ended with an
+error, SLURM job name and job IDs, run time or the time it ran, the exit code of a failed
+one) with the output of the script of the selected
 allocation below, the newest line at the bottom. The right one lists the workers (process
-ID, host, the memory and peak memory of a SLURM worker in GB, the item a busy worker runs or
-`idle`) with the lines the selected worker wrote below, under a title with its attributes;
+ID, host, the memory and peak memory of a SLURM worker in GB and the CPUs it used over the last
+minute and its whole run, the item a busy worker runs or `idle`) with the lines the selected worker wrote below, under a title with its attributes;
 while that output is scrolled up, it stays on the same lines as new ones arrive. If the
 overview has SLURM output, the right pane can show it instead (`squeue`, `sinfo -t idle`,
 then the running and pending job steps) over the whole column. The focused pane has the

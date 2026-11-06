@@ -118,7 +118,7 @@
                                        step(:p_process_aoe_cut_cal, :partition, p3, nothing, :cancelled)],
                               timings = [timing])])
         allocation(id, state, backend; output = String[]) = (; id, backend, job_name = "julia-$id", started = t0, finished = nothing, state,
-                                                             exit_code = nothing, job_ids = ["4711"], output)
+                                                             exit_code = nothing, job_ids = ["4711"], worker_errors = 2, output)
         overview = convert(WorkersOverview,
                            (;
                             allocations = [allocation(1, :running, :slurm; output = ["starting workers"]), allocation(2, :failed, :local)],
@@ -126,8 +126,9 @@
                             workers = [(; pid = 2,
                                         attributes = (; host = "viper", os_pid = 101, threads = 2, memory = 2^33, job = "4711", step = "0",
                                                       tasks = "1", cpus = "2", gpus = "")), (; pid = 3, attributes = nothing)],
+                            joining = 1,
                             steps = [(; id = "4711.0", node = "viper", state = "RUNNING", exit_code = "0:0", elapsed = "00:01:00",
-                                      rss = 2^30, max_rss = 2^31)],
+                                      rss = 2^30, max_rss = 2^31, cpu_load = 1.9, cpu_mean = 1.5)],
                             slurm = (; queue = "JOBID NAME\n4711 julia-1\n", idle = "debug up\n")))
         report_text = "# Report\n\n## Summary\n\n| detector | status |\n|---|---|\n| V00 | ok |\n| V01 | failed |\n\n```\nfit failed\n```\n"
         m.reports_page.source = :run
@@ -144,8 +145,7 @@
         m.page = 6
         reports_visit!(m.reports_page, snap)
         deliver!(Tachikoma.TaskEvent(:reports,
-                                     (; request = only(take_requests!(m.reports_page)), value = rows, history = nothing,
-                                      timings = Dict{Any,Any}(("dsp_cal", :run, "cal") => timing))))
+                                     (; request = only(take_requests!(m.reports_page)), value = rows, history = nothing)))
         m.page = 7
         history_visit!(m.history_page, snap)
         deliver!(Tachikoma.TaskEvent(:history, (; request = only(take_requests!(m.history_page)), value = grid)))

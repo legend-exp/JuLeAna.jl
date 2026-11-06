@@ -6,6 +6,9 @@ const ALLOCATION_OUTPUT_LINES = 1000
 # The SLURM job name in a start script; every allocation gets its own.
 const SLURM_JOB_NAME = r"--job-name=julia-\d+-\d+"
 
+# The line of a start script for the end of a worker: slot, seconds and exit code.
+const WORKER_END_LINE = r"^Worker slot (\d+): the worker ended after (\d+) s with exit code (\d+)$"
+
 # Signal numbers of SIGTERM and SIGKILL and error number of ESRCH (no such process), the same
 # on Linux and macOS.
 const SIGTERM_SIGNAL = 15
@@ -27,6 +30,9 @@ One run of the worker start script, started by [`JuLeAna.add_workers!`](@ref). F
   other exit) or `:cancelled`.
 - `exit_code`: the exit code of the script, `nothing` while it runs.
 - `job_ids::Vector{String}`: the SLURM job IDs of the allocation at the last query.
+- `worker_errors::Int`: the number of workers of the allocation that ended with an exit code
+  other than 0 while it ran, as the lines `Worker slot <n>: the worker ended after <s> s with
+  exit code <code>` of the script report them (see [`JuLeAna.worker_start_script`](@ref)).
 - `output::Vector{String}`: the last 1000 lines of the standard and error output of the
   script.
 """
@@ -40,6 +46,7 @@ mutable struct WorkerAllocation
     exit_code::Union{Nothing,Int}
     finished::Union{Nothing,DateTime}
     job_ids::Vector{String}
+    worker_errors::Int
     const output::Vector{String}
 end
 
@@ -136,6 +143,27 @@ function kill_worker(pid::Integer; scancel::Cmd = `scancel`)
 end
 
 """
+    JuLeAna.worker_job_ended(pid::Integer; squeue::Cmd = `squeue`)
+
+Whether the SLURM job of the worker `pid` no longer runs, so that a worker that ended ended
+with its allocation, at its time limit or cancelled, and not through what it ran. `squeue`
+reports the state of the job; any state but `RUNNING` counts as ended. `false` for a worker
+whose [`JuLeAna.worker_attributes`](@ref) are not known or that is not in a SLURM job, and when
+`squeue` reports no state or cannot run.
+"""
+function worker_job_ended(pid::Integer; squeue::Cmd = `squeue`)
+    a = @lock WORKER_ATTRIBUTES_LOCK get(WORKER_ATTRIBUTES, pid, nothing)
+    (isnothing(a) || isempty(a.job)) && return false
+    state = try
+        strip(read(pipeline(ignorestatus(`$squeue --noheader --states=all --jobs=$(a.job) --format=%T`); stderr = devnull), String))
+    catch e
+        e isa Base.IOError || rethrow()
+        ""
+    end
+    return !isempty(state) && state != "RUNNING"
+end
+
+"""
     JuLeAna.StepInfo
 
 A SLURM job step of a worker allocation as `sacct` and `sstat` report it (see
@@ -148,14 +176,25 @@ A SLURM job step of a worker allocation as `sacct` and `sstat` report it (see
 - `elapsed::String`: the run time as `sacct` prints it;
 - `rss`: the resident memory in bytes at the last sample, `nothing` once the step ended;
 - `max_rss`: the peak of the resident memory in bytes, `nothing` if not reported. SLURM
-  samples the memory every few seconds, so a short peak can be missing.
+  samples the memory every few seconds, so a short peak can be missing;
+- `cpu_load`: the CPUs the step used over the last minute, its CPU time since the oldest query
+  of the last minute divided by the time since then; `nothing` at its first query and once the
+  step ended;
+- `cpu_mean`: the CPUs the step used over its whole run, its CPU time divided by its run time;
+  `nothing` once the step ended.
+
+The CPU time is the `AveCPU` of `sstat`, the CPU time of the step's task, which is all of the
+step's CPU time for a worker step with its one task.
 """
 const StepInfo = @NamedTuple{id::String, node::String, state::String, exit_code::String, elapsed::String, rss::Union{Nothing,Int},
-                             max_rss::Union{Nothing,Int}}
+                             max_rss::Union{Nothing,Int}, cpu_load::Union{Nothing,Float64}, cpu_mean::Union{Nothing,Float64}}
 
 # Minimum time between two queries of the job steps; SLURM samples the memory of a step every
 # 10 s (viper) to 30 s (raven).
 const STEPS_READ_SECONDS = 10
+
+# Time over which `StepInfo.cpu_load` measures the CPUs a step uses.
+const CPU_LOAD_SECONDS = 60
 
 """
     WorkerManager(; squeue::Cmd = `squeue`, scancel::Cmd = `scancel`, sinfo::Cmd = `sinfo`,
@@ -173,7 +212,8 @@ and [`JuLeAna.cancel_all!`](@ref) end allocations, [`JuLeAna.allocations`](@ref)
 
 Running allocations are cancelled when nothing has used them for the
 `idle_timeout_minutes` of the config: see [`JuLeAna.idle_deadline`](@ref) and
-[`JuLeAna.check_idle!`](@ref).
+[`JuLeAna.check_idle!`](@ref). [`JuLeAna.check_joining!`](@ref) warns when started workers
+wait to join this process.
 
 `squeue`, `scancel`, `sinfo`, `sacct` and `sstat` are the SLURM commands, without arguments; SLURM counts as
 available when the program of `squeue` is found. [`JuLeAna.workers_overview`](@ref) collects
@@ -192,6 +232,8 @@ mutable struct WorkerManager
     # job steps of the SLURM allocations by job ID, and the `time()` of their last query
     const steps::Dict{String,Vector{StepInfo}}
     steps_read::Float64
+    # `(time(), CPU seconds)` of the running job steps at the queries of the last minute, by step ID
+    const cpu_samples::Dict{String,Vector{Tuple{Float64,Float64}}}
     config::Union{Nothing,ProcessingConfig}
     script_path::Union{Nothing,String}
     script::Union{Nothing,String}
@@ -199,11 +241,15 @@ mutable struct WorkerManager
     jobs::Int
     # UTC time of the last processing run, new allocation or postponement
     last_activity::DateTime
+    # `time()` since which workers wait to join at every check, and whether that was warned about
+    joining_since::Union{Nothing,Float64}
+    joining_warned::Bool
 end
 
 function WorkerManager(; squeue::Cmd = `squeue`, scancel::Cmd = `scancel`, sinfo::Cmd = `sinfo`, sacct::Cmd = `sacct`, sstat::Cmd = `sstat`)
     return WorkerManager(ReentrantLock(), squeue, scancel, sinfo, sacct, sstat, Dict{Int,Union{Nothing,Missing,WorkerAttributes}}(),
-                         WorkerAllocation[], Dict{String,Vector{StepInfo}}(), -Inf, nothing, nothing, nothing, 0, now(UTC))
+                         WorkerAllocation[], Dict{String,Vector{StepInfo}}(), -Inf, Dict{String,Vector{Tuple{Float64,Float64}}}(), nothing,
+                         nothing, nothing, 0, now(UTC), nothing, false)
 end
 
 """
@@ -250,7 +296,8 @@ function restart_loop(n::Integer, cmd::AbstractString, heartbeat::AbstractString
           while true; do
             start=\$SECONDS
             $cmd
-            echo "Worker slot \$slot: the worker ended after \$((SECONDS - start)) s"
+            code=\$?
+            echo "Worker slot \$slot: the worker ended after \$((SECONDS - start)) s with exit code \$code"
             if [ -z "\$(find $(Base.shell_escape_posixly(heartbeat)) -mmin -$minutes 2>/dev/null)" ]; then
               echo "JuLeAna has not touched $(Base.shell_escape_posixly(heartbeat)) for $minutes minutes: ending the allocation"
               $stop
@@ -268,7 +315,8 @@ end
 
 Return the text of the bash script that starts the workers of the run mode of `cfg` and
 connects them to this process. A worker that ends is started again in its slot after
-`cfg.worker_restart_delay_seconds`, so the script
+`cfg.worker_restart_delay_seconds`, and the script prints
+`Worker slot <n>: the worker ended after <s> s with exit code <code>` for its end, so the script
 runs until it is ended, as long as this process runs: when a worker ends and this process has
 not touched its heartbeat file for `cfg.worker_heartbeat_timeout_minutes` (see
 [`JuLeAna.add_workers!`](@ref)), the script
@@ -426,7 +474,7 @@ function add_workers!(mgr::WorkerManager)
         out = Pipe()
         process = run(pipeline(detach(Cmd(["bash", "-c", text])); stdout = out, stderr = out); wait = false)
         close(out.in)
-        alloc = WorkerAllocation(length(mgr.allocations) + 1, backend, job_name, now(UTC), process, :running, nothing, nothing, String[],
+        alloc = WorkerAllocation(length(mgr.allocations) + 1, backend, job_name, now(UTC), process, :running, nothing, nothing, String[], 0,
                                  String[])
         push!(mgr.allocations, alloc)
         mgr.last_activity = alloc.started
@@ -436,12 +484,26 @@ function add_workers!(mgr::WorkerManager)
     end
 end
 
-# Keep the output of the script of `alloc` and record its end.
+# Keep the output of the script of `alloc`, log the ends of its workers and record its end. The
+# end of a worker with an exit code other than 0 while the allocation runs counts as a worker error;
+# the first error and every tenfold count are warnings.
 function watch_allocation(mgr::WorkerManager, alloc::WorkerAllocation, out::Pipe)
     for line in eachline(out)
-        @lock mgr.lock begin
+        m = match(WORKER_END_LINE, line)
+        errors = @lock mgr.lock begin
             push!(alloc.output, line)
             length(alloc.output) > ALLOCATION_OUTPUT_LINES && popfirst!(alloc.output)
+            failed = !isnothing(m) && m[3] != "0" && alloc.state === :running
+            failed && (alloc.worker_errors += 1)
+            failed ? alloc.worker_errors : 0
+        end
+        isnothing(m) && continue
+        text = "Worker slot $(m[1]) of allocation $(alloc.id) ended after $(m[2]) s with exit code $(m[3])"
+        if errors == 0
+            @info text
+        else
+            text *= "; worker errors of the allocation: $errors"
+            errors == 10^(ndigits(errors) - 1) ? @warn(text) : @info(text)
         end
     end
     wait(alloc.process)
@@ -486,6 +548,16 @@ function slurm_bytes(text::AbstractString)
     return round(Int, parse(Float64, m[1]) * SLURM_MEMORY_UNITS[m[2]])
 end
 
+# Seconds of a duration as `sacct` and `sstat` print it, such as `02:18.007`, `01:02:03` or `1-01:02:03`; `nothing`
+# for an empty field.
+function slurm_seconds(text::AbstractString)
+    isempty(text) && return nothing
+    m = match(r"^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)$", text)
+    isnothing(m) && throw(ArgumentError("slurm_seconds: unexpected duration $(repr(text))"))
+    return ((parse(Int, something(m[1], "0")) * 24 + parse(Int, something(m[2], "0"))) * 60 + parse(Int, m[3])) * 60 +
+           parse(Float64, m[4])
+end
+
 """
     JuLeAna.update_steps!(mgr::WorkerManager; at::Real = time())
 
@@ -509,20 +581,33 @@ function update_steps!(mgr::WorkerManager; at::Real = time())
                 String)
     # `sstat` fails for a job without running steps
     stat = isempty(running) ? "" :
-           read(pipeline(ignorestatus(`$(mgr.sstat) --noheader --parsable2 --allsteps --jobs=$(join(running, ",")) --format=JobID,AveRSS,MaxRSS`);
+           read(pipeline(ignorestatus(`$(mgr.sstat) --noheader --parsable2 --allsteps --jobs=$(join(running, ",")) --format=JobID,AveRSS,MaxRSS,AveCPU`);
                          stderr = devnull), String)
-    live = Dict(String(f[1]) => (slurm_bytes(f[2]), slurm_bytes(f[3])) for f in split.(eachline(IOBuffer(stat)), '|') if length(f) == 3)
+    # the running worker steps; `sstat` reports an invalid CPU time for the `extern` step
+    live = Dict(String(f[1]) => (slurm_bytes(f[2]), slurm_bytes(f[3]), slurm_seconds(f[4]))
+                for f in split.(eachline(IOBuffer(stat)), '|') if length(f) == 4 && occursin(r"^\d+\.\d+$", f[1]))
     steps = Dict(id => StepInfo[] for id in jobs)
-    for f in split.(eachline(IOBuffer(acct)), '|')
-        length(f) == 6 && occursin(r"^\d+\.\d+$", f[1]) || continue
-        id = String(f[1])
-        rss, max_rss = get(live, id, (nothing, nothing))
-        # `CANCELLED by <user ID>`
-        push!(get!(steps, first(split(id, '.')), StepInfo[]),
-              (; id, node = String(f[2]), state = String(first(split(f[3]))), exit_code = String(f[4]), elapsed = String(f[5]), rss,
-               max_rss = something(max_rss, slurm_bytes(f[6]), Some(nothing))))
+    @lock mgr.lock begin
+        filter!(p -> haskey(live, first(p)), mgr.cpu_samples)
+        for f in split.(eachline(IOBuffer(acct)), '|')
+            length(f) == 6 && occursin(r"^\d+\.\d+$", f[1]) || continue
+            id = String(f[1])
+            rss, max_rss, cpu = get(live, id, (nothing, nothing, nothing))
+            cpu_load = cpu_mean = nothing
+            if !isnothing(cpu)
+                samples = filter!(s -> at - s[1] <= CPU_LOAD_SECONDS, push!(get!(mgr.cpu_samples, id, Tuple{Float64,Float64}[]), (at, cpu)))
+                since, cpu_since = first(samples)
+                since < at && (cpu_load = (cpu - cpu_since) / (at - since))
+                elapsed = slurm_seconds(f[5])
+                something(elapsed, 0.0) > 0 && (cpu_mean = cpu / elapsed)
+            end
+            # `CANCELLED by <user ID>`
+            push!(get!(steps, first(split(id, '.')), StepInfo[]),
+                  (; id, node = String(f[2]), state = String(first(split(f[3]))), exit_code = String(f[4]), elapsed = String(f[5]), rss,
+                   max_rss = something(max_rss, slurm_bytes(f[6]), Some(nothing)), cpu_load, cpu_mean))
+        end
+        merge!(mgr.steps, steps)
     end
-    @lock mgr.lock merge!(mgr.steps, steps)
     return mgr
 end
 
@@ -571,10 +656,11 @@ end
 # A copy of a worker allocation, without and with its output. The field types are fixed, so
 # that the interface code that shows allocations is compiled once for every state.
 const AllocationInfo = @NamedTuple{id::Int, backend::Symbol, job_name::Union{Nothing,String}, started::DateTime,
-                                   finished::Union{Nothing,DateTime}, state::Symbol, exit_code::Union{Nothing,Int}, job_ids::Vector{String}}
+                                   finished::Union{Nothing,DateTime}, state::Symbol, exit_code::Union{Nothing,Int}, job_ids::Vector{String},
+                                   worker_errors::Int}
 const AllocationOutputInfo = @NamedTuple{id::Int, backend::Symbol, job_name::Union{Nothing,String}, started::DateTime,
                                          finished::Union{Nothing,DateTime}, state::Symbol, exit_code::Union{Nothing,Int},
-                                         job_ids::Vector{String}, output::Vector{String}}
+                                         job_ids::Vector{String}, worker_errors::Int, output::Vector{String}}
 
 """
     JuLeAna.allocations(mgr::WorkerManager; output::Bool = true)
@@ -586,10 +672,10 @@ a `Vector{JuLeAna.AllocationOutputInfo}`, or a `Vector{JuLeAna.AllocationInfo}` 
 function allocations(mgr::WorkerManager; output::Bool = true)
     @lock mgr.lock if output
         AllocationOutputInfo[(; a.id, a.backend, a.job_name, a.started, a.finished, a.state, a.exit_code, job_ids = copy(a.job_ids),
-                              output = copy(a.output)) for a in mgr.allocations]
+                              a.worker_errors, output = copy(a.output)) for a in mgr.allocations]
     else
-        AllocationInfo[(; a.id, a.backend, a.job_name, a.started, a.finished, a.state, a.exit_code, job_ids = copy(a.job_ids))
-                       for a in mgr.allocations]
+        AllocationInfo[(; a.id, a.backend, a.job_name, a.started, a.finished, a.state, a.exit_code, job_ids = copy(a.job_ids),
+                        a.worker_errors) for a in mgr.allocations]
     end
 end
 
@@ -635,16 +721,58 @@ function check_idle!(mgr::WorkerManager; processing::Bool, time::DateTime = now(
     return true
 end
 
+# Seconds that workers may wait to join this process before `check_joining!` warns.
+const JOINING_WARN_SECONDS = 60
+
+"""
+    JuLeAna.joining_workers(mgr::WorkerManager)
+
+Return the number of started workers that have connected to this process and wait for the
+cluster manager of ParallelProcessingTools to add them: the manager adds the waiting workers
+in batches, one batch at a time, and the workers of the batch it is adding are not counted.
+`0` before the first allocation of `mgr`.
+"""
+function joining_workers(mgr::WorkerManager)
+    (@lock mgr.lock isempty(mgr.allocations)) && return 0
+    return Base.n_avail(ppt_cluster_manager().pending)
+end
+
+"""
+    JuLeAna.check_joining!(mgr::WorkerManager; at::Real = time(), joining::Integer = JuLeAna.joining_workers(mgr))
+
+Warn once when workers have waited to join this process (`joining`, see
+[`JuLeAna.joining_workers`](@ref)) at every call for $(JOINING_WARN_SECONDS) seconds (`at` is the
+current `time()`): a worker that is not added within its `JULIA_WORKER_TIMEOUT` ends. After
+such a warning, log when no worker waits anymore. Return `joining`. The terminal user interface
+calls it with every read of the controller state.
+"""
+function check_joining!(mgr::WorkerManager; at::Real = time(), joining::Integer = joining_workers(mgr))
+    @lock mgr.lock begin
+        if joining == 0
+            mgr.joining_warned &&
+                @info "No more workers wait to join this process, $(round(Int, at - mgr.joining_since)) s after the first ones"
+            mgr.joining_since, mgr.joining_warned = nothing, false
+        elseif isnothing(mgr.joining_since)
+            mgr.joining_since = at
+        elseif !mgr.joining_warned && at - mgr.joining_since >= JOINING_WARN_SECONDS
+            mgr.joining_warned = true
+            @warn "Workers have waited to join this process for $(round(Int, at - mgr.joining_since)) s, $joining now; a worker that is " *
+                  "not added within the JULIA_WORKER_TIMEOUT of $(Distributed.worker_timeout()) s ends"
+        end
+    end
+    return joining
+end
+
 # Type of the value of `workers_overview`, with fixed field types.
 const WorkersOverview = @NamedTuple{allocations::Vector{AllocationOutputInfo}, script::Union{String,@NamedTuple{path::String,text::String}},
                                     workers::Vector{@NamedTuple{pid::Int,attributes::Union{Nothing,Missing,WorkerAttributes}}},
-                                    steps::Vector{StepInfo}, slurm::Union{Nothing,@NamedTuple{queue::String,idle::String}}}
+                                    joining::Int, steps::Vector{StepInfo}, slurm::Union{Nothing,@NamedTuple{queue::String,idle::String}}}
 
 """
     JuLeAna.workers_overview(mgr::WorkerManager)
 
 Collect what the Workers page shows and return a `JuLeAna.WorkersOverview`
-`(; allocations, script, workers, steps, slurm)`:
+`(; allocations, script, workers, joining, steps, slurm)`:
 
 - `allocations`: [`JuLeAna.allocations`](@ref) with their output, after
   [`JuLeAna.update_job_ids!`](@ref);
@@ -653,6 +781,7 @@ Collect what the Workers page shows and return a `JuLeAna.WorkersOverview`
 - `workers`: one `(; pid, attributes)` per worker process with its
   [`JuLeAna.WorkerAttributes`](@ref), `nothing` until they are known and `missing` if the
   worker did not answer; the attributes of a new worker are asked for in the background;
+- `joining`: the [`JuLeAna.joining_workers`](@ref);
 - `steps`: the [`JuLeAna.StepInfo`](@ref)s of the SLURM jobs, after
   [`JuLeAna.update_steps!`](@ref), by job and step ID;
 - `slurm`: `nothing` without SLURM, else `(; queue, idle)`, the output of
@@ -689,5 +818,6 @@ function workers_overview(mgr::WorkerManager)
     steps = @lock mgr.lock sort!(reduce(vcat, values(mgr.steps); init = StepInfo[]); by = step_number)
     user = get(ENV, "USER", "")
     slurm = slurm_available ? (; queue = read(`$(mgr.squeue) -u $user`, String), idle = read(`$(mgr.sinfo) -t idle`, String)) : nothing
-    return convert(WorkersOverview, (; allocations = allocations(mgr), script, workers = workers_now, steps, slurm))
+    return convert(WorkersOverview,
+                   (; allocations = allocations(mgr), script, workers = workers_now, joining = joining_workers(mgr), steps, slurm))
 end

@@ -58,6 +58,10 @@ workers does not push out the other lines. Of the progress lines of
 [`@debug_progress`](@ref), only the newest one of each description is kept. Relayed lines
 containing `Warning:` or `Error:` are also kept with the other lines.
 
+When the field `stderr_file` is set to a path, every line of the captured error output
+(`:stderr`) is also appended to that file after its UTC time, as Distributed and the cluster
+manager write their errors there.
+
 [`JuLeAna.message_lines`](@ref) returns the kept lines as text,
 [`JuLeAna.message_entries`](@ref) with their levels and records, and
 [`JuLeAna.worker_output`](@ref) the lines of a worker.
@@ -71,6 +75,7 @@ mutable struct MessageBuffer <: AbstractLogger
     const worker_capacity::Int
     # unfinished last line of each captured stream
     const partial::Dict{Symbol,String}
+    stderr_file::Union{Nothing,String}
     alert::Union{Nothing,NamedTuple{(:level, :text, :time),Tuple{LogLevel,String,Float64}}}
     # number of the last record
     record::Int
@@ -80,7 +85,7 @@ function MessageBuffer(capacity::Integer = 1000; worker_capacity::Integer = 200)
     capacity > 0 || throw(ArgumentError("MessageBuffer: capacity must be positive, got $capacity"))
     worker_capacity > 0 || throw(ArgumentError("MessageBuffer: worker_capacity must be positive, got $worker_capacity"))
     return MessageBuffer(ReentrantLock(), MessageEntry[], capacity, Dict{Int,Vector{MessageEntry}}(), worker_capacity,
-                         Dict{Symbol,String}(), nothing, 0)
+                         Dict{Symbol,String}(), nothing, nothing, 0)
 end
 
 min_enabled_level(::MessageBuffer) = Logging.Info
@@ -153,12 +158,19 @@ end
 Add `text` written to the captured output `stream` (`:stdout` or `:stderr`) to `buf`,
 line by line; an unfinished last line waits for the rest of its text. A line relayed from
 a worker goes to the lines of that worker (see [`JuLeAna.worker_output`](@ref)), and only
-with `Warning:` or `Error:` also to the other lines.
+with `Warning:` or `Error:` also to the other lines. Lines of `:stderr` also go to the
+`stderr_file` of `buf` if it is set (see [`JuLeAna.MessageBuffer`](@ref)).
 """
 function append_output!(buf::MessageBuffer, stream::Symbol, text::AbstractString)
     @lock buf.lock begin
         pieces = split(get(buf.partial, stream, "") * text, '\n')
         buf.partial[stream] = pop!(pieces)
+        if stream === :stderr && !isnothing(buf.stderr_file) && !isempty(pieces)
+            stamp = Dates.format(now(UTC), dateformat"yyyy-mm-ddTHH:MM:SS.sss\Z")
+            open(buf.stderr_file; append = true) do io
+                return foreach(l -> println(io, stamp, " ", rstrip(l, '\r')), pieces)
+            end
+        end
         for l in pieces
             l = rstrip(l, '\r')
             isempty(strip(l)) && continue
@@ -341,6 +353,7 @@ function refresh!(m::JuLeAnaTUI)
     Tachikoma.spawn_task!(m.queue, :refresh) do
         messages = isnothing(key) ? StepMessage[] : step_messages(ctrl, key)
         check_idle!(ctrl)
+        check_joining!(ctrl.workers)
         return (answered, snapshot(ctrl), progress(ctrl), busy_workers(ctrl), StepMessages((; key, messages)),
                 creating ? production_log(ctrl) : String[])
     end
@@ -791,7 +804,9 @@ the dependency graph. Log
 messages of this process and the output of its workers are kept in a
 [`JuLeAna.MessageBuffer`](@ref) instead of being printed; the newest warning or error is shown
 in the status panel, and the error of a failed load stays there. This process also writes
-its log file as in [`setup_session`](@ref). The previous global logger is restored when
+its log file as in [`setup_session`](@ref), and appends its captured error output to
+`head-stderr.log` in the log directory of the loaded session (see
+[`JuLeAna.MessageBuffer`](@ref)). The previous global logger is restored when
 the interface closes, and every worker allocation started from the interface is
 cancelled (see [`CancelAll`](@ref)). A startup screen with the logo is shown until the session has loaded;
 `?` lists the keys of the visible page. See [`JuLeAna.JuLeAnaTUI`](@ref) for the keys.
@@ -808,6 +823,7 @@ function run_tui(parsed_args::AbstractDict; processors::AbstractDict{Symbol} = P
         session = loader(args)
         # `setup_session` installs the file logger; keep the messages for the interface too
         global_logger() === messages || global_logger(TeeLogger(global_logger(), messages))
+        @lock messages.lock messages.stderr_file = joinpath(session.config.log_path, "head-stderr.log")
         @info "Interface threads" default_threads interactive_threads loop_thread loop_pool
         return session
     end

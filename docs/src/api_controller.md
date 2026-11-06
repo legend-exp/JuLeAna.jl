@@ -64,11 +64,14 @@ JuLeAna.WorkerAttributes
 JuLeAna.StepInfo
 JuLeAna.worker_attributes
 JuLeAna.kill_worker
+JuLeAna.worker_job_ended
 JuLeAna.cancel_allocation!
 JuLeAna.cancel_all!
 JuLeAna.allocations
 JuLeAna.mark_activity!
 JuLeAna.idle_deadline
 JuLeAna.check_idle!(::JuLeAna.WorkerManager)
+JuLeAna.joining_workers
+JuLeAna.check_joining!
 JuLeAna.workers_overview
 ```
