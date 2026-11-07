@@ -389,7 +389,9 @@ function parallel(f, iterator::AbstractArray, log_nt::Type{<:NamedTuple}; timeou
         Threads.@spawn begin
             started = isnothing(step) ? nothing : worker -> item_started!(step..., id, worker, label(itr))
             item_workers = ItemPool(item_pool(id), "$itr", timeout, retry ? 3 : 1)
-            result, outcome = try
+            # Not `result`: that name is a local of `parallel`, so all tasks would share one
+            # variable and return whichever item assigned it last.
+            item_result, outcome = try
                 # The last timeout or worker loss lands in the catch below.
                 with(ITEM_STARTED => started) do
                     onworker(; pool = item_workers, tries = retry ? 3 : 1, label = "$itr") do
@@ -409,7 +411,7 @@ function parallel(f, iterator::AbstractArray, log_nt::Type{<:NamedTuple}; timeou
                 failure_row(itr, e), e isa ProcessingStopped ? :notrun : :failed
             end
             isnothing(step) || item_finished!(step..., id, outcome)
-            result
+            item_result
         end
     end
     if isnothing(step)

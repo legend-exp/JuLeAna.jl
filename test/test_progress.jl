@@ -5,6 +5,7 @@ using Test
 using Logging: Logging
 using ProgressLogging: ProgressLogging
 using LegendDataManagement: LegendDataManagement, DataPeriod, DataRun, FileKey, ProcessStatus
+using Base.ScopedValues: with
 
 # Stand in for `LegendData`: every run is in the run info, or no run is an analysis run.
 struct ProgressData end
@@ -193,6 +194,35 @@ waitfor(cond; timeout = 60) = timedwait(cond, timeout; pollint = 0.05) === :ok
         JuLeAna.item_started!(ctrl.progress, a, first_id + 1, maximum(JuLeAna.procs()) + 1, "fk2")
         @test length(busy_workers(ctrl.progress)) == 2
         @test [b.item for b in busy_workers(ctrl)] == ["fk1"]
+    end
+
+    @testset "parallel returns the result of each item while items wait for the store" begin
+        store = ProgressStore()
+        key = (p3, r1, :run_a)
+        JuLeAna.reset_progress!(store, [key])
+        filekeys = [FileKey("l200-p03-r001-cal-20230101T00000$(i)Z") for i in 1:5]
+        first_running, gate, ran = Base.Event(), Base.Event(), Threads.Atomic{Int}(0)
+        task = Threads.@spawn with(JuLeAna.PROGRESS_STEP => (store, key)) do
+            parallel(filekeys, ProgressLog) do fk
+                if fk == first(filekeys)
+                    notify(first_running)
+                    wait(gate)
+                end
+                Threads.atomic_add!(ran, 1)
+                (processed = true, log = ProgressLog((fk, ProcessStatus(1), "")))
+            end
+        end
+        wait(first_running)
+        # While the store is locked, every item that ends waits in `item_finished!` before it
+        # returns, as when the items of concurrent steps end together.
+        @lock store.lock begin
+            notify(gate)
+            @test waitfor(() -> ran[] == length(filekeys))
+            sleep(0.5)
+        end
+        result = fetch(task)
+        @test first.(result) == filekeys
+        @test [last(r).log.Filekey for r in result] == filekeys
     end
 
     cfg = ProcessingConfig(; processors = Dict(:run_a => ProcessorSpec(; name = :run_a, level = :run, category = :cal, rank = 1)),
