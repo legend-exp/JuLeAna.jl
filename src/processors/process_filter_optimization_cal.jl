@@ -171,7 +171,7 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
             qc = mad_ok .& ljl_propfunc(qc_string).(dsp_qc)
             if count(qc) == 0
                 throw(ErrorException("No event passes the QC selection $qc_string" *
-                                        (isempty(qc_mad) ? "" : " and the qc_mad limits")))
+                                     (isempty(qc_mad) ? "" : " and the qc_mad limits")))
             end
             @debug "Survival Fraction: $(round(count(mad_ok) / length(qc) * 100, digits=2))% after the MAD cuts, $(round(count(qc) / length(qc) * 100, digits=2))% after all cuts"
             wvfs_det_pre[findall(qc)], qdrift[findall(qc)]
@@ -278,7 +278,11 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
                 if joint_search
                     result_rtft, report_rtft = @process_step "$filter_type joint RT and FT search" begin
                         # seed on the lattice inside the bounds, with the flat-top time lowered until it is feasible
-                        lattice_range(bounds) = ceil(Int, ustrip(NoUnits, first(bounds) / lattice) - 1e-6):floor(Int, ustrip(NoUnits, last(bounds) / lattice) + 1e-6)
+                        function lattice_range(bounds)
+                            i_first = ceil(Int, ustrip(NoUnits, first(bounds) / lattice) - 1e-6)
+                            i_last = floor(Int, ustrip(NoUnits, last(bounds) / lattice) + 1e-6)
+                            return i_first:i_last
+                        end
                         rt_range = lattice_range(extrema(e_grid_rt))
                         ft_range = lattice_range(extrema(e_grid_ft))
                         i_seed = clamp(round(Int, ustrip(NoUnits, mvalue(result_rt.rt) / lattice)), first(rt_range), last(rt_range))
@@ -347,13 +351,17 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
                     end
                     h = fit(Histogram, x, minimum(x):(2 * StatsBase.iqr(x) / cbrt(length(x))):maximum(x))
                     result_fep, _ = fit_single_peak_th228(h, estimate_single_peak_stats(h); uncertainty = false)
-                    in_window = [i for i in eachindex(e_cal, qdrift) if peak - first(window) < e_cal[i] < peak + last(window) && isfinite(qdrift[i])]
+                    in_window = [i
+                                 for i in eachindex(e_cal, qdrift)
+                                 if peak - first(window) < e_cal[i] < peak + last(window) && isfinite(qdrift[i])]
                     residual = ustrip.(NoUnits, (e_cal[in_window] .- mvalue(result_fep.μ) * u"keV") ./ (mvalue(result_fep.σ) * u"keV"))
                     qdrift_sel = qdrift[in_window]
                     slow_mean = mean(residual[qdrift_sel .>= quantile(qdrift_sel, 0.95)])
 
                     if optimization_config_det.apply_ctc
-                        valid = [i for i in eachindex(e_opt, qdrift) if isfinite(e_opt[i]) && isfinite(qdrift[i]) && e_opt[i] > 0 && qdrift[i] > 0]
+                        valid = [i
+                                 for i in eachindex(e_opt, qdrift)
+                                 if isfinite(e_opt[i]) && isfinite(qdrift[i]) && e_opt[i] > 0 && qdrift[i] > 0]
                         ctc_report = last(ctc_energy(e_opt[valid] .* point.m_cal_simple, qdrift[valid], peak, window, point.m_cal_simple))
                         p = LegendMakie.lplot(ctc_report, figsize = (600, 600),
                                               title = get_plottitle(filekey, det, "CTC Optimum"; additional_type = string(filter_type)))
@@ -448,7 +456,7 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
                                     objective, ctc_rel_uncertainty, containment, rel_tol = 0)
                     end
                     i_scan = only(findall(==(mvalue(result_ft.ft)), report_ft.table.ft))
-                    (; weights, i = idxs[i_scan], i_scan, result_ft, report_ft)
+                    return (; weights, i = idxs[i_scan], i_scan, result_ft, report_ft)
                 end
                 (; weights, i, i_scan, result_ft, report_ft) = argmin(f -> mvalue(f.result_ft.min_objective), fits)
                 w = res.grid[i]
@@ -465,7 +473,8 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
                     p = LegendMakie.lplot((; res.superpulse, res.ref, res.ref_bins, res.t50, res.t_pickoff, res.n_pre, res.n_post);
                                           figsize = (1200, 800), title = get_plottitle(filekey, det, "DPLMS Reference"))
                     save_plot(p, l200, filekey, det, :dplms_reference)
-                    p = LegendMakie.lplot((; res.superpulse, res.response, res.grid, res.t50, res.t_pickoff, res.n_pre, res.n_post); idxs = [i],
+                    p = LegendMakie.lplot((; res.superpulse, res.response, res.grid, res.t50, res.t_pickoff, res.n_pre, res.n_post);
+                                          idxs = [i],
                                           xlims = (-(res.n_pre + 8), res.n_pre + res.n_post + 16) .*
                                                   ustrip(u"µs", lattice),
                                           figsize = (1200, 600), title = get_plottitle(filekey, det, "DPLMS Response"))

@@ -205,7 +205,7 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
             qc = mad_ok .& ljl_propfunc(qc_string).(dsp_qc)
             if count(qc) == 0
                 throw(ErrorException("No event passes the QC selection $qc_string" *
-                                        (isempty(qc_mad) ? "" : " and the qc_mad limits")))
+                                     (isempty(qc_mad) ? "" : " and the qc_mad limits")))
             end
             @debug "Survival Fraction: $(round(count(mad_ok) / length(qc) * 100, digits=2))% after the MAD cuts, $(round(count(qc) / length(qc) * 100, digits=2))% after all cuts"
             wvfs_det_pre[findall(qc)], qdrift[findall(qc)]
@@ -282,7 +282,8 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
 
                 @debug_plot begin
                     p = LegendMakie.lplot(report_rt,
-                                          title = get_plottitle(filekey_det, part, det, "Noise Sweep"; additional_type = string(filter_type)))
+                                          title = get_plottitle(filekey_det, part, det, "Noise Sweep";
+                                                                additional_type = string(filter_type)))
                     save_plot(p, l200, part, filekey_det, det, Symbol("noise_sweep_$(filter_type)"))
                 end
 
@@ -303,7 +304,8 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
                 yield()
                 @debug_plot begin
                     p = LegendMakie.lplot(report_ft,
-                                          title = get_plottitle(filekey_det, part, det, "FEP FT Scan"; additional_type = string(filter_type)),
+                                          title = get_plottitle(filekey_det, part, det, "FEP FT Scan";
+                                                                additional_type = string(filter_type)),
                                           figsize = (600, 900))
                     save_plot(p, l200, part, filekey_det, det, Symbol("fwhm_ft_scan_$(filter_type)"))
                 end
@@ -312,7 +314,11 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
                 if joint_search
                     result_rtft, report_rtft = @process_step "$filter_type joint RT and FT search" begin
                         # seed on the lattice inside the bounds, with the flat-top time lowered until it is feasible
-                        lattice_range(bounds) = ceil(Int, ustrip(NoUnits, first(bounds) / lattice) - 1e-6):floor(Int, ustrip(NoUnits, last(bounds) / lattice) + 1e-6)
+                        function lattice_range(bounds)
+                            i_first = ceil(Int, ustrip(NoUnits, first(bounds) / lattice) - 1e-6)
+                            i_last = floor(Int, ustrip(NoUnits, last(bounds) / lattice) + 1e-6)
+                            return i_first:i_last
+                        end
                         rt_range = lattice_range(extrema(e_grid_rt))
                         ft_range = lattice_range(extrema(e_grid_ft))
                         i_seed = clamp(round(Int, ustrip(NoUnits, mvalue(result_rt.rt) / lattice)), first(rt_range), last(rt_range))
@@ -345,7 +351,8 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
                     yield()
                     @debug_plot begin
                         p = LegendMakie.lplot(report_rtft,
-                                              title = get_plottitle(filekey_det, part, det, "RT-FT Search"; additional_type = string(filter_type)),
+                                              title = get_plottitle(filekey_det, part, det, "RT-FT Search";
+                                                                    additional_type = string(filter_type)),
                                               figsize = (700, 550))
                         save_plot(p, l200, part, filekey_det, det, Symbol("rtft_landscape_$(filter_type)"))
                     end
@@ -381,20 +388,26 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
                     end
                     h = fit(Histogram, x, minimum(x):(2 * StatsBase.iqr(x) / cbrt(length(x))):maximum(x))
                     result_fep, _ = fit_single_peak_th228(h, estimate_single_peak_stats(h); uncertainty = false)
-                    in_window = [i for i in eachindex(e_cal, qdrift) if peak - first(window) < e_cal[i] < peak + last(window) && isfinite(qdrift[i])]
+                    in_window = [i
+                                 for i in eachindex(e_cal, qdrift)
+                                 if peak - first(window) < e_cal[i] < peak + last(window) && isfinite(qdrift[i])]
                     residual = ustrip.(NoUnits, (e_cal[in_window] .- mvalue(result_fep.μ) * u"keV") ./ (mvalue(result_fep.σ) * u"keV"))
                     qdrift_sel = qdrift[in_window]
                     slow_mean = mean(residual[qdrift_sel .>= quantile(qdrift_sel, 0.95)])
 
                     if optimization_config_det.apply_ctc
-                        valid = [i for i in eachindex(e_opt, qdrift) if isfinite(e_opt[i]) && isfinite(qdrift[i]) && e_opt[i] > 0 && qdrift[i] > 0]
+                        valid = [i
+                                 for i in eachindex(e_opt, qdrift)
+                                 if isfinite(e_opt[i]) && isfinite(qdrift[i]) && e_opt[i] > 0 && qdrift[i] > 0]
                         ctc_report = last(ctc_energy(e_opt[valid] .* point.m_cal_simple, qdrift[valid], peak, window, point.m_cal_simple))
                         p = LegendMakie.lplot(ctc_report, figsize = (600, 600),
-                                              title = get_plottitle(filekey_det, part, det, "CTC Optimum"; additional_type = string(filter_type)))
+                                              title = get_plottitle(filekey_det, part, det, "CTC Optimum";
+                                                                    additional_type = string(filter_type)))
                         save_plot(p, l200, part, filekey_det, det, Symbol("ctc_$(filter_type)"))
                     end
                     p = LegendMakie.lplot((; residual, qdrift = qdrift_sel, slow_mean); figsize = (900, 450),
-                                          title = get_plottitle(filekey_det, part, det, "FEP Residuals"; additional_type = string(filter_type)))
+                                          title = get_plottitle(filekey_det, part, det, "FEP Residuals";
+                                                                additional_type = string(filter_type)))
                     save_plot(p, l200, part, filekey_det, det, Symbol("residuals_$(filter_type)"))
 
                     # example waveforms: the events with the lowest and the highest qdrift
@@ -414,7 +427,8 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
                     wvfs = prep.wvfs_pz[idx]
                     p = LegendMakie.lplot((; classes = repeat([:fast, :slow], inner = n_class), wvfs, flt = flt.(wvfs));
                                           figsize = (1200, 600),
-                                          title = get_plottitle(filekey_det, part, det, "Example Waveforms"; additional_type = string(filter_type)))
+                                          title = get_plottitle(filekey_det, part, det, "Example Waveforms";
+                                                                additional_type = string(filter_type)))
                     save_plot(p, l200, part, filekey_det, det, Symbol("example_wvfs_$(filter_type)"))
                 end
 
@@ -425,7 +439,8 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
                     pars = merge(pars, (n_evals = result_rtft.n_evals, converged = result_rtft.converged))
                 end
 
-                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part, ProcessStatus(1),
+                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                   ProcessStatus(1),
                                    filter_type, pars.objective, pars.rt, pars.ft, pars.fwhm, pars.w90, get(pars, :converged, "-"),
                                    ft_edge, "-"))
 
@@ -482,7 +497,7 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
                                     objective, ctc_rel_uncertainty, containment, rel_tol = 0)
                     end
                     i_scan = only(findall(==(mvalue(result_ft.ft)), report_ft.table.ft))
-                    (; weights, i = idxs[i_scan], i_scan, result_ft, report_ft)
+                    return (; weights, i = idxs[i_scan], i_scan, result_ft, report_ft)
                 end
                 (; weights, i, i_scan, result_ft, report_ft) = argmin(f -> mvalue(f.result_ft.min_objective), fits)
                 w = res.grid[i]
@@ -499,7 +514,8 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
                     p = LegendMakie.lplot((; res.superpulse, res.ref, res.ref_bins, res.t50, res.t_pickoff, res.n_pre, res.n_post);
                                           figsize = (1200, 800), title = get_plottitle(filekey_det, part, det, "DPLMS Reference"))
                     save_plot(p, l200, part, filekey_det, det, :dplms_reference)
-                    p = LegendMakie.lplot((; res.superpulse, res.response, res.grid, res.t50, res.t_pickoff, res.n_pre, res.n_post); idxs = [i],
+                    p = LegendMakie.lplot((; res.superpulse, res.response, res.grid, res.t50, res.t_pickoff, res.n_pre, res.n_post);
+                                          idxs = [i],
                                           xlims = (-(res.n_pre + 8), res.n_pre + res.n_post + 16) .*
                                                   ustrip(u"µs", lattice),
                                           figsize = (1200, 600), title = get_plottitle(filekey_det, part, det, "DPLMS Response"))
@@ -526,7 +542,8 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
                                              w90 = mvalue.(uconvert.(u"keV", f.report_ft.table.w90)),
                                              status = string.(f.report_ft.table.status))) for f in fits])
 
-                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part, ProcessStatus(1),
+                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                   ProcessStatus(1),
                                    :dplms, pars.objective, pars.shaping_time, pars.flat_top, pars.min_fwhm, pars.w90, "-", "-", "-"))
 
                 # add results to dict
@@ -538,7 +555,8 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
                 GC.gc()
             catch e
                 e isa ProcessStepError || @error "Filter: dplms filter optimization: $(truncate_error(e))"
-                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part, ProcessStatus(0),
+                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
+                                   ProcessStatus(0),
                                    :dplms, fill("-", 7)..., "$(truncate_error(e))"))
                 # add results to dict
                 log_info_dict[:dplms] = log_info
