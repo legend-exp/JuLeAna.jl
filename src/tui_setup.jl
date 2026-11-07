@@ -64,6 +64,8 @@ mutable struct SetupPage
     dataset_requested::Bool
     # set by `N`, taken by the interface, which opens the new-production form
     new_production::Bool
+    # set by `S`, taken by the interface, which opens the Sync window
+    open_sync::Bool
     source::Int
     picker::Union{Nothing,SetupPicker}
     choices::Any
@@ -81,7 +83,7 @@ function SetupPage()
     return SetupPage(Checklist(ChecklistItem[]; title = "Periods / runs"),
                      Checklist(ChecklistItem[]; title = "Run processors", focused = false, tag_style = setup_tag_style),
                      Checklist(ChecklistItem[]; title = "Partition processors", focused = false, tag_style = setup_tag_style), 1, 1,
-                     nothing, nothing, nothing, Tachikoma.Rect(1, 1, 0, 0), nothing, false, false, 1, nothing, nothing, nothing,
+                     nothing, nothing, nothing, Tachikoma.Rect(1, 1, 0, 0), nothing, false, false, false, 1, nothing, nothing, nothing,
                      Tachikoma.Rect(1, 1, 0, 0), Tachikoma.Rect(1, 1, 0, 0), nothing, nothing, ("", false))
 end
 
@@ -185,7 +187,8 @@ stops it without waiting for them, `r` reloads the config, `g` rebuilds the
 dependency graph, `W` starts a worker allocation with [`AddWorkers`](@ref) and `w` asks to write
 the current settings to `config/processing_config.yaml` of the data production. `N` sets
 `page.new_production`, which asks the interface to open the new-production form (see
-[`JuLeAna.ProductionForm`](@ref)); the checklists use `n` to uncheck all items.
+[`JuLeAna.ProductionForm`](@ref)); the checklists use `n` to uncheck all items. `S` sets `page.open_sync`, which asks the
+interface to open the Sync window.
 """
 function setup_key!(page::SetupPage, evt::Tachikoma.KeyEvent, snap, send)
     evt.action == Tachikoma.key_release && return false
@@ -263,6 +266,8 @@ function setup_key!(page::SetupPage, evt::Tachikoma.KeyEvent, snap, send)
         send(AddWorkers())
     elseif key == :char && char == 'N'
         page.new_production = true
+    elseif key == :char && char == 'S'
+        page.open_sync = true
     else
         return false
     end
@@ -683,7 +688,7 @@ function render_setup(page::SetupPage, snap, area::Tachikoma.Rect, buf::Tachikom
     lines = Vector{Tuple{String,Tachikoma.Style}}[]
     if isnothing(snap) || isempty(snap.processors)
         push!(lines,
-              [(!isnothing(snap) && get(snap, :state, nothing) === :idle ? "No session loaded. N: new data production" :
+              [(!isnothing(snap) && get(snap, :state, nothing) === :idle ? "No session loaded. N: new data production, S: data sync" :
                 "Loading the session…", dim)])
     else
         for (i, (key, label, _)) in pairs(SETUP_OPTIONS)

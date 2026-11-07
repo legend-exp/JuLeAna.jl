@@ -5,7 +5,10 @@ that the dataflow and the analysis scripts can be developed against real data
 without an open session on the cluster. The mirror keeps the remote layout, so
 `LegendDataManagement` opens it with the config the tool writes beside it.
 
-`juleana-sync` opens the screen of the tool.
+The tool has one screen and two ways to open it:
+
+- `juleana-sync` opens the screen alone.
+- `S` on the Setup page of `juleana` opens the same screen in a window inside the interface.
 
 ``` bash
 juleana-sync --host viper --production juleana/tmp/jl-v0.7.0dev1 --local-root ~/data
@@ -35,8 +38,9 @@ There is no default Local root: without `local_root` in `settings.yaml` or `--lo
 Connect, Estimate and Transfer refuse with "Local root must be set". A selection file anywhere else is loaded by
 giving its path in the Selection field and pressing Load selection, or applied headless with `--from`. A selection
 records the host its tree was built from; Load and `--from` refuse a file saved for another host and name both hosts.
-A malformed file stops `juleana-sync` with a message that names the file. A `hosts.yaml` entry without `remote_root`
-is reported at Connect if that host is used.
+A malformed file stops `juleana-sync` with a message that names the file; `juleana` shows the message in the
+dialog of the Sync window and keeps running. A `hosts.yaml` entry without `remote_root` is reported the same way when the Sync window first opens with an empty
+Production field (the remote roots are read for the preselection), and otherwise at Connect if that host is used.
 
 ## The screen
 
@@ -127,7 +131,49 @@ the staging directory. Opening a `detectors` row reports "listing runs" (per-det
 A failure names the step it happened in. A headless run prints the same steps as updating lines. When nothing
 runs, the line shows the running estimate and the selection file.
 
-### Leaving the screen
+### In `juleana`
+
+`S` on the Setup page opens the screen in a window that replaces the visible page; the tabs and the status panel
+stay. The screen is created at the first opening and connects then, so starting `juleana` costs nothing when the
+window is not used. If the production of the Setup page lies below the local root, or below the remote root of a host
+in `hosts.yaml`, its path relative to that root is offered as the production; Connect then checks the
+name against the productions of the chosen host and either opens it or reports that it is not a production on
+that host and opens the list. Changing the production in the window does not change the Setup page.
+
+The window takes the keys and the mouse. `?`, `T` and `q` keep their meaning unless a field is being edited or a
+dialog waits for an answer; the digits and the tabs do nothing until the window is closed. `Esc` cancels an edit,
+closes a list or a dialog and goes back to the tree; at the tree it closes the window. Closing keeps the selection
+and the settings, and `S` shows them again.
+
+While a sync runs, `Esc` asks what to do with it:
+
+| Key | Action |
+|-----|--------|
+| `b` | Close the window; the sync goes on in the background |
+| `s` | Stop an estimate or a transfer; not offered while the helper environment is checked or created, which report no progress |
+| `c`, `Esc` | Stay in the window |
+
+A stop acts at the next progress reading and ends the `rsync` or `ssh` command of the step. A step without readings,
+such as the dry run of an estimate, runs to its end first. Files already staged are kept and the next run resumes
+from them. Stopping an extraction ends the `ssh` command; the helper on the host can run on for a while.
+
+The status panel shows `sync running` and the bar of the current step on its second line. With the window closed, it
+also names a dialog that waits in the window, such as `sync: Error, S on Setup shows it`, until the window is opened.
+
+Processing and a sync do not run together in one `juleana`, since a sync writes into the production that processing
+reads. `S` does not open the window while processing runs or stops, and `s` does not start processing while a sync
+runs; a warning in the status panel says why. To do both, start a second `juleana` or a `juleana-sync` in another
+terminal. Separate processes do not know of each other, so keep them on different productions.
+
+`q` or `ctrl+c` asks before leaving when the selection has unsaved marks or a transfer or an environment creation
+runs. The dialog lists one line per key that applies:
+
+| Key | Shown when | Action |
+|-----|------------|--------|
+| `s` | processing runs | Stop after the running items, then quit; the line adds the sync work that is lost (an interrupted transfer or environment creation, the unsaved selection) |
+| `w` | the selection has unsaved marks | Save the selection, then quit; if processing or a transfer still runs, the dialog stays open |
+| `q` | always | Quit now, ending the processing run and its workers, interrupting the transfer or environment creation and discarding the unsaved selection, as far as each applies |
+| `c` | always | Cancel |
 
 `juleana-sync` shows the name and the version in a row above the screen, and one quit dialog: the "Transfer running" dialog (Quit now or Keep running) when a transfer or an
 environment creation runs, otherwise the "Unsaved selection" dialog (Save and quit or Quit without saving), which names

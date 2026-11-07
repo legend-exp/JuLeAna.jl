@@ -123,9 +123,13 @@ include("tui_workers.jl")
 include("tui_production.jl")
 include("tui_timing.jl")
 include("sync/Sync.jl")
+using .Sync: SyncPage, SyncSettings, SSHHost, PACKAGED_HOSTS_FILE, sync_key!, sync_mouse!, sync_task!, render_sync, sync_hints,
+             sync_text_input, sync_start!, shielded, user_settings, preselect_production, host_remote_roots, sync_dirty, sync_busy,
+             sync_running, sync_stoppable, sync_stop!, sync_at_rest, save!, selection_path, normdir
 include("tui.jl")
 include("tui_logo.jl")
 include("tui_branding.jl")
+include("tui_sync.jl")
 
 include("processors/p_process_aoe_calibration_cut_cal.jl")
 include("processors/p_process_aoe_cut_cal.jl")
