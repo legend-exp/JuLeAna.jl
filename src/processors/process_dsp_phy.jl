@@ -28,7 +28,7 @@ variables of the processor, e.g. the raw data of a failed DSP.
 - the decay time, the optimization parameters and the SiPM thresholds of each detector from
   `get_dsp_pars(l200, filekey, detector, pars_cat)` with `pars_cat` `:pz`, `:fltopt`, `:aoeopt` and `:sipmopt`, read from the
   `pars_type` that the DSP config sets for the detector, e.g. `ppars` or `rpars`. A detector whose parameters cannot be loaded
-  fails.
+  fails. Filter parameters that are not set for an HPGe detector take the defaults of its DSP configuration.
 - the QC evaluator from `load_qc_evaluator(l200, filekey)`
 
 # Outputs
@@ -256,7 +256,6 @@ function process_dsp_phy(processing_config, l200::LegendData, period::DataPeriod
                                     tau = get_dsp_pars(l200, filekey, det, :pz)
                                     opt = merge(get_dsp_pars(l200, filekey, det, :fltopt), get_dsp_pars(l200, filekey, det, :aoeopt))
                                     isempty(tau) && throw(ArgumentError("no decay time for $det"))
-                                    isempty(opt) && throw(ArgumentError("no optimization parameters for $det"))
                                     # the required optimization pars of the filters the selections of the detector require
                                     for (selection, required, label) in ((:required_fltopt_selection, :required_fltopt, "energy filter"),
                                                                          (:required_aoeopt_selection, :required_aoeopt, "A/E"))

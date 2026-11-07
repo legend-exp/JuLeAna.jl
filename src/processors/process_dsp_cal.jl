@@ -9,7 +9,7 @@ For every raw `cal` file of the run, each detector is processed with its DSP con
 pole-zero decay time, and its energy and A/E filter optimization parameters, in three
 [`@process_step`](@ref)s: `DSP parameters of <detector> in <filekey>`, `raw data loading of
 <detector> in <filekey>` and `DSP of <detector> in <filekey>`. A detector fails, and the
-others go on, if the decay time or the optimization parameters are missing, if its DSP
+others go on, if the decay time is missing, if its DSP
 configuration has no `required_fltopt_selection` or `required_aoeopt_selection`, if a
 parameter listed in `required_fltopt` (or `required_aoeopt`) is missing for a detector whose
 channel info row satisfies `required_fltopt_selection` (or `required_aoeopt_selection`), or if
@@ -24,7 +24,7 @@ detectors with the variables of the processor, e.g. the raw data of a failed DSP
 - `dataprod_config(l200).dsp(filekey)`
 - the decay time and the optimization parameters of each detector from `get_dsp_pars(l200, filekey, detector, pars_cat)` with
   `pars_cat` `:pz`, `:fltopt` and `:aoeopt`, read from the `pars_type` that the DSP config sets for the detector, e.g. `ppars`
-  or `rpars`. A detector whose parameters cannot be loaded fails.
+  or `rpars`. A detector whose parameters cannot be loaded fails. Filter parameters that are not set for a detector take the defaults of its DSP configuration.
 - the QC evaluator from `load_qc_evaluator(l200, filekey)`
 
 # Outputs
@@ -122,7 +122,6 @@ function process_dsp_cal(processing_config, l200::LegendData, period::DataPeriod
                                     tau = get_dsp_pars(l200, filekey, det, :pz)
                                     opt = merge(get_dsp_pars(l200, filekey, det, :fltopt), get_dsp_pars(l200, filekey, det, :aoeopt))
                                     isempty(tau) && throw(ArgumentError("no decay time for $det"))
-                                    isempty(opt) && throw(ArgumentError("no optimization parameters for $det"))
                                     # the required optimization pars of the filters the selections of the detector require
                                     for (selection, required, label) in ((:required_fltopt_selection, :required_fltopt, "energy filter"),
                                                                          (:required_aoeopt_selection, :required_aoeopt, "A/E"))
