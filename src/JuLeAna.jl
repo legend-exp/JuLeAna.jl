@@ -72,7 +72,7 @@ using PropDicts: PropDicts, PropDict
 using PropertyFunctions: PropertyFunctions, @pf, filterby
 using Random: Random, MersenneTwister
 using RadiationDetectorDSP: RadiationDetectorDSP, CUSPChargeFilter, TrapezoidalChargeFilter, ZACChargeFilter
-using StatsBase: StatsBase, Histogram, fit, mean, median, quantile, sample, std
+using StatsBase: StatsBase, Histogram, fit, mad, mean, median, quantile, sample, std
 using StructArrays: StructArray
 using Tachikoma: Tachikoma
 using TerminalLoggers: TerminalLogger

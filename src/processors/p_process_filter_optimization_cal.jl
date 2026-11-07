@@ -4,7 +4,7 @@
 
 Optimize the energy filter rise time and flat-top time per detector and `cal` partition for all partitions that contain `period`, using all analysis runs of the partition (HPGe detectors `geds`).
 
-The method is the same as in `process_filter_optimization_cal`: for each filter type listed under `e_filter`, the rise time is chosen from a baseline noise sweep and the flat-top time from a sweep over full-energy-peak events, or both from a joint search if `joint_search` is enabled. The waveforms of the peak named by `peakname` are read from the `jlpks` tier of all runs of the partition (`n_evts` events per run, drawn randomly with a seeded random number generator if `select_random` is set) and at most `max_wvfs` of them are used after the quality cuts (`qc` expression). Results lacking `objective`, `w90`, `ct_spread` or `joint_search` are optimized again.
+The method is the same as in `process_filter_optimization_cal`: for each filter type listed under `e_filter`, the rise time is chosen from a baseline noise sweep and the flat-top time from a sweep over full-energy-peak events, or both from a joint search if `joint_search` is enabled. The waveforms of the peak named by `peakname` are read from the `jlpks` tier of all runs of the partition (`n_evts` events per run, drawn randomly with a seeded random number generator if `select_random` is set) and at most `max_wvfs` of them are used. The quality cuts (`qc` expression and optional `qc_mad` section) are those of `process_filter_optimization_cal`. Results lacking `objective`, `w90`, `ct_spread` or `joint_search` are optimized again.
 
 # Inputs
 - `jlpks` tier of the `cal` runs of each partition, for each detector.
@@ -104,6 +104,8 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
         ctc_rel_uncertainty = optimization_config_det.ctc_rel_uncertainty
         containment = optimization_config_det.containment
         e_filter = collect(keys(optimization_config_det.e_filter))
+        qc_mad = get(optimization_config_det, :qc_mad, PropDict())
+        qc_mad isa PropDict || throw(ArgumentError("flt_optimization config of $det: qc_mad must be a section of column => limit entries"))
 
         result_rt_ft_dict = Dict{Symbol,NamedTuple}()
         log_info_dict = Dict{Symbol,NamedTuple}()
@@ -182,26 +184,25 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
         end
         yield()
 
-        # get QC cuts
-        wvfs_det_pre, wvfs_det_wdw, blmean_wdw = @process_step "QC cuts" begin
+        # get QC cuts: qdrift of all events is part of the QC table; an event is kept if it lies within k normalized MADs of the
+        # median of the finite values for every column => k of qc_mad and the qc expression holds
+        wvfs_det_pre, qdrift = @process_step "QC cuts" begin
             @debug "Get QC cuts"
             dsp_qc = dsp_qc_flt_optimization_compressed(wvfs_det_pre, dsp_config_det, pars_tau[det].τ, f_evaluate_qc)
-            qc = ljl_propfunc(qc_string).(dsp_qc)
-            if count(qc) == 0
-                throw(ErrorException("No event passes the QC selection $qc_string"))
+            qdrift = dsp_qdrift_flt_optimization(wvfs_det_wdw, dsp_qc.blmean ./ presum_rate, dsp_config_det, pars_tau[det].τ)
+            dsp_qc = Table(dsp_qc; qdrift)
+            mad_ok = mapreduce(.&, collect(qc_mad); init = trues(length(dsp_qc))) do (col, k)
+                x = getproperty(dsp_qc, Symbol(col))
+                x_finite = filter(isfinite, x)
+                abs.(x .- median(x_finite)) .<= k * mad(x_finite; normalize = true)
             end
-            blmean_wdw = dsp_qc.blmean ./ presum_rate
-            wvfs_det_pre = wvfs_det_pre[findall(qc)]
-            wvfs_det_wdw = wvfs_det_wdw[findall(qc)]
-            blmean_wdw = blmean_wdw[findall(qc)]
-            @debug "Survival Fraction: $(round(count(qc) / length(qc) * 100, digits=2))%"
-            wvfs_det_pre, wvfs_det_wdw, blmean_wdw
-        end
-
-        # get qdrift
-        qdrift = @process_step "QDrift" begin
-            @debug "Get QDrift"
-            dsp_qdrift_flt_optimization(wvfs_det_wdw, blmean_wdw, dsp_config_det, pars_tau[det].τ)
+            qc = mad_ok .& ljl_propfunc(qc_string).(dsp_qc)
+            if count(qc) == 0
+                throw(ErrorException("No event passes the QC selection $qc_string" *
+                                        (isempty(qc_mad) ? "" : " and the qc_mad limits")))
+            end
+            @debug "Survival Fraction: $(round(count(mad_ok) / length(qc) * 100, digits=2))% after the MAD cuts, $(round(count(qc) / length(qc) * 100, digits=2))% after all cuts"
+            wvfs_det_pre[findall(qc)], qdrift[findall(qc)]
         end
 
         # prepare the waveforms once for all filter evaluations
