@@ -11,7 +11,7 @@ using Measurements: value as mvalue
 
 using JuLeAna
 using JuLeAna: evaluate_optimum, fit_fep_peak, flat_top_edge, limit_peak_waveforms, optimize_channel_filter,
-               run_filter_optimization_channel, snap_seed, write_fltopt_tables
+               qc_mad_selection, run_filter_optimization_channel, snap_seed, write_fltopt_tables
 
 @testset "filter optimization utils" begin
     @testset "write_fltopt_tables" begin
@@ -64,6 +64,21 @@ using JuLeAna: evaluate_optimum, fit_fep_peak, flat_top_edge, limit_peak_wavefor
         odata = (waveform_presummed = OffsetArray(collect(1:10), -3), waveform_windowed = OffsetArray(collect(11:20), -3), presum_rate = OffsetArray(fill(4, 10), -3))
         osel = @test_logs (:warn, r"exceed 4") limit_peak_waveforms(odata, :Tl208FEP, 4, MersenneTwister(1))
         @test allunique(osel.wvfs_pre) && all(in(1:10), osel.wvfs_pre)
+    end
+
+    @testset "qc_mad_selection" begin
+        x = [1.0, 1.1, 0.9, 1.0, 1.2, 0.8, 1.0, 5.0, NaN]
+        table = Table(blsigma = x, blslope = collect(1.0:9.0))
+        # median 1.0 and normalized MAD 0.148 of the finite blsigma values
+        sel = qc_mad_selection(table, PropDict(:blsigma => 5.0))
+        @test sel == [true, true, true, true, true, true, true, false, false]
+        # every column of qc_mad applies
+        sel2 = qc_mad_selection(table, PropDict(:blsigma => 5.0, :blslope => 1.0))
+        @test sel2 == (sel .& (abs.(table.blslope .- median(table.blslope)) .<= 1.0 * mad(table.blslope; normalize = true)))
+        @test count(sel2) < count(sel)
+        # no limits keep every event
+        @test all(qc_mad_selection(table, PropDict()))
+        @test_throws "blmean" qc_mad_selection(table, PropDict(:blmean => 5.0))
     end
 
     @testset "fit_fep_peak" begin
@@ -172,7 +187,7 @@ using JuLeAna: evaluate_optimum, fit_fep_peak, flat_top_edge, limit_peak_wavefor
 
     @testset "failing steps are named" begin
         run_channel(f_load) = run_filter_optimization_channel(f_load, [:trap], nothing, PropDict(:joint_search => true, :ctc_rel_uncertainty => 0.1,
-            :peakname => "Tl208FEP"), 500.0u"µs",
+            :peakname => "Tl208FEP", :qc_mad => PropDict(:blsigma => 5.0)), 500.0u"µs",
             nothing; detector = "V00000A", f_title = (label, flt) -> label, f_save = (fig, name) -> nothing, f_tablepath = flt -> "")
         err = try
             with_logger(NullLogger()) do
@@ -190,12 +205,14 @@ using JuLeAna: evaluate_optimum, fit_fep_peak, flat_top_edge, limit_peak_wavefor
         # the keys are checked before any data is loaded
         run_channel(opt_config) = run_filter_optimization_channel(name -> error("no data"), [:trap], nothing, opt_config, 500.0u"µs",
             nothing; detector = "V00000A", f_title = (label, flt) -> label, f_save = (fig, name) -> nothing, f_tablepath = flt -> "")
-        valid = PropDict(:joint_search => true, :ctc_rel_uncertainty => 0.1)
+        valid = PropDict(:joint_search => true, :ctc_rel_uncertainty => 0.1, :qc_mad => PropDict(:blsigma => 5.0))
         @test_throws "joint_search must be a Bool" run_channel(merge(valid, PropDict(:joint_search => "false")))
         @test_throws "joint_search must be a Bool" run_channel(merge(valid, PropDict(:joint_search => 0)))
         @test_throws "ctc_rel_uncertainty must be a Real" run_channel(merge(valid, PropDict(:ctc_rel_uncertainty => "0.1")))
+        @test_throws "qc_mad must be a section" run_channel(merge(valid, PropDict(:qc_mad => 5.0)))
         @test_throws "joint_search must be a Bool, got PropDicts.MissingProperty" run_channel(PropDict(:ctc_rel_uncertainty => 0.1))
         @test_throws "ctc_rel_uncertainty must be a Real, got PropDicts.MissingProperty" run_channel(PropDict(:joint_search => false))
+        @test_throws "qc_mad must be a section of column => limit entries, got PropDicts.MissingProperty" run_channel(PropDict(:joint_search => false, :ctc_rel_uncertainty => 0.1))
     end
 
     @testset "driver entry points" begin

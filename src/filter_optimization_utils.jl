@@ -74,23 +74,45 @@ end
 
 
 """
-    prepare_peak_set(wvfs::NamedTuple, dsp_config::DSPConfig, τ::Unitful.Time, f_evaluate_qc, qc_string::AbstractString)
+    qc_mad_selection(table, qc_mad)
 
-Apply the QC selection `qc_string` to the waveforms of one peak (see `load_peak_waveforms`),
-compute qdrift from the windowed waveforms and prepare the presummed waveforms with
-`dsp_flt_optimization_prepare`.
-
-Returns `(prep, qdrift)` of the events passing the QC, where `prep` is a `FltOptPrep`.
+Boolean vector of the rows of `table` that lie within `k` normalized MADs of the median for every
+`column => k` of `qc_mad`: `|x - median(x)| <= k * mad(x)`, with median and normalized MAD of the
+finite values of the column. Columns are looked up by name in `table`.
 """
-function prepare_peak_set(wvfs::NamedTuple, dsp_config::DSPConfig, τ::Unitful.Time, f_evaluate_qc, qc_string::AbstractString)
+function qc_mad_selection(table, qc_mad)
+    mapreduce(.&, collect(qc_mad); init = trues(length(table))) do (column, k)
+        x = getproperty(table, Symbol(column))
+        x_finite = filter(isfinite, x)
+        abs.(x .- median(x_finite)) .<= k * mad(x_finite; normalize = true)
+    end
+end
+
+
+"""
+    prepare_peak_set(wvfs::NamedTuple, dsp_config::DSPConfig, τ::Unitful.Time, f_evaluate_qc,
+                     qc_string::AbstractString, qc_mad)
+
+Apply the QC selection to the waveforms of one peak (see `load_peak_waveforms`) and prepare the
+presummed waveforms of the selected events with `dsp_flt_optimization_prepare`.
+
+qdrift is computed from the windowed waveforms of all events and added to the table of
+`dsp_qc_flt_optimization_compressed`. An event is selected if it is within the MAD limits `qc_mad`
+(see `qc_mad_selection`) and the expression `qc_string` holds on that table.
+
+Returns `(prep, qdrift, wvfs_pre)` of the selected events, where `prep` is a `FltOptPrep` and
+`wvfs_pre` are the presummed waveforms.
+"""
+function prepare_peak_set(wvfs::NamedTuple, dsp_config::DSPConfig, τ::Unitful.Time, f_evaluate_qc, qc_string::AbstractString, qc_mad)
     dsp_qc = dsp_qc_flt_optimization_compressed(wvfs.wvfs_pre, dsp_config, τ, f_evaluate_qc)
-    qc = findall(ljl_propfunc(qc_string).(dsp_qc))
-    isempty(qc) && throw(ErrorException("No event passes the QC selection $qc_string"))
-    @debug "QC survival fraction: $(round(length(qc) / length(dsp_qc) * 100, digits = 2))%"
-    wvfs_pre, wvfs_wdw = wvfs.wvfs_pre[qc], wvfs.wvfs_wdw[qc]
-    blmean_wdw = (dsp_qc.blmean ./ wvfs.presum_rate)[qc]
-    qdrift = dsp_qdrift_flt_optimization(wvfs_wdw, blmean_wdw, dsp_config, τ)
-    return (; prep = dsp_flt_optimization_prepare(wvfs_pre, dsp_config, τ), qdrift)
+    qdrift_all = dsp_qdrift_flt_optimization(wvfs.wvfs_wdw, dsp_qc.blmean ./ wvfs.presum_rate, dsp_config, τ)
+    dsp_qc = Table(dsp_qc; qdrift = qdrift_all)
+    mad_ok = qc_mad_selection(dsp_qc, qc_mad)
+    qc = findall(mad_ok .& ljl_propfunc(qc_string).(dsp_qc))
+    isempty(qc) && throw(ErrorException("No event passes the QC selection $qc_string and the qc_mad limits"))
+    @debug "QC survival fraction: $(round(count(mad_ok) / length(dsp_qc) * 100, digits = 2))% after the MAD cuts, $(round(length(qc) / length(dsp_qc) * 100, digits = 2))% after all cuts"
+    wvfs_pre = wvfs.wvfs_pre[qc]
+    return (; prep = dsp_flt_optimization_prepare(wvfs_pre, dsp_config, τ), qdrift = qdrift_all[qc], wvfs_pre)
 end
 
 
@@ -444,7 +466,8 @@ end
 Filter optimization of one detector. Loads the FEP waveforms with `f_load(peakname)` (see
 `load_peak_waveforms`), applies the QC, prepares the set once (`prepare_peak_set`) and runs
 `optimize_channel_filter` for every filter in `filter_types`. Throws an `ArgumentError` if
-`opt_config.joint_search` is not a `Bool` or `opt_config.ctc_rel_uncertainty` is not a `Real`.
+`opt_config.joint_search` is not a `Bool`, `opt_config.ctc_rel_uncertainty` is not a `Real` or
+`opt_config.qc_mad` is not a section.
 
 Returns a `Dict` from filter to its `(pars, log)`, or to the exception that stopped that
 filter. Errors while loading or preparing the FEP set propagate.
@@ -458,10 +481,14 @@ function run_filter_optimization_channel(f_load::Function, filter_types::Abstrac
     if !(opt_config.ctc_rel_uncertainty isa Real)
         throw(ArgumentError("flt_optimization.ctc_rel_uncertainty must be a Real, got $(typeof(opt_config.ctc_rel_uncertainty))"))
     end
+    if !(opt_config.qc_mad isa PropDict)
+        throw(ArgumentError("flt_optimization.qc_mad must be a section of column => limit entries, got $(typeof(opt_config.qc_mad))"))
+    end
 
     peakname = Symbol(opt_config.peakname)
     wvfs = @process_step "$peakname data loader" f_load(peakname)
-    fep = @process_step "$peakname QC and preparation" prepare_peak_set(wvfs, dsp_config, τ, f_evaluate_qc, opt_config.qc)
+    fep = @process_step "$peakname QC and preparation" prepare_peak_set(wvfs, dsp_config, τ, f_evaluate_qc, opt_config.qc,
+                                                                        opt_config.qc_mad)
     GC.gc()
 
     results = Dict{Symbol, Union{NamedTuple, Exception}}()

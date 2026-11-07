@@ -4,7 +4,7 @@
 
 Optimize the energy filter rise time and flat-top time per detector and `cal` partition for all partitions that contain `period`, using all analysis runs of the partition (HPGe detectors `geds`).
 
-The method is the same as in `process_filter_optimization_cal`. The waveforms are read from the `jlpks` tier of all runs of the partition (`n_evts` events per run, random ones if `select_random` is set) and limited to `max_wvfs` events per peak.
+The method is the same as in `process_filter_optimization_cal`. The waveforms are read from the `jlpks` tier of all runs of the partition (`n_evts` events per run, random ones if `select_random` is set) and limited to `max_wvfs` events per peak. The quality cuts (`qc_mad` and `qc` expression) are those of `process_filter_optimization_cal`.
 
 # Inputs
 - `jlpks` tier of the `cal` runs of each partition, for each detector.
