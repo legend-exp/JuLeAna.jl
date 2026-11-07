@@ -4,7 +4,9 @@
 
 Optimize the energy filter rise time and flat-top time per detector and `cal` partition for all partitions that contain `period`, using all analysis runs of the partition (HPGe detectors `geds`).
 
-The method is the same as in `process_filter_optimization_cal`: for each filter type listed under `e_filter`, the rise time is chosen from a baseline noise sweep and the flat-top time from a sweep over full-energy-peak events, or both from a joint search if `joint_search` is enabled. The waveforms of the peak named by `peakname` are read from the `jlpks` tier of all runs of the partition (`n_evts` events per run, drawn randomly with a seeded random number generator if `select_random` is set) and at most `max_wvfs` of them are used. The quality cuts (`qc` expression and optional `qc_mad` section) are those of `process_filter_optimization_cal`. Results lacking `objective`, `w90`, `ct_spread` or `joint_search` are optimized again.
+The method is the same as in `process_filter_optimization_cal`: for each filter type listed under `e_filter`, the rise time is chosen from a baseline noise sweep and the flat-top time from a sweep over full-energy-peak events, or both from a joint search if `joint_search` is enabled. The waveforms of the peak named by `peakname` are read from the `jlpks` tier of all runs of the partition (`n_evts` events per run, drawn randomly with a seeded random number generator if `select_random` is set) and at most `max_wvfs` of them are used. The quality cuts (`qc` expression and optional `qc_mad` section) are those of `process_filter_optimization_cal`. Results lacking `objective`, `w90`, `ct_spread` or `joint_search` are optimized again (`families` instead of `joint_search` for `dplms`).
+
+If `e_filter` lists `dplms`, a DPLMS filter is synthesized and selected after the other filter types as in `process_filter_optimization_cal`, on the same QC-selected waveforms and with the flat-top widenings `ff` of the config range `e_filter.dplms.ff` (start, stop, step; whole multiples of the sample time) if given. The `qc_mad` section is required, and the `qc` expression must remove events with a non-finite `qdrift` and events with a `t50_pre` outside the current window; the DPLMS synthesis throws otherwise.
 
 # Inputs
 - `jlpks` tier of the `cal` runs of each partition, for each detector.
@@ -14,9 +16,9 @@ The method is the same as in `process_filter_optimization_cal`: for each filter 
 - `l200.par.ppars.fltopt[det, part]` (existing results, if present).
 
 # Outputs
-- `l200.par.ppars.fltopt[det, part]`: per filter type the optimal rise time `rt` and flat-top time `ft` (the flat-top time the CUSP and ZAC filters apply), the `objective` with its value `min_objective`, the `fwhm`, `w90`, `asym`, `fct` and `ct_spread` at the optimum, `ctc_rel_uncertainty`, `joint_search`, `containment`, the noise sweep results `rt_enc` and `min_enc`, and `n_evals` and `converged` of the joint search if it ran, with validity entries for the partition; the validity of all partitions of the period is written to `l200.par.ppars.fltopt`.
-- Per detector, partition and filter type, plots `noise_sweep_<filter_type>`, `fwhm_ft_scan_<filter_type>`, `rtft_landscape_<filter_type>` (joint search only), `ctc_<filter_type>`, `residuals_<filter_type>` and `example_wvfs_<filter_type>`, saved only at the debug plot level.
-- Partition report `:filter_optimization` (Main Log, Metadata, Results table with one row per detector, partition and filter type).
+- `l200.par.ppars.fltopt[det, part]`: per filter type the optimal rise time `rt` and flat-top time `ft` (the flat-top time the CUSP and ZAC filters apply), the `objective` with its value `min_objective`, the `fwhm`, `w90`, `asym`, `fct` and `ct_spread` at the optimum, `ctc_rel_uncertainty`, `joint_search`, `containment`, the noise sweep results `rt_enc` and `min_enc`, and `n_evals` and `converged` of the joint search if it ran, with validity entries for the partition; the validity of all partitions of the period is written to `l200.par.ppars.fltopt`. The `dplms` entry holds instead the filter `coefficients`, the `reference` pulse over the window (`n_pre` samples before to `n_post` after `t50`, unit plateau), its filter output `response` over the `n_pre + n_post + 1` samples from `t50`, the read-out time `t_pickoff` after `t50`, `shaping_time`, `flat_top`, `ff` (in samples), `n_pre`, `n_post`, the synthesis `weights`, the `output_area` of the filter output, the objective fields of the other filters (`objective`, `ctc_rel_uncertainty`, `containment`, `min_objective`, `min_fwhm`, `w90`, `asym`, `fct`, `ct_spread`) and per family its `weights`, `ff` (in samples), `min_objective`, `min_fwhm` and the scan (`ff` in µs, `fwhm`, `w90`, `status` per grid point) under `families`.
+- Per detector, partition and filter type, plots `noise_sweep_<filter_type>`, `fwhm_ft_scan_<filter_type>`, `rtft_landscape_<filter_type>` (joint search only), `ctc_<filter_type>`, `residuals_<filter_type>` and `example_wvfs_<filter_type>`, saved only at the debug plot level. For `dplms`: `fwhm_ft_scan_dplms` (scan over `ff` of the selected family), `dplms_filter`, `dplms_reference`, `dplms_response` and `dplms_matrices`, and no noise sweep, joint search, CTC, residual or example waveform plots.
+- Partition report `:filter_optimization` (Main Log, Metadata, Results table with one row per detector, partition and filter type; the `dplms` row shows shaping time and flat top in the rise-time and flat-top columns).
 
 # Keywords
 - `reprocess`: redo all filter types, ignoring results in `l200.par.ppars.fltopt[det, part]`. If `false`, only filter types without results are processed.
@@ -106,6 +108,8 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
         e_filter = collect(keys(optimization_config_det.e_filter))
         qc_mad = get(optimization_config_det, :qc_mad, PropDict())
         qc_mad isa PropDict || throw(ArgumentError("flt_optimization config of $det: qc_mad must be a section of column => limit entries"))
+        :dplms in e_filter && !haskey(optimization_config_det, :qc_mad) &&
+            throw(ArgumentError("flt_optimization config of $det: the dplms filter requires a qc_mad section"))
 
         result_rt_ft_dict = Dict{Symbol,NamedTuple}()
         log_info_dict = Dict{Symbol,NamedTuple}()
@@ -129,10 +133,12 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
             for filter_type in e_filter
                 if haskey(pars_db_det[det], filter_type)
                     pars_flt = pars_db_det[det][filter_type]
-                    if all(k -> haskey(pars_flt, k), (:objective, :w90, :ct_spread, :joint_search))
+                    if all(k -> haskey(pars_flt, k), (:objective, :w90, :ct_spread, filter_type == :dplms ? :families : :joint_search))
                         @debug "Filter $filter_type already processed, skip"
+                        rt, ft, fwhm = filter_type == :dplms ? (pars_flt.shaping_time, pars_flt.flat_top, pars_flt.min_fwhm) :
+                                       (pars_flt.rt, pars_flt.ft, pars_flt.fwhm)
                         log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part,
-                                           ProcessStatus(1), filter_type, pars_flt.objective, pars_flt.rt, pars_flt.ft, pars_flt.fwhm,
+                                           ProcessStatus(1), filter_type, pars_flt.objective, rt, ft, fwhm,
                                            pars_flt.w90, get(pars_flt, :converged, "-"), "-", "Already processed --> skipped."))
                         # add results to dict
                         log_info_dict[filter_type] = log_info
@@ -212,7 +218,7 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
         end
 
         @debug_progress "Computing $det ..." for filter_type in e_filter
-            if haskey(processed_dict, filter_type)
+            if haskey(processed_dict, filter_type) || filter_type == :dplms
                 continue
             end
 
@@ -437,6 +443,106 @@ function p_process_filter_optimization_cal(processing_config, l200::LegendData, 
                 # add results to dict
                 log_info_dict[filter_type] = log_info
                 processed_dict[filter_type] = false
+            end
+        end
+
+        if :dplms in e_filter && !haskey(processed_dict, :dplms)
+            try
+                @debug "Optimize dplms filter"
+                optimization_config_flt = optimization_config_det.e_filter.dplms
+                lattice = prep.sampling_period
+                # flat-top widenings of the config range `ff` in whole samples, else multiples of the pulse rise time
+                dplms_grid = if haskey(optimization_config_flt, :ff)
+                    ff_cfg = optimization_config_flt.ff
+                    ffs = uconvert.(NoUnits, (ff_cfg.start:ff_cfg.step:ff_cfg.stop) ./ lattice)
+                    all(f -> isapprox(f, round(f); atol = 1e-6), ffs) ||
+                        throw(ArgumentError("DPLMS flat-top widenings $(ff_cfg.start):$(ff_cfg.step):$(ff_cfg.stop) " *
+                                            "are not whole multiples of the sample time"))
+                    n -> dplms_default_grid(n; ff = round.(Int, ffs))
+                else
+                    dplms_default_grid
+                end
+                res = @process_step "dplms filter synthesis for FEP" begin
+                    dsp_dplms_optimization(wvfs_det_pre, dsp_config_det, pars_tau[det].τ, qdrift; grid = dplms_grid)
+                end
+                yield()
+
+                # one flat-top widening fit per family of grid points with equal weights; the family with the smallest
+                # objective is kept. rel_tol = 0 takes the scan minimum: the filter length does not depend on ff.
+                grid_weights = [(; w.nm, w.za, w.ft, w.ct, w.zo) for w in res.grid]
+                fits = map(unique(grid_weights)) do weights
+                    idxs = findall(==(weights), grid_weights)
+                    ffs = [res.grid[k].ff for k in idxs]
+                    e_grid_ff = range(first(ffs) * lattice; step = (length(ffs) > 1 ? ffs[2] - ffs[1] : 1) * lattice, length = length(ffs))
+                    e_grid_ff ≈ ffs .* lattice || throw(ArgumentError("DPLMS flat-top widenings $ffs are not equally spaced"))
+                    result_ft, report_ft = @process_step "dplms flat-top widening extraction" begin
+                        fit_fwhm_ft(res.e_grid[idxs, :], e_grid_ff, qdrift, 0.0u"µs", optimization_config_flt.min_e_fep,
+                                    optimization_config_flt.max_e_fep, optimization_config_flt.rel_cut_fit_e_fep,
+                                    optimization_config_det.apply_ctc; n_bins = optimization_config_flt.nbins_e_fep, peak, window,
+                                    objective, ctc_rel_uncertainty, containment, rel_tol = 0)
+                    end
+                    i_scan = only(findall(==(mvalue(result_ft.ft)), report_ft.table.ft))
+                    (; weights, i = idxs[i_scan], i_scan, result_ft, report_ft)
+                end
+                (; weights, i, i_scan, result_ft, report_ft) = argmin(f -> mvalue(f.result_ft.min_objective), fits)
+                w = res.grid[i]
+                optimum = report_ft.table[i_scan]
+                @debug "Found optimal dplms weights $weights and ff = $(w.ff) samples with FWHM $(round(u"keV", result_ft.min_fwhm, digits=2))"
+
+                @debug_plot begin
+                    p = LegendMakie.lplot(report_ft; xlabel = "Flat-Top Widening ff", figsize = (600, 900),
+                                          title = get_plottitle(filekey_det, part, det, "FEP FT Scan"; additional_type = "dplms"))
+                    save_plot(p, l200, part, filekey_det, det, :fwhm_ft_scan_dplms)
+                    p = LegendMakie.lplot((; res.coeffs, res.grid, res.superpulse, res.t_pickoff, res.n_pre, res.n_post); idxs = [i],
+                                          title = get_plottitle(filekey_det, part, det, "DPLMS Filter"))
+                    save_plot(p, l200, part, filekey_det, det, :dplms_filter)
+                    p = LegendMakie.lplot((; res.superpulse, res.ref, res.ref_bins, res.t50, res.t_pickoff, res.n_pre, res.n_post);
+                                          figsize = (1200, 800), title = get_plottitle(filekey_det, part, det, "DPLMS Reference"))
+                    save_plot(p, l200, part, filekey_det, det, :dplms_reference)
+                    p = LegendMakie.lplot((; res.superpulse, res.response, res.grid, res.t50, res.t_pickoff, res.n_pre, res.n_post); idxs = [i],
+                                          xlims = (-(res.n_pre + 8), res.n_pre + res.n_post + 16) .*
+                                                  ustrip(u"µs", lattice),
+                                          figsize = (1200, 600), title = get_plottitle(filekey_det, part, det, "DPLMS Response"))
+                    save_plot(p, l200, part, filekey_det, det, :dplms_response)
+                    p = LegendMakie.lplot((; res.noise, res.flattops, res.ref, res.superpulse, res.n_pre, res.n_post); ff = w.ff,
+                                          figsize = (1200, 1000), title = get_plottitle(filekey_det, part, det, "DPLMS Matrices"))
+                    save_plot(p, l200, part, filekey_det, det, :dplms_matrices)
+                end
+
+                # filter output for the superpulse over the samples from the alignment point; the output has its own time axis
+                k0 = argmin(abs.(res.response[i].time .- median(res.t50)))
+                response = res.response[i].signal[k0:(k0 + length(res.ref) - 1)]
+
+                pars = (coefficients = res.coeffs[i], reference = res.ref, response, t_pickoff = uconvert(u"µs", res.t_pickoff),
+                        shaping_time = uconvert(u"µs", res.shaping_time[i]), flat_top = uconvert(u"µs", res.flat_top[i]), ff = w.ff,
+                        n_pre = res.n_pre, n_post = res.n_post, weights, output_area = uconvert(u"µs", res.output_area[i]),
+                        objective = string(objective), ctc_rel_uncertainty, containment, min_objective = result_ft.min_objective,
+                        min_fwhm = result_ft.min_fwhm, w90 = optimum.w90, asym = optimum.asym, fct = optimum.fct,
+                        ct_spread = optimum.ct_spread,
+                        families = [(weights = f.weights, ff = res.grid[f.i].ff, min_objective = f.result_ft.min_objective,
+                                     min_fwhm = f.result_ft.min_fwhm,
+                                     scan = (ff = uconvert.(u"µs", f.report_ft.table.ft),
+                                             fwhm = mvalue.(uconvert.(u"keV", f.report_ft.table.fwhm)),
+                                             w90 = mvalue.(uconvert.(u"keV", f.report_ft.table.w90)),
+                                             status = string.(f.report_ft.table.status))) for f in fits])
+
+                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part, ProcessStatus(1),
+                                   :dplms, pars.objective, pars.shaping_time, pars.flat_top, pars.min_fwhm, pars.w90, "-", "-", "-"))
+
+                # add results to dict
+                result_rt_ft_dict[:dplms] = pars
+                log_info_dict[:dplms] = log_info
+                processed_dict[:dplms] = true
+
+                # call garbage collector
+                GC.gc()
+            catch e
+                e isa ProcessStepError || @error "Filter: dplms filter optimization: $(truncate_error(e))"
+                log_info = log_nt((det, detector_status(chinfo_det.usability), detector_status(chinfo_det.psd_usability), part, ProcessStatus(0),
+                                   :dplms, fill("-", 7)..., "$(truncate_error(e))"))
+                # add results to dict
+                log_info_dict[:dplms] = log_info
+                processed_dict[:dplms] = false
             end
         end
 
