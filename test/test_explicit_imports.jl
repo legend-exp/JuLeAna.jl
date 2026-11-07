@@ -34,8 +34,5 @@ Test.@testset "ExplicitImports" begin
                                                     :n_avail, :worker_timeout,
                                                     # Calibration and cut functions of one energy, A/E or LQ type (`read_hit_cal`).
                                                     :_get_e_cal_propsfunc_str, :_get_aoe_cal_propfunc_str, :_get_lq_cal_propfunc_str,
-                                                    :_get_ged_aoe_lowcut_propfunc_str, :_get_ged_lq_highcut_propfunc_str,
-                                                    # Unit type aliases for the time and energy arguments of the filter optimization,
-                                                    # and the plot file name of its LH5 tables.
-                                                    :Energy, :Time, :get_pltfilename))
+                                                    :_get_ged_aoe_lowcut_propfunc_str, :_get_ged_lq_highcut_propfunc_str))
 end # testset

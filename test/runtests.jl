@@ -9,7 +9,6 @@ withenv("LEGEND_DATA_CONFIG" => joinpath(mktempdir(), "config.json")) do
         include("test_aqua.jl")
         include("test_explicit_imports.jl")
         include("test_juleana.jl")
-        include("test_filter_optimization_utils.jl")
         include("test_process_step.jl")
         include("test_processing_config.jl")
         include("test_processor_graph.jl")

@@ -25,7 +25,7 @@ import CairoMakie
 # Loading CommonMark activates Tachikoma's Markdown extension, which the report viewer renders with.
 import CommonMark
 using Dates: Dates, DateTime, Millisecond, Second, UTC, canonicalize, now, @dateformat_str
-using Format: Format
+using Format: Format, format
 import Graphs
 using IntervalSets: IntervalSets, (..), leftendpoint, rightendpoint
 using LaTeXStrings: LaTeXStrings, @L_str
@@ -35,7 +35,7 @@ using LegendDataManagement: LegendDataManagement, DataCategory, DataPeriod, Data
                             is_lrun, ljl_propfunc, lreport, lreport!, lstring, partitioninfo, process_failed, process_succeeded,
                             process_warning, read_ldata, readlprops, runinfo, start_filekey, writelprops, writelreport
 using LegendDataManagement.LDMUtils: LDMUtils, create_logtbl, create_metadatatbl, create_pars, create_validity, get_partitionvalidity,
-                                     get_plottitle, get_pltfilename, get_preportfilename, get_rreportfilename, savelfig, writevalidity
+                                     get_plottitle, get_preportfilename, get_rreportfilename, savelfig, writevalidity
 using LegendDataTypes: LegendDataTypes, decode_data, fast_flatten
 using LegendDSP: LegendDSP, DSPConfig, dsp_decay_times, dsp_energy_rtft, dsp_flt_optimization_prepare, dsp_icpc_compressed, dsp_pmts,
                  dsp_qc_flt_optimization_compressed, dsp_qdrift_flt_optimization, dsp_sipm_compressed,
@@ -50,7 +50,7 @@ using LegendSpecFits: LegendSpecFits, autocal_energy, ctc_energy, cut_single_pea
                       fit_single_peak_th228, fit_single_trunc_gauss, fit_sipm_spectrum, fit_sipm_threshold, fit_sipm_wl,
                       generate_aoe_compton_bands,
                       get_continuum_survival_fraction, get_low_aoe_cut, get_peak_survival_fraction, get_peaks_survival_fractions,
-                      lq_ctc_correction, lq_norm, optimize_rtft, peak_width_metrics, peakhists_gamma, set_timelimit,
+                      lq_ctc_correction, lq_norm, optimize_rtft, peakhists_gamma, set_timelimit,
                       simple_calibration, sipm_simple_calibration
 using Base.ScopedValues: ScopedValue, with
 using Distributed: Distributed, AbstractWorkerPool, RemoteException, myid, nprocs, nworkers, procs, remotecall_fetch, workers
@@ -70,7 +70,7 @@ using ProgressLogging: ProgressLogging
 using ProgressMeter: ProgressMeter, Progress, next!, update!
 using PropDicts: PropDicts, PropDict
 using PropertyFunctions: PropertyFunctions, @pf, filterby
-using Random: Random, AbstractRNG, MersenneTwister, shuffle
+using Random: Random, MersenneTwister
 using RadiationDetectorDSP: RadiationDetectorDSP, CUSPChargeFilter, TrapezoidalChargeFilter, ZACChargeFilter
 using StatsBase: StatsBase, Histogram, fit, mean, median, quantile, sample, std
 using StructArrays: StructArray
@@ -93,7 +93,6 @@ include("progress.jl")
 include("parallel.jl")
 include("qc.jl")
 include("hit_data.jl")
-include("filter_optimization_utils.jl")
 include("processing_config.jl")
 include("processor_graph.jl")
 include("processing_loop.jl")
