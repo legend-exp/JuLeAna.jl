@@ -37,17 +37,22 @@ using LegendDataManagement: LegendDataManagement, DataCategory, DataPeriod, Data
 using LegendDataManagement.LDMUtils: LDMUtils, create_logtbl, create_metadatatbl, create_pars, create_validity, get_partitionvalidity,
                                      get_plottitle, get_preportfilename, get_rreportfilename, savelfig, writevalidity
 using LegendDataTypes: LegendDataTypes, decode_data, fast_flatten
-using LegendDSP: LegendDSP, DSPConfig, dsp_decay_times, dsp_icpc_compressed, dsp_pmts, dsp_qc_flt_optimization_compressed,
-                 dsp_qdrift_flt_optimization, dsp_sipm_compressed
+using LegendDSP: LegendDSP, DSPConfig, dplms_default_grid, dsp_decay_times, dsp_dplms_optimization, dsp_energy_rtft,
+                 dsp_flt_optimization_prepare, dsp_icpc_compressed, dsp_pmts,
+                 dsp_qc_flt_optimization_compressed, dsp_qdrift_flt_optimization, dsp_sipm_compressed,
+                 realized_flattop
 using LegendEventAnalysis: LegendEventAnalysis, TimeEvolution, calibrate_all, flag_coincidences, rate, relative,
                            smooth
 using LegendHDF5IO: LegendHDF5IO, delete_entry!, lh5open
 import LegendMakie
-using LegendSpecFits: LegendSpecFits, autocal_energy, ctc_energy, cut_single_peak, fit_aoe_compton, fit_aoe_compton_combined,
+using LegendSpecFits: LegendSpecFits, autocal_energy, ctc_energy, cut_single_peak, estimate_single_peak_stats, evaluate_energy_point,
+                      fit_aoe_compton, fit_aoe_compton_combined,
                       fit_aoe_corrections, fit_calibration, fit_enc_sigmas, fit_fwhm, fit_fwhm_ft, fit_peaks, fit_sf_wl,
-                      fit_single_trunc_gauss, fit_sipm_spectrum, fit_sipm_threshold, fit_sipm_wl, generate_aoe_compton_bands,
+                      fit_single_peak_th228, fit_single_trunc_gauss, fit_sipm_spectrum, fit_sipm_threshold, fit_sipm_wl,
+                      generate_aoe_compton_bands,
                       get_continuum_survival_fraction, get_low_aoe_cut, get_peak_survival_fraction, get_peaks_survival_fractions,
-                      lq_ctc_correction, lq_norm, peakhists_gamma, set_timelimit, simple_calibration, sipm_simple_calibration
+                      lq_ctc_correction, lq_norm, optimize_rtft, peakhists_gamma, set_timelimit,
+                      simple_calibration, sipm_simple_calibration
 using Base.ScopedValues: ScopedValue, with
 using Distributed: Distributed, AbstractWorkerPool, RemoteException, myid, nprocs, nworkers, procs, remotecall_fetch, workers
 using Distributions: Distributions, Hypergeometric, Normal, ccdf, cdf
@@ -66,7 +71,9 @@ using ProgressLogging: ProgressLogging
 using ProgressMeter: ProgressMeter, Progress, next!, update!
 using PropDicts: PropDicts, PropDict
 using PropertyFunctions: PropertyFunctions, @pf, filterby
-using StatsBase: StatsBase, Histogram, fit, mean, median, quantile, sample, std
+using Random: Random, MersenneTwister
+using RadiationDetectorDSP: RadiationDetectorDSP, CUSPChargeFilter, TrapezoidalChargeFilter, ZACChargeFilter
+using StatsBase: StatsBase, Histogram, fit, mad, mean, median, quantile, sample, std
 using StructArrays: StructArray
 using Tachikoma: Tachikoma
 using TerminalLoggers: TerminalLogger
@@ -74,7 +81,7 @@ import ThreadPinning
 import TOML
 using TimerOutputs: TimerOutputs, @timeit, TimerOutput
 using TypedTables: TypedTables, Table, columnnames, columns
-using Unitful: Unitful, @u_str, uconvert, unit, uparse, ustrip
+using Unitful: Unitful, @u_str, NoUnits, uconvert, unit, uparse, ustrip
 import UnitfulAtomic
 using UUIDs: UUID, uuid4
 
