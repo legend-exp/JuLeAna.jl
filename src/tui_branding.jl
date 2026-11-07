@@ -49,13 +49,6 @@ const HELP_KEYS = (setup = (("Tab  Shift-Tab", "next, previous pane"), ("↑ ↓
                              ("Ctrl-T  Ctrl-S", "Tachikoma: color themes, display settings"),
                              ("Ctrl-A  Ctrl-R", "Tachikoma: toggle animations, record the screen")))
 
-# Version of this package as `v1.2.3`, read once.
-const VERSION_TEXT = Ref("")
-function juleana_version()
-    isempty(VERSION_TEXT[]) && (VERSION_TEXT[] = "v" * string(pkgversion(JuLeAna)))
-    return VERSION_TEXT[]
-end
-
 # Color of a logo color name: the outline takes the text color of the theme.
 function logo_color(name::Symbol)
     name === :outline && return Tachikoma.theme().text
@@ -113,11 +106,6 @@ function fitting_logo(width::Integer, height::Integer)
         w <= width && h <= height && return rows
     end
     return nothing
-end
-
-# The name `JuLeAna` in the colors of the logo.
-function logo_name_spans()
-    return [(part, Tachikoma.Style(; fg = TITLE_COLORS[i], bold = true)) for (i, part) in enumerate(("Ju", "Le", "Ana"))]
 end
 
 # `nothing` while the session loads, `:loaded` once it is loaded and `:failed` if loading failed.
@@ -183,7 +171,7 @@ function render_corner_logo(m::JuLeAnaTUI, area::Tachikoma.Rect, buf::Tachikoma.
     used = isempty(m.tabs._tab_rects) ? area.x - 1 : maximum(Tachikoma.right, m.tabs._tab_rects)
     right = Tachikoma.right(area)
     available = right - used - 1
-    title = vcat(logo_name_spans(), [(" " * juleana_version(), Tachikoma.tstyle(:text_dim))])
+    title = name_version_spans()
     title_width = sum(s -> textwidth(s[1]), title)
     title_width <= available || return nothing
     put_spans!(buf, right - title_width + 1, area.y, right, title)

@@ -2,9 +2,6 @@
 
 const TUI_PAGES = ("Setup", "Graph", "Workers", "Progress", "Log", "Reports", "History")
 
-# Colors of the letters of the logo title, in the order of the letters of `JuLeAna`.
-const TITLE_COLORS = (Tachikoma.ColorRGB(0xcb, 0x3c, 0x33), Tachikoma.ColorRGB(0x38, 0x98, 0x26), Tachikoma.ColorRGB(0x95, 0x58, 0xb2))
-
 # Keys shown on the bottom row, as `(key, description)` per page: Setup, Graph, Progress, Log, others.
 const SETUP_HINTS = (("Tab", "pane"), ("Space", "toggle"), ("/", "filter"), ("s", "start"), ("x/X", "stop"), ("W", "workers"),
                      ("e", "settings"), ("w", "write"))
