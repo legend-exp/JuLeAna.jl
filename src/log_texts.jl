@@ -185,6 +185,9 @@ otherwise the optimum is the flat-top scan optimum at the ENC rise time.
 The CUSP and ZAC filters round the flat-top time to whole samples and lengthen it by one sample if the filter length minus the flat top is odd;
 the flat-top times in the results are those the filters apply.
 The column FT Edge shows whether the optimum flat-top time lies on the lower or upper edge of the flat-top grid.
+A DPLMS filter is synthesized after the other filters on the same events for each point of a grid of flat-top widenings ff and weights.
+For each set of grid points with equal weights, the FEP fit over ff gives the ff with the smallest objective, and the set with the smallest objective is kept.
+The DPLMS row shows the shaping time and flat top of the synthesized filter; FT Edge refers to the range of ff.
 """
 
 const sg_filter_optimization_log_text = """## SG window length optimization

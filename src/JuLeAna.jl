@@ -37,7 +37,8 @@ using LegendDataManagement: LegendDataManagement, DataCategory, DataPeriod, Data
 using LegendDataManagement.LDMUtils: LDMUtils, create_logtbl, create_metadatatbl, create_pars, create_validity, get_partitionvalidity,
                                      get_plottitle, get_pltfilename, get_preportfilename, get_rreportfilename, savelfig, writevalidity
 using LegendDataTypes: LegendDataTypes, decode_data, fast_flatten
-using LegendDSP: LegendDSP, DSPConfig, dsp_decay_times, dsp_energy_rtft, dsp_flt_optimization_prepare, dsp_icpc_compressed, dsp_pmts,
+using LegendDSP: LegendDSP, DSPConfig, dplms_default_grid, dsp_decay_times, dsp_dplms_optimization, dsp_energy_rtft,
+                 dsp_flt_optimization_prepare, dsp_icpc_compressed, dsp_pmts,
                  dsp_qc_flt_optimization_compressed, dsp_qdrift_flt_optimization, dsp_sipm_compressed,
                  realized_flattop
 using LegendEventAnalysis: LegendEventAnalysis, TimeEvolution, calibrate_all, flag_coincidences, rate, relative,

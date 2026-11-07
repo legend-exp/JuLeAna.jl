@@ -10,8 +10,9 @@ import LegendMakie, Makie
 using Measurements: value as mvalue
 
 using JuLeAna
-using JuLeAna: evaluate_optimum, fit_fep_peak, flat_top_edge, limit_peak_waveforms, optimize_channel_filter,
-               qc_mad_selection, run_filter_optimization_channel, snap_seed, write_fltopt_tables
+using JuLeAna: dplms_grid, dplms_weight_families, evaluate_optimum, fit_fep_peak, flat_top_edge, fltopt_pars_summary,
+               is_current_fltopt_pars, limit_peak_waveforms, optimize_channel_filter, optimize_dplms_filter, qc_mad_selection,
+               run_filter_optimization_channel, snap_seed, write_fltopt_tables
 
 @testset "filter optimization utils" begin
     @testset "write_fltopt_tables" begin
@@ -185,6 +186,50 @@ using JuLeAna: evaluate_optimum, fit_fep_peak, flat_top_edge, limit_peak_wavefor
         @test flat_top_edge(5.0u"µs", (1.0u"µs", 5.0u"µs"), 0.1u"µs") == :upper
     end
 
+    @testset "dplms_grid" begin
+        Δt = 0.128u"µs"
+        # without an ff section the default grid is used
+        @test dplms_grid(PropDict(), Δt) === LegendDSP.dplms_default_grid
+        flt_config = PropDict(:ff => PropDict(:start => 0.256u"µs", :stop => 0.768u"µs", :step => 0.256u"µs"))
+        grid = dplms_grid(flt_config, Δt)(37)
+        @test [w.ff for w in grid] == [2, 4, 6]
+        @test all(w -> w.zo == 0.0 && w.nm == 1.0, grid)
+        # the range may be given in other units
+        flt_config_ns = PropDict(:ff => PropDict(:start => 256.0u"ns", :stop => 768.0u"ns", :step => 256.0u"ns"))
+        @test [w.ff for w in dplms_grid(flt_config_ns, Δt)(37)] == [2, 4, 6]
+        bad = PropDict(:ff => PropDict(:start => 0.2u"µs", :stop => 0.8u"µs", :step => 0.2u"µs"))
+        @test_throws "not whole multiples of the sample time" dplms_grid(bad, Δt)
+    end
+
+    @testset "dplms_weight_families" begin
+        grid = [(nm = 1.0, za = 1e3, ft = 1.0, ct = 0.0, zo = zo, ff = ff) for zo in (0.0, 1e3) for ff in (2, 4, 6)]
+        families = dplms_weight_families(grid)
+        @test length(families) == 2
+        @test [f.idxs for f in families] == [1:3, 4:6]
+        @test [f.weights.zo for f in families] == [0.0, 1e3]
+        @test keys(first(families).weights) == (:nm, :za, :ft, :ct, :zo)
+        # families are ordered by first occurrence, also if the grid points interleave
+        mixed = grid[[1, 4, 2, 5, 3, 6]]
+        @test [f.idxs for f in dplms_weight_families(mixed)] == [[1, 3, 5], [2, 4, 6]]
+        @test length(dplms_weight_families(grid[1:1])) == 1
+    end
+
+    @testset "fltopt pars of the filter types" begin
+        fixed = PropDict(:rt => 4.0u"µs", :ft => 2.0u"µs", :fwhm => 2.5u"keV", :w90 => 4.7u"keV", :objective => "fwhm", :ct_spread => 0.1u"keV",
+                         :joint_search => false)
+        dplms = PropDict(:shaping_time => 3.0u"µs", :flat_top => 1.5u"µs", :min_fwhm => 2.4u"keV", :w90 => 4.5u"keV", :objective => "fwhm",
+                         :ct_spread => 0.1u"keV", :families => [PropDict(:ff => 2)])
+        @test fltopt_pars_summary(:trap, fixed) == (rt = 4.0u"µs", ft = 2.0u"µs", fwhm = 2.5u"keV", w90 = 4.7u"keV")
+        @test fltopt_pars_summary(:dplms, dplms) == (rt = 3.0u"µs", ft = 1.5u"µs", fwhm = 2.4u"keV", w90 = 4.5u"keV")
+        @test is_current_fltopt_pars(:cusp, fixed)
+        @test is_current_fltopt_pars(:dplms, dplms)
+        # fields of an earlier method are missing
+        @test !is_current_fltopt_pars(:cusp, PropDict(:rt => 4.0u"µs", :ft => 2.0u"µs", :fwhm => 2.5u"keV"))
+        @test !is_current_fltopt_pars(:dplms, PropDict(:shaping_time => 3.0u"µs", :flat_top => 1.5u"µs", :min_fwhm => 2.4u"keV"))
+        @test !is_current_fltopt_pars(:dplms, fixed)
+        @test !is_current_fltopt_pars(:cusp, dplms)
+    end
+
     @testset "failing steps are named" begin
         run_channel(f_load) = run_filter_optimization_channel(f_load, [:trap], nothing, PropDict(:joint_search => true, :ctc_rel_uncertainty => 0.1,
             :peakname => "Tl208FEP", :qc_mad => PropDict(:blsigma => 5.0)), 500.0u"µs",
@@ -217,6 +262,7 @@ using JuLeAna: evaluate_optimum, fit_fep_peak, flat_top_edge, limit_peak_wavefor
 
     @testset "driver entry points" begin
         @test hasmethod(optimize_channel_filter, Tuple{NamedTuple, Symbol, DSPConfig, PropDict, typeof(1.0u"µs")}, (:detector, :f_title, :f_save, :f_tablepath))
+        @test hasmethod(optimize_dplms_filter, Tuple{NamedTuple, DSPConfig, PropDict, typeof(1.0u"µs")}, (:detector, :f_title, :f_save))
         @test hasmethod(run_filter_optimization_channel, Tuple{Function, Vector{Union{Int, Symbol}}, DSPConfig, PropDict, typeof(1.0u"µs"), Function}, (:detector, :f_title, :f_save, :f_tablepath))
     end
 end

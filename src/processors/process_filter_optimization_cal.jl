@@ -6,6 +6,8 @@ Optimize the energy filter rise time and flat-top time for all processable HPGe 
 
 For each filter type listed under `e_filter` in the optimization config, `optimize_channel_filter` chooses the rise time from a baseline noise sweep and the flat-top time from a sweep over full-energy-peak events. With `joint_search` enabled, a lattice search over both times gives the optimum of the configured `objective`. The FEP is evaluated at the optimum with a peak fit and the residuals against qdrift. Waveforms come from the `jlpks` tier and are limited to `max_wvfs` events per peak. An event is kept if, for every `column => k` of `qc_mad` (e.g. `blsigma`, `blslope`), its value lies within `k` normalized MADs of the median of the finite values, and the `qc` expression holds on the QC table of `dsp_qc_flt_optimization_compressed` extended by `qdrift`. Filter types that already have results from this method are skipped unless `reprocess` is set; results of an older method are optimized again.
 
+If `e_filter` lists `dplms`, `optimize_dplms_filter` synthesizes a DPLMS filter after the other filter types on the same prepared waveforms, for every point of LegendDSP's `dplms_default_grid`, with the flat-top widenings `ff` of the config range `e_filter.dplms.ff` (start, stop, step; whole multiples of the sample time) if given and multiples of the rise time otherwise. The grid points that share all weights (`nm`, `za`, `ft`, `ct`, `zo`) form a family. For each family the FEP is fitted at every `ff` with `fit_fwhm_ft` and the `objective` of the config, and the `ff` with the smallest objective is selected (`rel_tol` is zero: the DPLMS filter length does not depend on `ff`, so the scan minimum is taken without a preference for long flat tops); equal objective values select the largest `ff`. The family with the smallest objective is kept and the result stores the objective, FWHM and `ff` of every family and its scan over `ff` under `families`. The `qc` expression must remove events with a non-finite `qdrift` and events with a `t50_pre` outside the current window; the DPLMS synthesis throws otherwise.
+
 # Inputs
 - `jlpks` tier of the start `cal` filekey of the run, for each detector (peak waveforms named by `peakname`).
 - `dataprod_config(l200).dsp(filekey)`, in particular the `flt_optimization` section (`default` and per-detector entries) and the DSP config used for the filter grids.
@@ -14,10 +16,10 @@ For each filter type listed under `e_filter` in the optimization config, `optimi
 - `l200.par.rpars.fltopt[period, run]` (existing results, unless `reprocess` is set).
 
 # Outputs
-- `l200.par.rpars.fltopt[period, run]`: per detector and filter type the objective, the optimal rise time and flat-top time, FWHM and W90 at the optimum, and the validity entry for the run.
+- `l200.par.rpars.fltopt[period, run]`: per detector and filter type the objective, the optimal rise time and flat-top time, FWHM and W90 at the optimum, and the validity entry for the run. For `dplms`: the filter `coefficients`, the `reference` pulse over the window (`n_pre` samples before to `n_post` after `t50`, unit plateau), its filter output `response` over the `n_pre + n_post + 1` samples from `t50`, the read-out time `t_pickoff` after `t50`, `shaping_time`, `flat_top`, `ff`, `n_pre`, `n_post`, the synthesis `weights`, `output_area`, `min_fwhm` and the objective fields of the other filters.
 - Per detector and filter type, the tables `fltopt_tables_<filter_type>.lh5` next to the plots.
-- Per detector and filter type, the plots `noise_sweep_*`, `ft_scan_*`, `rtft_landscape_*`, `ctc_*`, `residuals_*` and `example_wvfs_*`, saved at the debug plot level.
-- Run report `:filter_optimization` (Main Log, Metadata, Results table with one row per detector and filter type).
+- Per detector and filter type, the plots `noise_sweep_*`, `ft_scan_*`, `rtft_landscape_*`, `ctc_*`, `residuals_*` and `example_wvfs_*`, saved at the debug plot level. For `dplms`: `ft_scan_dplms` (FEP objective against `ff` of the selected family), `dplms_filter`, `dplms_reference`, `dplms_response` and `dplms_matrices`.
+- Run report `:filter_optimization` (Main Log, Metadata, Results table with one row per detector and filter type; the DPLMS row shows shaping time and flat top in the rise-time and flat-top columns).
 
 # Keywords
 - `reprocess`: redo all detectors and filter types, discarding existing results in `l200.par.rpars.fltopt[period, run]`. If `false`, only filter types without results are processed.
@@ -86,14 +88,15 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
             for filter_type in e_filter
                 haskey(pars_db[det], filter_type) || continue
                 pars_flt = pars_db[det][filter_type]
-                is_current = all(k -> haskey(pars_flt, k), (:objective, :w90, :ct_spread, :joint_search))
+                is_current = is_current_fltopt_pars(filter_type, pars_flt)
                 if !is_current
                     @info "Detector $det, filter $filter_type: pars from the previous method, re-optimizing"
                 else
                     @debug "Filter $filter_type already processed, skip"
+                    flt_summary = fltopt_pars_summary(filter_type, pars_flt)
                     log_info_dict[filter_type] = log_nt((det, detector_status(chinfo_det.usability),
                                                          detector_status(chinfo_det.psd_usability), ProcessStatus(1), filter_type,
-                                                         pars_flt.objective, pars_flt.rt, pars_flt.ft, pars_flt.fwhm, pars_flt.w90,
+                                                         pars_flt.objective, flt_summary.rt, flt_summary.ft, flt_summary.fwhm, flt_summary.w90,
                                                          get(pars_flt, :converged, "-"), "-",
                                                          "Already processed --> skipped."))
                     processed_dict[filter_type] = false
@@ -133,9 +136,10 @@ function process_filter_optimization_cal(processing_config, l200::LegendData, pe
                                                      fill("-", 7)..., truncate_error(res)))
                 processed_dict[filter_type] = false
             else
+                flt_summary = fltopt_pars_summary(filter_type, res.pars)
                 log_info_dict[filter_type] = log_nt((det, detector_status(chinfo_det.usability),
                                                      detector_status(chinfo_det.psd_usability), ProcessStatus(1), filter_type,
-                                                     res.log.objective, res.pars.rt, res.pars.ft, res.pars.fwhm, res.pars.w90,
+                                                     res.log.objective, flt_summary.rt, flt_summary.ft, flt_summary.fwhm, flt_summary.w90,
                                                      get(res.pars, :converged, "-"),
                                                      res.log.ft_edge, "-"))
                 result_rt_ft_dict[filter_type] = res.pars

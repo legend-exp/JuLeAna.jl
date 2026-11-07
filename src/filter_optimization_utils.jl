@@ -459,13 +459,165 @@ end
 
 
 """
+    dplms_grid(flt_config, sampling_period)
+
+Grid for `dsp_dplms_optimization`: LegendDSP's `dplms_default_grid` if `flt_config` has no `ff`
+section, otherwise a function of the rise time in samples that returns `dplms_default_grid` with the
+flat-top widenings `ff.start:ff.step:ff.stop` of the section, in samples. Throws an `ArgumentError`
+if a widening is not a whole multiple of `sampling_period`.
+"""
+function dplms_grid(flt_config, sampling_period)
+    haskey(flt_config, :ff) || return dplms_default_grid
+    ff = flt_config.ff
+    ffs = uconvert.(NoUnits, (ff.start:ff.step:ff.stop) ./ sampling_period)
+    all(f -> isapprox(f, round(f); atol = 1e-6), ffs) ||
+        throw(ArgumentError("DPLMS flat-top widenings $(ff.start):$(ff.step):$(ff.stop) are not whole multiples of the sample time $sampling_period"))
+    return n -> dplms_default_grid(n; ff = round.(Int, ffs))
+end
+
+
+"""
+    dplms_weight_families(grid)
+
+Groups of the points of a DPLMS `grid` that share all synthesis weights `nm`, `za`, `ft`, `ct`, `zo`,
+in order of first occurrence, as a vector of `(weights, idxs)` with the `NamedTuple` of the weights
+and the indices of the grid points.
+"""
+function dplms_weight_families(grid)
+    weights = map(w -> (; w.nm, w.za, w.ft, w.ct, w.zo), grid)
+    return [(weights = u, idxs = findall(==(u), weights)) for u in unique(weights)]
+end
+
+
+"""
+    optimize_dplms_filter(fep::NamedTuple, dsp_config, opt_config::PropDict, τ::Unitful.Time;
+                          detector, f_title::Function, f_save::Function)
+
+Synthesize DPLMS energy filters on the prepared FEP set `fep` (see `prepare_peak_set`) and select one.
+
+`dsp_dplms_optimization` synthesizes a filter for every point of the grid of `dplms_grid`, with the
+flat-top widenings `ff` of `opt_config.e_filter.dplms.ff` if given. Grid points that share all weights
+form a family (`dplms_weight_families`). For each family `fit_fwhm_ft` fits the FEP over `ff` with
+the objective, `ctc_rel_uncertainty` and `containment` of `opt_config` and `rel_tol = 0`: the DPLMS
+filter length does not depend on `ff`, so the scan minimum is taken without a preference for long
+flat tops, and equal objective values select the largest `ff`. The family with the smallest objective
+is kept. An `ff` on the edge of the scan range of the selected family (`flat_top_edge`) logs a warning
+naming `detector`; the log field `ft_edge` holds `"lower"`, `"upper"` or `"-"`.
+
+The QC expression has to remove events with a non-finite qdrift and events whose `t50_pre` lies outside
+the current window of `dsp_config`: the synthesis throws otherwise.
+
+Figures are saved with `f_save(fig, name)` and titles `f_title(label, :dplms)`.
+
+Returns `(pars, log)`. `pars` holds the filter `coefficients`, the `reference` pulse over the window
+(`n_pre` samples before to `n_post` after `t50`, unit plateau), its filter output `response` over the
+`n_pre + n_post + 1` samples from `t50`, the read-out time `t_pickoff` after `t50`, `shaping_time`,
+`flat_top`, `ff`, `n_pre`, `n_post`, the synthesis `weights`, the `output_area` of the filter output,
+the objective fields of the other filters (`objective`, `ctc_rel_uncertainty`, `containment`,
+`min_objective`, `w90`, `asym`, `fct`, `ct_spread`), `min_fwhm`, and per family its `weights`, `ff`,
+`min_objective`, `min_fwhm` and the scan (`ff`, `fwhm`, `w90`, `status` per grid point) under `families`.
+"""
+function optimize_dplms_filter(fep::NamedTuple, dsp_config, opt_config::PropDict, τ::Unitful.Time;
+        detector, f_title::Function, f_save::Function)
+    flt_config = opt_config.e_filter.dplms
+    objective = Symbol(opt_config.objective)
+    (; ctc_rel_uncertainty, containment) = opt_config
+    window = (opt_config.left_window_size, opt_config.right_window_size)
+
+    res = @process_step "dplms filter synthesis for FEP" dsp_dplms_optimization(fep.wvfs_pre, dsp_config, τ, fep.qdrift;
+        grid = dplms_grid(flt_config, fep.prep.sampling_period))
+    Δt = step(res.superpulse.time)
+
+    fits = map(dplms_weight_families(res.grid)) do (; weights, idxs)
+        ffs = [res.grid[k].ff for k in idxs]
+        e_grid_ff = range(first(ffs) * Δt; step = (length(ffs) > 1 ? ffs[2] - ffs[1] : 1) * Δt, length = length(ffs))
+        e_grid_ff ≈ ffs .* Δt || throw(ArgumentError("DPLMS flat-top widenings $ffs are not equally spaced"))
+        result, report = @process_step "dplms flat-top widening extraction" begin
+            fit_fwhm_ft(res.e_grid[idxs, :], e_grid_ff, fep.qdrift, 0.0u"µs", flt_config.min_e_fep, flt_config.max_e_fep,
+                flt_config.rel_cut_fit_e_fep, opt_config.apply_ctc; n_bins = flt_config.nbins_e_fep, peak = opt_config.peak,
+                window, objective, ctc_rel_uncertainty, containment, rel_tol = 0)
+        end
+        i_scan = only(findall(==(mvalue(result.ft)), report.table.ft))
+        (; weights, e_grid_ff, i = idxs[i_scan], i_scan, result, report)
+    end
+    (; weights, e_grid_ff, i, i_scan, result, report) = argmin(f -> mvalue(f.result.min_objective), fits)
+    w = res.grid[i]
+    optimum = report.table[i_scan]
+    @debug "Filter dplms: selected weights $weights, ff = $(w.ff) samples with FWHM $(round(u"keV", result.min_fwhm, digits = 2))"
+
+    ft_edge = length(e_grid_ff) > 1 ? flat_top_edge(w.ff * Δt, extrema(e_grid_ff), Δt) : nothing
+    if !isnothing(ft_edge)
+        @warn "Detector $detector, filter dplms: optimum flat-top widening $(w.ff * Δt) is on the $ft_edge edge of the scan range $(extrema(e_grid_ff))"
+    end
+
+    @process_step "dplms plots" begin
+        f_save(LegendMakie.lplot(report, title = f_title("FEP Flat-Top Widening Scan", :dplms), xlabel = "Flat-Top Widening ff",
+                                 figsize = (600, 900)), :ft_scan_dplms)
+        f_save(LegendMakie.lplot((; res.coeffs, res.grid, res.superpulse, res.t_pickoff, res.n_pre, res.n_post); idxs = [i],
+                                 title = f_title("DPLMS Filter", :dplms)), :dplms_filter)
+        f_save(LegendMakie.lplot((; res.superpulse, res.ref, res.ref_bins, res.t50, res.t_pickoff, res.n_pre, res.n_post);
+                                 figsize = (1200, 800), title = f_title("DPLMS Reference", :dplms)), :dplms_reference)
+        f_save(LegendMakie.lplot((; res.superpulse, res.response, res.grid, res.t50, res.t_pickoff, res.n_pre, res.n_post); idxs = [i],
+                                 xlims = (-(res.n_pre + 8), res.n_pre + res.n_post + 16) .* ustrip(u"µs", Δt),
+                                 figsize = (1200, 600), title = f_title("DPLMS Response", :dplms)), :dplms_response)
+        f_save(LegendMakie.lplot((; res.noise, res.flattops, res.ref, res.superpulse, res.n_pre, res.n_post); ff = w.ff,
+                                 figsize = (1200, 1000), title = f_title("DPLMS Matrices", :dplms)), :dplms_matrices)
+    end
+
+    # The filter output of the superpulse has its own time axis: take the samples from the alignment point on.
+    k0 = argmin(abs.(res.response[i].time .- median(res.t50)))
+    response = res.response[i].signal[k0:(k0 + length(res.ref) - 1)]
+
+    pars = (
+        coefficients = res.coeffs[i], reference = res.ref, response, t_pickoff = uconvert(u"µs", res.t_pickoff),
+        shaping_time = uconvert(u"µs", res.shaping_time[i]), flat_top = uconvert(u"µs", res.flat_top[i]),
+        ff = w.ff, n_pre = res.n_pre, n_post = res.n_post, weights, output_area = uconvert(u"µs", res.output_area[i]),
+        objective = string(objective), ctc_rel_uncertainty, containment,
+        min_objective = result.min_objective, min_fwhm = result.min_fwhm, w90 = optimum.w90, asym = optimum.asym,
+        fct = optimum.fct, ct_spread = optimum.ct_spread,
+        families = [(weights = f.weights, ff = res.grid[f.i].ff, min_objective = f.result.min_objective, min_fwhm = f.result.min_fwhm,
+                     scan = (ff = uconvert.(u"µs", f.report.table.ft), fwhm = mvalue.(uconvert.(u"keV", f.report.table.fwhm)),
+                             w90 = mvalue.(uconvert.(u"keV", f.report.table.w90)), status = string.(f.report.table.status)))
+                    for f in fits],
+    )
+    log = (objective = pars.objective, ft_edge = isnothing(ft_edge) ? "-" : string(ft_edge))
+    return (; pars, log)
+end
+
+
+"""
+    fltopt_pars_summary(filter_type::Symbol, pars)
+
+`(rt, ft, fwhm, w90)` of the fltopt pars `pars` of one filter, as shown in the report tables. For `:dplms`
+the rise time and flat-top time are its `shaping_time` and `flat_top` and the FWHM is `min_fwhm`.
+"""
+function fltopt_pars_summary(filter_type::Symbol, pars)
+    filter_type == :dplms && return (rt = pars.shaping_time, ft = pars.flat_top, fwhm = pars.min_fwhm, w90 = pars.w90)
+    return (rt = pars.rt, ft = pars.ft, fwhm = pars.fwhm, w90 = pars.w90)
+end
+
+
+"""
+    is_current_fltopt_pars(filter_type::Symbol, pars)
+
+`true` if `pars` holds all fields that the current method stores for `filter_type`. Pars of an
+earlier method lack some of them and are optimized again.
+"""
+function is_current_fltopt_pars(filter_type::Symbol, pars)
+    required = filter_type == :dplms ? (:objective, :w90, :ct_spread, :families) : (:objective, :w90, :ct_spread, :joint_search)
+    return all(k -> haskey(pars, k), required)
+end
+
+
+"""
     run_filter_optimization_channel(f_load::Function, filter_types::AbstractVector, dsp_config,
                                     opt_config::PropDict, τ::Unitful.Time, f_evaluate_qc;
                                     detector, f_title::Function, f_save::Function, f_tablepath::Function)
 
 Filter optimization of one detector. Loads the FEP waveforms with `f_load(peakname)` (see
 `load_peak_waveforms`), applies the QC, prepares the set once (`prepare_peak_set`) and runs
-`optimize_channel_filter` for every filter in `filter_types`. Throws an `ArgumentError` if
+`optimize_channel_filter` for every filter in `filter_types` except `:dplms`, which is handled
+last by `optimize_dplms_filter`. Throws an `ArgumentError` if
 `opt_config.joint_search` is not a `Bool`, `opt_config.ctc_rel_uncertainty` is not a `Real` or
 `opt_config.qc_mad` is not a section.
 
@@ -491,10 +643,15 @@ function run_filter_optimization_channel(f_load::Function, filter_types::Abstrac
                                                                         opt_config.qc_mad)
     GC.gc()
 
+    # DPLMS is synthesized after the filters of fixed shape.
     results = Dict{Symbol, Union{NamedTuple, Exception}}()
-    for flt in filter_types
+    for flt in vcat(filter(!=(:dplms), filter_types), filter(==(:dplms), filter_types))
         results[flt] = try
-            optimize_channel_filter(fep, flt, dsp_config, opt_config, τ; detector, f_title, f_save, f_tablepath)
+            if flt == :dplms
+                optimize_dplms_filter(fep, dsp_config, opt_config, τ; detector, f_title, f_save)
+            else
+                optimize_channel_filter(fep, flt, dsp_config, opt_config, τ; detector, f_title, f_save, f_tablepath)
+            end
         catch e
             e isa InterruptException && rethrow()
             e isa ProcessStepError || @error "Filter $flt: $(truncate_error(e))"
