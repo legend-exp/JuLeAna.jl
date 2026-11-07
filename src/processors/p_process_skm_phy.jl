@@ -2,12 +2,12 @@
     p_process_skm_phy(processing_config, l200::LegendData, period::DataPeriod;
         reprocess::Bool=false, timeout::Real=0, only_first_period::Bool=true)
 
-Create the skimmed event tier (`jlskm`) of the `phy` runs of `period`, one file per run; with `analysis_runs_only` in the processing config, only of the analysis runs.
+Create the skimmed event tier (`jlskm`) of the `phy` runs of `period` that have a `phy` start key in the runinfo, one file per run; with `analysis_runs_only` in the processing config, only of the analysis runs.
 
 For each run, all `jlevt` files of the run (except filekeys listed as bad) are read and only the events selected by the `skm_sel` expression of the skm config are kept. The report lists the fraction of the selected events that pass the PSD cut, the LAr cut, and both. The total exposure of the period is logged.
 
 # Inputs
-- `jlevt` tier of the `phy` filekeys listed in the runinfo for each run in `period` (only the analysis runs, run info `phy.is_analysis_run`, with `analysis_runs_only`).
+- `jlevt` tier of the `phy` filekeys listed in the runinfo for each run in `period` with a `phy` start key (only the analysis runs, run info `phy.is_analysis_run`, with `analysis_runs_only`).
 - `dataprod_config(l200).skm(filekey).skm_sel`: the `ljl_propfunc` expression of the event selection.
 - Channel info of the `geds` system for the `phy` analysis runs of `period`, merged over the runs by `channelinfo(l200, period, :phy)`, and the bad-filekey list from `bad_filekeys(l200)`.
 
@@ -28,7 +28,8 @@ function p_process_skm_phy(processing_config, l200::LegendData, period::DataPeri
                            only_first_period::Bool = true, use_cache::Bool = true)
     @info "Event skimmed tier for runs containing period $period"
 
-    rinfo = runinfo(l200, period)
+    # A run without a `phy` start key, e.g. one whose `phy` the dataset does not list, has no `phy` data.
+    rinfo = runinfo(l200, period) |> filterby(@pf !ismissing($phy.startkey))
     if processing_config.analysis_runs_only
         rinfo = rinfo |> filterby(@pf $phy.is_analysis_run)
     end
