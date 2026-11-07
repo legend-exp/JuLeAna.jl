@@ -91,7 +91,7 @@ processors:
       - process_peak_split_cal
 
   process_filter_optimization_cal:
-    detectors: "processable && usability == :on"
+    detectors: "processable && usability != :off"
     report_status:
       on: {warning: failure, failure: failure}
       ac: {warning: warning, failure: failure}
@@ -423,7 +423,7 @@ p_processors:
       - process_peak_split_cal
 
   p_process_filter_optimization_cal:
-    detectors: "processable && usability == :on"
+    detectors: "processable && usability != :off"
     report_status:
       on: {warning: failure, failure: failure}
       ac: {warning: warning, failure: failure}
