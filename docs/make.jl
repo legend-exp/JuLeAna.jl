@@ -16,6 +16,7 @@ makedocs(sitename = "JuLeAna", modules = [JuLeAna], checkdocs = :exports,
                   "Configuration" => "configuration.md",
                   "Processors" => ["Overview" => "processors.md", "HPGe calibration" => "processors_hpge.md",
                                    "Pulse shape discrimination" => "processors_psd.md", "SiPMs, events and stability" => "processors_phy.md"],
+                  "Data sync tool" => ["Overview" => "sync.md", "Acceptance checklist" => "sync-acceptance.md"],
                   "API" =>
                       ["Dataflow" => "api.md", "Controller and workers" => "api_controller.md",
                        "Steps, plots, logging and reports" => "api_debug.md", "Terminal interface" => "api_tui.md"],
