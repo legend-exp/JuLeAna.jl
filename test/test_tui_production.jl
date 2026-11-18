@@ -301,7 +301,8 @@ withenv("LEGEND_DATA_CONFIG" => joinpath(mktempdir(), "prods", "current", "confi
             calls = Threads.Atomic{Int}(0)
             loader(_) = (Threads.atomic_add!(calls, 1); error("no session in this test"))
             # no config: no LoadSession, the form opens after the startup screen
-            m = JuLeAna.JuLeAnaTUI(DataflowController(noconfig; loader); splash_seconds = 0.0)
+            m = JuLeAna.JuLeAnaTUI(DataflowController(noconfig; loader); splash_seconds = 0.0,
+                                   sync_settings = JuLeAna.offline_sync_settings())
             JuLeAna.start!(m)
             @test !isnothing(m.production)
             @test production_settle!(() -> !isnothing(m.snap) && !JuLeAna.splash_active(m), m; timeout = 10)
@@ -314,7 +315,8 @@ withenv("LEGEND_DATA_CONFIG" => joinpath(mktempdir(), "prods", "current", "confi
 
             # `--new-production` with a config does not load a session either
             withconfig = Dict{String,Any}("config" => "config/processing_config.yaml", "new_production" => true)
-            m = JuLeAna.JuLeAnaTUI(DataflowController(withconfig; loader); splash_seconds = 0.0)
+            m = JuLeAna.JuLeAnaTUI(DataflowController(withconfig; loader); splash_seconds = 0.0,
+                                   sync_settings = JuLeAna.offline_sync_settings())
             JuLeAna.start!(m)
             @test !isnothing(m.production)
             @test production_settle!(() -> !isnothing(m.snap), m; timeout = 10)
@@ -323,7 +325,7 @@ withenv("LEGEND_DATA_CONFIG" => joinpath(mktempdir(), "prods", "current", "confi
 
             # a config without the flag loads the session as before
             plain = Dict{String,Any}("config" => "config/processing_config.yaml", "new_production" => false)
-            m = JuLeAna.JuLeAnaTUI(DataflowController(plain; loader); splash_seconds = 0.0)
+            m = JuLeAna.JuLeAnaTUI(DataflowController(plain; loader); splash_seconds = 0.0, sync_settings = JuLeAna.offline_sync_settings())
             with_logger(Logging.NullLogger()) do
                 JuLeAna.start!(m)
                 @test production_settle!(() -> calls[] == 1 && !isnothing(m.snap) && !isnothing(m.snap.last_error), m; timeout = 20)
@@ -334,7 +336,8 @@ withenv("LEGEND_DATA_CONFIG" => joinpath(mktempdir(), "prods", "current", "confi
 
         @testset "closing the form and N on the Setup page" begin
             noconfig = Dict{String,Any}("config" => nothing, "new_production" => false)
-            m = JuLeAna.JuLeAnaTUI(DataflowController(noconfig; loader = _ -> error("unused")); splash_seconds = 0.0)
+            m = JuLeAna.JuLeAnaTUI(DataflowController(noconfig; loader = _ -> error("unused")); splash_seconds = 0.0,
+                                   sync_settings = JuLeAna.offline_sync_settings())
             JuLeAna.start!(m)
             @test production_settle!(() -> !isnothing(m.snap), m; timeout = 10)
             m.splash = false
@@ -370,7 +373,8 @@ withenv("LEGEND_DATA_CONFIG" => joinpath(mktempdir(), "prods", "current", "confi
 
         @testset "a failing creation through the controller" begin
             noconfig = Dict{String,Any}("config" => nothing, "new_production" => false)
-            m = JuLeAna.JuLeAnaTUI(DataflowController(noconfig; loader = _ -> error("unused")); splash_seconds = 0.0)
+            m = JuLeAna.JuLeAnaTUI(DataflowController(noconfig; loader = _ -> error("unused")); splash_seconds = 0.0,
+                                   sync_settings = JuLeAna.offline_sync_settings())
             JuLeAna.start!(m)
             @test production_settle!(() -> !isnothing(m.snap), m; timeout = 10)
             m.splash = false
