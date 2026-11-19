@@ -84,6 +84,7 @@ session = JuLeAna.setup_session(["-c", "config/processing_config.yaml"])
 | `--analysis_runs_only` | Process only runs marked as analysis runs in the metadata |
 | `--no-tui`        | Run all enabled processors without the terminal user interface and exit |
 | `--new-production` | Open the interface on the form for a new data production, see [Creating a data production](@ref) |
+| `--refresh-master-reports` | Rewrite the [master reports](@ref "Master reports") from all reports on disk and exit without processing |
 | `--submit_jobs`   | Start the workers of the selected run mode automatically (with `--no-tui`) |
 | `--dataset`       | Dataset of the run lists in the metadata (`datasets/runlists`) that selects the runs; `default` (every run) when not given |
 | `--runmode`, `--rm` | Run mode, `local` or `slurm`, replacing `config.runmode` |
@@ -181,6 +182,17 @@ the background of the terminal unchanged.
 
 Every processing run appends a section to `history.md` in the `jllog` tier. The History
 page and the `v` view of the Graph page show the state on disk, also from earlier sessions.
+
+## Master reports
+
+At the end of every processing run, with or without the interface, JuLeAna rewrites one
+master report per processor, `<jlrep>/master/<processor>.md`, for example
+`master/process_energy_calibration_cal.md` or `master/p_process_energy_cal.md`. It lists every
+report of the processor on disk, in all periods and runs whatever the session selects, with
+its processor status (see [Report status](@ref)), its processing date and a relative link to
+the report, so that reprocessing one run keeps the other runs in the overview.
+`juleana --refresh-master-reports` rewrites them without starting a session, and
+[`JuLeAna.write_master_reports`](@ref)`(l200)` does the same from a Julia session.
 
 ## [Workers](@id running-workers)
 

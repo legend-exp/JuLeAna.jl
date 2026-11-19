@@ -27,6 +27,7 @@ JuLeAna.read_report
 JuLeAna.report_index
 JuLeAna.failure_summary
 JuLeAna.report_overview
+JuLeAna.write_master_reports
 JuLeAna.dataset_summary
 JuLeAna.period_summary
 JuLeAna.history_path
