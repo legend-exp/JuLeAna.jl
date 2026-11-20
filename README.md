@@ -56,3 +56,6 @@ The [documentation](https://legend-exp.github.io/JuLeAna.jl/stable) describes th
 concepts, the command line options and the terminal user interface, running on a cluster, the
 processing config, every processor, and the API
 ([development version](https://legend-exp.github.io/JuLeAna.jl/dev)).
+
+The data sync tool, which mirrors parts of a remote production onto this machine, is
+described in [docs/src/sync.md](docs/src/sync.md).

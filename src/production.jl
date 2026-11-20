@@ -357,7 +357,10 @@ function snapshot_software(dest::AbstractString; manifest = running_manifest(), 
         # `Manifest.toml` is ignored by the `.gitignore` of a package
         run_logged(`git -C $target init -q -b main`, log)
         run_logged(`git -C $target add -A --force`, log)
-        run_logged(`git -C $target -c user.name=JuLeAna -c user.email=juleana@localhost -c commit.gpgsign=false commit -q -m $message`, log)
+        # No automatic maintenance: git runs it in a detached process that writes into `.git` while
+        # `record_software` may already be removing the snapshot.
+        run_logged(`git -C $target -c user.name=JuLeAna -c user.email=juleana@localhost -c commit.gpgsign=false -c maintenance.auto=false -c gc.auto=0 commit -q -m $message`,
+                   log)
         tree = strip(read(`git -C $target rev-parse $("HEAD^{tree}")`, String))
         packages[name] = Dict{String,Any}("source" => path, "tree" => tree)
         isnothing(state) || merge!(packages[name], Dict{String,Any}("commit" => state.commit, "modified" => state.modified))
