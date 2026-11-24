@@ -115,6 +115,30 @@ end
 
 read_file(h::RemoteHost, path::AbstractString) = run_remote(h, `cat $path`)
 
+# Paths with symlinks resolved; components that do not exist are kept as written.
+function real_paths(h::SSHHost, paths::AbstractVector{<:AbstractString})
+    lines = split(chomp(run_remote(h, `realpath -m -- $paths`)), '\n')
+    length(lines) == length(paths) || throw(ErrorException("realpath reported $(length(lines)) paths for $(length(paths))"))
+    return String.(lines)
+end
+
+function real_paths(::LocalHost, paths::AbstractVector{<:AbstractString})
+    return map(paths) do path
+        head, tail = path, String[]
+        while !ispath(head)
+            pushfirst!(tail, basename(head))
+            head = dirname(head)
+        end
+        return String(normdir(joinpath(realpath(head), tail...)))
+    end
+end
+
+# Paths relative to `dir` that this user cannot read; an unreadable directory is listed and not entered.
+function unreadable_entries(h::RemoteHost, dir::AbstractString)
+    out = run_remote(h, `find $dir -mindepth 1 ! -type l ! -exec test -r '{}' ';' -print -prune`)
+    return [relpath(line, dir) for line in eachsplit(chomp(out), '\n') if !isempty(line)]
+end
+
 # Callers must not discard the standard error: a command can warn and still exit 0. A failing `on_line` kills the local
 # command.
 function stream_command(cmd::Cmd, on_line; cr::Bool = false)

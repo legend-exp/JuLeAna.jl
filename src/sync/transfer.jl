@@ -7,6 +7,7 @@ struct TransferResult
     links::Int
     replaced_links::Int
     skipped::Vector{String}
+    unreadable::Vector{String}
     config::String
     warnings::String
     extracted_files::Int
@@ -42,11 +43,14 @@ function check_mount(p::Production)
 end
 
 # `-r` is explicit because `--files-from` switches off the recursion `-a` implies; `--stats` is the only report of how many
-# files rsync sent.
-function rsync_command(h::RemoteHost, source_root::AbstractString, local_root::AbstractString, files_from::AbstractString; dry_run::Bool)
+# files rsync sent. `exclude` holds paths relative to `source_root`.
+function rsync_command(h::RemoteHost, source_root::AbstractString, local_root::AbstractString, files_from::AbstractString; dry_run::Bool,
+                       exclude::AbstractVector{<:AbstractString} = String[])
     # With `--files-from`, rsync resolves the file list against the trailing slash of the source.
     source = (h isa SSHHost ? "$(h.alias):" : "") * rstrip(source_root, '/') * "/"
-    args = String["-r", "-l", "-t", "-p", "--partial-dir=.juleana-partial", "--stats", "--files-from=$files_from",
+    # rsync reads a backslash as an escape only in a pattern with a wildcard.
+    patterns = ["--exclude=/" * (occursin(r"[*?\[]", rel) ? replace(rel, r"([*?\[\\])" => s"\\\1") : rel) for rel in exclude]
+    args = String["-r", "-l", "-t", "-p", "--partial-dir=.juleana-partial", "--stats", "--files-from=$files_from", patterns...,
                   (h isa SSHHost ? rsync_transport(h) : String[])..., dry_run ? "--dry-run" : "--info=progress2", source,
                   rstrip(local_root, '/') * "/"]
     return addenv(`rsync $args`, "LC_ALL" => "C")    # fixes the digit grouping that parse_rsync_stats strips
@@ -265,6 +269,10 @@ function apply!(h::RemoteHost, p::Production, sel::Selection; dry_run::Bool = fa
     resolved = Selection(sel.host, sel.production, sel.remote_root, sel.local_root, sel.mount_root, sort!(union(sel.copy, detector_copies)),
                          sort!(union(sel.link, detector_links)), sel.created, sel.extract, sel.detector_files)
     isempty(resolved.link) || check_mount(p)
+    # The tool copies `setup/config` with every selection, so entries this user cannot read are left out instead of failing.
+    setup = joinpath(p.name, "setup", "config")
+    unreadable = p.setup_config && covered(setup, resolved.copy) ?
+                 [joinpath(setup, rel) for rel in unreadable_entries(h, joinpath(p.remote_root, setup))] : String[]
     staging, plan, extract_absent = "", ExtractJob[], Tuple{String,String}[]
     if !isempty(sel.extract)
         status = ensure_environment(h, helper)
@@ -276,7 +284,8 @@ function apply!(h::RemoteHost, p::Production, sel::Selection; dry_run::Bool = fa
     if dry_run
         extract_bytes = isempty(sel.extract) ? 0 : plan_bytes(h, helper, plan; jobs, steps)
         steps("checking files to copy")
-        out, _ = rsync_listed(path -> rsync_command(h, p.remote_root, p.local_root, path; dry_run = true), resolved.copy, nothing)
+        out, _ = rsync_listed(path -> rsync_command(h, p.remote_root, p.local_root, path; dry_run = true, exclude = unreadable),
+                              resolved.copy, nothing)
         estimate = parse_rsync_stats(out, length(resolved.link))
         return Estimate(estimate.bytes, estimate.files, estimate.links, true, extract_bytes, length(plan), true, not_in_run)
     end
@@ -310,8 +319,9 @@ function apply!(h::RemoteHost, p::Production, sel::Selection; dry_run::Bool = fa
         end
         replaced = remove_stale_links!(p, resolved)
         steps("copying"; total = 100)
-        out, copy_warnings = rsync_listed(path -> rsync_command(h, p.remote_root, p.local_root, path; dry_run = false), resolved.copy,
-                                          rsync_reading("copying"))
+        out, copy_warnings = rsync_listed(path -> rsync_command(h, p.remote_root, p.local_root, path; dry_run = false,
+                                                                exclude = unreadable),
+                                          resolved.copy, rsync_reading("copying"))
         push!(warnings, copy_warnings)
         if !isempty(plan)
             # The mirror may have changed since the plan was checked.
@@ -331,7 +341,8 @@ function apply!(h::RemoteHost, p::Production, sel::Selection; dry_run::Bool = fa
         created = sum(rel -> link_path!(h, p, rel, copies, skipped), resolved.link; init = 0)
         config = write_local_config(p)
         isempty(plan) || (steps("cleaning up staging"); remove_staged!(h, staging, [j.destination for j in plan]))
-        return TransferResult(moved.bytes, moved.files, created, replaced, skipped, config, join(filter(!isempty, warnings), "\n"),
+        return TransferResult(moved.bytes, moved.files, created, replaced, skipped, unreadable, config,
+                              join(filter(!isempty, warnings), "\n"),
                               length(plan),
                               sum(j -> length(j.groups), plan; init = 0), pulled.bytes, conflicts, not_in_run)
     catch err
@@ -377,6 +388,7 @@ function summary_text(r::TransferResult)
     lines = ["transferred $(format_bytes(r.bytes)) in $(r.files) files",
              "created $(r.links) links, replaced $(r.replaced_links) stale ones"]
     isempty(r.skipped) || push!(lines, "kept existing data at $(length(r.skipped)) link targets: " * join(r.skipped, ", "))
+    isempty(r.unreadable) || push!(lines, "left out $(length(r.unreadable)) unreadable entries: " * join(r.unreadable, ", "))
     r.extracted_files == 0 ||
         push!(lines, "extracted $(r.extracted_files) files, $(r.extracted_groups) groups ($(format_bytes(r.extracted_bytes)) transferred)")
     isempty(r.conflicts) ||

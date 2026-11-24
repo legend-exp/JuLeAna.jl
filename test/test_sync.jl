@@ -139,6 +139,32 @@ withenv("XDG_CONFIG_HOME" => mktempdir()) do
             @test code == 0 && occursin("transferred ", text) && isdir(joinpath(local_root, "test", "generated"))
         end
 
+        @testset "a remote root of /, a path key through a symlink and an unreadable entry of setup/config" begin
+            remote = make_remote()
+            prod = joinpath(remote, "test")
+            p = Production(h, relpath(prod, "/"), "/", mktempdir())
+            @test relative(p, joinpath(prod, "config.json")) == joinpath(p.name, "config.json")
+            @test Sync.preselect_production(remote * "0/test", [remote * "/"]) === nothing
+            link = joinpath(mktempdir(), "link")
+            symlink(remote, link)
+            tier_key(tier) = write(joinpath(prod, "config.json"),
+                                   """{"setups": {"l200": {"paths": {"metadata": "\$_/legend-metadata/", "tier": "$tier"}}}}""")
+            tier_key("/nonexistent/tier")
+            @test_throws "also with symlinks resolved" Production(h, "test", link, mktempdir())
+            tier_key(joinpath(realpath(prod), "generated", "tier"))
+            config = mkpath(joinpath(prod, "setup", "config"))
+            write(joinpath(config, "processing.json"), "{}")
+            hidden = joinpath(config, "startjlworkers[1].sh")    # the brackets check that the rsync exclude is escaped
+            write(hidden, "")
+            chmod(hidden, 0o000)
+            p = Production(h, "test", link, mktempdir())
+            @test Dict(p.roots)["tier"] == joinpath(link, "test", "generated", "tier")
+            result = apply!(h, p, Selection(p, "local", production_tree(h, p)))
+            @test result.unreadable == ["test/setup/config/startjlworkers[1].sh"] &&
+                  isfile(joinpath(p.local_root, "test", "setup", "config", "processing.json"))
+            @test occursin(joinpath(p.local_root, "test", "generated", "tier"), read(result.config, String))
+        end
+
         include(joinpath(@__DIR__, "test_sync_screen.jl"))
     end
 end

@@ -86,7 +86,7 @@ host_remote_roots(file::AbstractString) = [host_remote_root(file, host) for host
 function preselect_production(folder::AbstractString, roots::AbstractVector{<:AbstractString})
     folder = normdir(folder)
     for root in roots
-        prefix = endswith(root, "/") ? normdir(root) : normdir(root) * "/"
+        prefix = rstrip(normdir(root), '/') * "/"
         startswith(folder, prefix) && length(folder) > length(prefix) && return String(folder[(length(prefix) + 1):end])
     end
     return nothing

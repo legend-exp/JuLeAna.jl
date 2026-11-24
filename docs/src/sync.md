@@ -27,7 +27,9 @@ refuse. A selection records the host its tree was built from; loading it for ano
 refused. A malformed file stops `juleana-sync` with a message that names the file; `juleana` shows the
 message in the window and keeps running. Site files `config_<site>.json`, `.yaml` or `.yml` in the
 directories from the remote root down to the production's parent redirect path keys; the tool applies
-them over the production's config, deeper files last, and copies them with the production.
+them over the production's config, deeper files last, and copies them with the production. Every path key
+must lie below the remote root as written, or else once the host resolves the symlinks in both; such a key is
+mirrored at its place below the remote root.
 
 ## The screen
 
@@ -78,6 +80,10 @@ The tree shows the production's config file, one branch per configured path key 
   filesystem is mounted (for example with `sshfs`). The links work only while it is mounted.
 - **Extract** transfers only the chosen detectors of per-filekey tiers such as `jldsp` and `raw`, which
   store all detectors of a time slice in one HDF5 file. The reduced files keep their names and paths.
+
+Every selection copies the config file, the site files, `setup/config` and the `metadata` path key. Entries of
+`setup/config` that the user cannot read, such as another user's worker start script, are left out and listed in
+the summary; any other unreadable file stops the transfer.
 
 A run or period directory of a per-filekey tier has a `detectors` row above its filekeys; `enter` lists the
 detectors in the first file of each run, with sizes, and `x` marks one. On a period, `x` extracts the
@@ -147,7 +153,7 @@ estimate is always printed first; `--dry-run` stops there and `--yes` transfers 
 ## Requirements
 
 - GNU `rsync` 3.1 or newer on this machine (the `openrsync` of macOS lacks the progress output).
-- `ssh` access to the host, and GNU `find`, `du` and `rmdir` on it. ssh runs in batch mode and never asks
+- `ssh` access to the host, and GNU `find`, `du`, `realpath` and `rmdir` on it. ssh runs in batch mode and never asks
   for a password, one-time code or host-key confirmation; a host that needs one, or whose ssh config shares
   a connection (`ControlMaster`), must be opened first with `ssh <host>`. Connections give up after 20 s of
   connecting or about a minute of silence. Extraction also needs Julia and the helper environment on the

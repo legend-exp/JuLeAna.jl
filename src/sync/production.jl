@@ -1,6 +1,6 @@
 # This file is a part of JuLeAna.jl, licensed under the MIT License (MIT).
 
-# Every path of `config` lies inside `remote_root`, because a path outside has no place in the mirror.
+# `roots` spells every path key of `config` below `remote_root`, because a path outside has no place in the mirror.
 struct Production
     name::String
     remote_root::String
@@ -14,6 +14,9 @@ struct Production
 end
 
 normdir(x) = (s = rstrip(normpath(String(x)), '/'); isempty(s) ? "/" : s)
+
+# Compares strings; symlinks are not resolved.
+below(path::AbstractString, root::AbstractString) = path == root || startswith(path, rstrip(root, '/') * "/")
 
 function overlay_files(h::RemoteHost, remote_root::AbstractString, name::AbstractString)
     root = normdir(remote_root)
@@ -35,7 +38,8 @@ function Production(h::RemoteHost, name::AbstractString, remote_root::AbstractSt
         throw(ArgumentError("production name must be a relative path below the remote root, got \"$name\""))
     name = rstrip(normpath(name), '/')
     dir = normdir(joinpath(root, name))
-    startswith(dir, root * "/") || throw(ArgumentError("production name must be a relative path below the remote root, got \"$name\""))
+    dir != root && below(dir, root) ||
+        throw(ArgumentError("production name must be a relative path below the remote root, got \"$name\""))
     entries = list_dir(h, dir)
     configs = [e.name for e in entries if e.kind == :file && e.name in PRODUCTION_CONFIGS]
     isempty(configs) && throw(ArgumentError("$dir holds neither config.json nor config.yaml, so it is not a production"))
@@ -48,7 +52,7 @@ function Production(h::RemoteHost, name::AbstractString, remote_root::AbstractSt
              for file in files]
     config = reduce(merge!, parts)
     return Production(String(name), root, normdir(local_root), mount_root === nothing ? nothing : normdir(mount_root), config,
-                      production_roots(config, root), files[2:end], only(configs), setup)
+                      production_roots(h, config, root), files[2:end], only(configs), setup)
 end
 
 # Environment variables are not expanded, because the config describes the host.
@@ -63,26 +67,33 @@ function parse_production_config(text::AbstractString, config_dir::AbstractStrin
     return config
 end
 
-function production_roots(config::PropDict, remote_root::AbstractString)
+# A key outside the remote root as written is compared again with symlinks resolved on the host, then spelled below the
+# remote root; a key inside as written is kept, even where symlinks lead elsewhere.
+function production_roots(h::RemoteHost, config::PropDict, remote_root::AbstractString)
     setups = config.setups
     length(setups) == 1 || throw(ArgumentError("a production config must contain exactly one setup, found $(length(setups)): " *
                                                join(string.(keys(setups)), ", ")))
     root = normdir(remote_root)
+    paths = [String(key) => normdir(value) for (key, value) in PropDicts._dict(only(values(setups)).paths)]
+    outside = [dir for (_, dir) in paths if !below(dir, root)]
+    real = isempty(outside) ? Dict{String,String}() : Dict(zip([root; outside], real_paths(h, [root; outside])))
     roots = Pair{String,String}[]
-    for (key, value) in PropDicts._dict(only(values(setups)).paths)
-        dir = normdir(value)
-        dir == root || startswith(dir, root * "/") ||
-            throw(ArgumentError("path key $key resolves to $dir, which is outside the remote root $root and cannot be mirrored"))
-        push!(roots, String(key) => dir)
+    for (key, dir) in paths
+        if !below(dir, root)
+            below(real[dir], real[root]) ||
+                throw(ArgumentError("path key $key resolves to $dir, which is outside the remote root $root, also with symlinks " *
+                                    "resolved ($(real[dir]) is not below $(real[root])), and cannot be mirrored"))
+            dir = normdir(joinpath(root, relpath(real[dir], real[root])))
+        end
+        push!(roots, key => dir)
     end
     return sort!(roots; by = first)
 end
 
 function relative(p::Production, remote_path::AbstractString)
     path, root = normdir(remote_path), normdir(p.remote_root)
-    path == root && return ""
-    startswith(path, root * "/") || throw(ArgumentError("$path is not inside the remote root $root"))
-    return relpath(path, root)
+    below(path, root) || throw(ArgumentError("$path is not inside the remote root $root"))
+    return path == root ? "" : relpath(path, root)
 end
 
 to_local(p::Production, remote_path::AbstractString) = normdir(joinpath(p.local_root, relative(p, remote_path)))
@@ -91,8 +102,8 @@ to_local(p::Production, remote_path::AbstractString) = normdir(joinpath(p.local_
 function write_local_config(p::Production)
     config = deepcopy(p.config)
     paths = PropDicts._dict(only(values(config.setups)).paths)
-    for (key, value) in collect(paths)
-        paths[key] = to_local(p, value)
+    for (key, dir) in p.roots
+        paths[Symbol(key)] = to_local(p, dir)
     end
     path = joinpath(p.local_root, p.name, "config_local.yaml")
     mkpath(dirname(path))
