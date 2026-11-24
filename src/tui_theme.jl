@@ -49,6 +49,20 @@ const TUI_THEMES = (NIGHT_OWL_THEME, JULEANA_THEME, Tachikoma.ALL_THEMES...)
 
 const DEFAULT_THEME_NAME = "night-owl"
 
+const TITLE_COLORS = (Tachikoma.ColorRGB(0xcb, 0x3c, 0x33), Tachikoma.ColorRGB(0x38, 0x98, 0x26), Tachikoma.ColorRGB(0x95, 0x58, 0xb2))
+
+function logo_name_spans()
+    return [(part, Tachikoma.Style(; fg = TITLE_COLORS[i], bold = true)) for (i, part) in enumerate(("Ju", "Le", "Ana"))]
+end
+
+const VERSION_TEXT = Ref("")
+function juleana_version()
+    isempty(VERSION_TEXT[]) && (VERSION_TEXT[] = "v" * string(pkgversion(JuLeAna)))
+    return VERSION_TEXT[]
+end
+
+name_version_spans() = vcat(logo_name_spans(), [(" " * juleana_version(), Tachikoma.tstyle(:text_dim))])
+
 """
     JuLeAna.tui_theme(name::AbstractString)
 

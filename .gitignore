@@ -184,3 +184,11 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Fixture data for the sync tool tests: zero-filled stand-ins, a few KB each.
+!test/sync/fixtures/**/*.lh5
+
+# Saved selections are personal; the hosts file is shared.
+config/sync/*.yaml
+config/sync/*.json
+!config/sync/hosts.yaml
