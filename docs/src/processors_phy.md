@@ -3,6 +3,7 @@
 ## SiPM calibration
 
 ```@docs
+JuLeAna.process_sipm_template_phy
 JuLeAna.process_sipm_optimization_phy
 JuLeAna.p_process_sipm_optimization_phy
 JuLeAna.process_sipm_calibration_phy

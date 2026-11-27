@@ -287,7 +287,7 @@ processors:
       use_cache: true
     dependencies: []
 
-  process_sipm_optimization_phy:
+  process_sipm_template_phy:
     detectors: "processable"
     report_status:
       on: {warning: failure, failure: failure}
@@ -304,7 +304,7 @@ processors:
     dependencies:
       - process_dsp_aux_phy
 
-  process_dsp_phy:
+  process_sipm_optimization_phy:
     detectors: "processable"
     report_status:
       on: {warning: failure, failure: failure}
@@ -315,6 +315,23 @@ processors:
     log_level: info
     plot_level: info
     rank: 16
+    kwargs:
+      reprocess: false
+      timeout: auto
+    dependencies:
+      - process_dsp_aux_phy
+
+  process_dsp_phy:
+    detectors: "processable"
+    report_status:
+      on: {warning: failure, failure: failure}
+      ac: {warning: warning, failure: failure}
+      off: {warning: success, failure: warning}
+    enabled: false
+    category: phy
+    log_level: info
+    plot_level: info
+    rank: 17
     kwargs:
       reprocess: false
       timeout: auto
@@ -336,7 +353,7 @@ processors:
     category: phy
     log_level: info
     plot_level: info
-    rank: 17
+    rank: 18
     kwargs:
       reprocess: false
       timeout: auto
@@ -354,7 +371,7 @@ processors:
     category: phy
     log_level: info
     plot_level: info
-    rank: 18
+    rank: 19
     kwargs:
       reprocess: false
       timeout: auto
@@ -371,7 +388,7 @@ processors:
     category: phy
     log_level: info
     plot_level: info
-    rank: 19
+    rank: 20
     kwargs:
       reprocess: false
       timeout: auto
@@ -397,7 +414,7 @@ processors:
     category: phy
     log_level: info
     plot_level: info
-    rank: 20
+    rank: 21
     kwargs:
       reprocess: false
       timeout: auto

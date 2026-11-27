@@ -39,7 +39,8 @@ using LegendDataManagement.LDMUtils: LDMUtils, create_logtbl, create_metadatatbl
 using LegendDataTypes: LegendDataTypes, decode_data, fast_flatten
 using LegendDSP: LegendDSP, DSPConfig, dplms_default_grid, dsp_decay_times, dsp_dplms_optimization, dsp_energy_rtft,
                  dsp_flt_optimization_prepare, dsp_icpc_compressed, dsp_pmts,
-                 dsp_qc_flt_optimization_compressed, dsp_qdrift_flt_optimization, dsp_sipm_compressed,
+                 dsp_qc_flt_optimization_compressed, dsp_qdrift_flt_optimization, dsp_sipm_compressed, dsp_sipm_kernel, dsp_sipm_noise_spectrum,
+                 dsp_sipm_pulse_selection_compressed, dsp_sipm_template,
                  realized_flattop
 using LegendEventAnalysis: LegendEventAnalysis, TimeEvolution, calibrate_all, flag_coincidences, rate, relative,
                            smooth
@@ -158,6 +159,7 @@ include("processors/process_qcs_cal.jl")
 include("processors/process_qcs_phy.jl")
 include("processors/process_sipm_calibration_phy.jl")
 include("processors/process_sipm_optimization_phy.jl")
+include("processors/process_sipm_template_phy.jl")
 include("processors/process_stability_plots_phy.jl")
 
 include("using_packages.jl")
